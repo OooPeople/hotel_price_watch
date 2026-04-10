@@ -1,12 +1,12 @@
 # hotel_price_watch
 
-針對 `ikyu.com` 訂房頁面的價格監看工具專案。
+以 Python 開發的飯店價格監看工具專案，長期目標為支援多個訂房網站；目前第一版僅支援 `ikyu.com`。
 
 目前階段以規劃與專案骨架為主，目標是先做出可長時間背景運作的 Python 版價格監看器，再逐步補上 GUI、通知、封裝與瀏覽器 fallback。
 
 ## 當前定位
 
-- 站點範圍先限定在 `ikyu.com`
+- 長期目標為支援多站，但第一版先限定在 `ikyu.com`
 - V1 採 `HTTP-first` 方案，優先直接抓取頁面 HTML 與 hydration 資料
 - V1 先支援精確監看單一 `hotel + room + plan + occupancy + date`
 - 瀏覽器自動化列為 fallback，不作為第一階段主路徑

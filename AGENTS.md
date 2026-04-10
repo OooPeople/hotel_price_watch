@@ -1,6 +1,6 @@
 ﻿# hotel_price_watch
 
-本專案是 `ikyu.com` 飯店價格監看器的 Python 版本。
+本專案是以 Python 開發的飯店價格監看器，架構上預留多站擴充能力；目前第一版僅實作 `ikyu.com`，優先先把單站監看流程做穩。
 
 ## 目標
 
@@ -30,11 +30,20 @@
 - `docs/ARCHITECTURE_PLAN.md`
 - `docs/TASK_BREAKDOWN.md`
 
-## 實作提醒
+## 實作規則
 
 - 設定與 runtime state 要分離
 - 監看結果要有歷史紀錄與最近一次解析摘要
 - 如果 `ikyu` HTML 結構變動，先更新 fixture 與 parser 測試，再改正式解析器
+- 之後新增或修改程式碼時，函式需補上繁體中文註解或 docstring，簡要說明該函式的用途
+  - 以讓人快速理解職責為主，不需要寫成冗長逐行解說
+
+## 協作規則
+
+- 當使用者要求生成 commit message 時，必須先遵守 `GIT_COMMIT_RULES.md`
+  - `type` 與 `scope` 使用英文
+  - `summary`、`body`、`footer` 一律使用繁體中文
+  - 不可預設輸出英文版 `summary`
 - 讀取 `.md` 文件時，一律使用 PowerShell 搭配 UTF-8：
   - 先設定 `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8`
   - 再使用 `Get-Content -Encoding UTF8`
