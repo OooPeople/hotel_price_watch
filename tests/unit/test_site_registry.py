@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -44,6 +44,31 @@ class DummyAdapter(SiteAdapter):
             ),
         )
 
+    def build_preview_from_browser_page(
+        self,
+        *,
+        page_url: str,
+        html: str,
+        diagnostics=(),
+    ) -> tuple[SearchDraft, CandidateBundle]:
+        return self.parse_seed_url(page_url), self.fetch_candidates(self.parse_seed_url(page_url))
+
+    def build_snapshot_from_browser_page(
+        self,
+        *,
+        page_url: str,
+        html: str,
+        target: WatchTarget,
+    ) -> PriceSnapshot:
+        del page_url, html, target
+        return PriceSnapshot(
+            display_price_text="JPY 20,000",
+            normalized_price_amount=Decimal("20000"),
+            currency="JPY",
+            availability=Availability.AVAILABLE,
+            source_kind=SourceKind.BROWSER,
+        )
+
     def resolve_watch_target(
         self,
         draft: SearchDraft,
@@ -58,17 +83,6 @@ class DummyAdapter(SiteAdapter):
             check_out_date=draft.check_out_date,
             people_count=draft.people_count,
             room_count=draft.room_count,
-        )
-
-    def fetch_target_snapshot(self, target: WatchTarget) -> PriceSnapshot:
-        return PriceSnapshot(
-            watch_item_id="watch-1",
-            captured_at=datetime(2026, 4, 11, 9, 0, 0),
-            display_price_text="JPY 20,000",
-            normalized_price_amount=Decimal("20000"),
-            currency="JPY",
-            availability=Availability.AVAILABLE,
-            source_kind=SourceKind.HTTP,
         )
 
 

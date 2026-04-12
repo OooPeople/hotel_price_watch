@@ -5,13 +5,13 @@
 ## 目標
 
 - 做出可在背景穩定運作的價格監看工具
-- 第一版不依賴瀏覽器分頁常駐
+- 第一版以附著專用 Chrome profile 為主，讓監看與預覽共用穩定 session
 - 先把監看、比價、通知與設定模型做穩
-- GUI、打包、browser fallback 分階段補上
+- GUI、打包與背景輪詢分階段補上
 
 ## 開發原則
 
-- 優先保持 `HTTP-first`，只有在直接抓取失敗或資料不足時才引入瀏覽器 fallback
+- V1 以附著專用 Chrome profile 讀取與刷新頁面為主，不再把 `HTTP-first` 視為正式主線
 - 優先監看精確的 `room-plan` 目標，不做模糊最低價比對
 - 所有監看條件都要 canonicalize，避免只靠原始 URL 判定
 - 解析器必須可測試，HTML fixture 要能脫離網路重跑
@@ -29,6 +29,7 @@
 - `docs/V1_SPEC.md`
 - `docs/ARCHITECTURE_PLAN.md`
 - `docs/TASK_BREAKDOWN.md`
+- `docs/HANDOFF_PLAN.md`
 
 ## 實作規則
 
@@ -37,6 +38,8 @@
 - 如果 `ikyu` HTML 結構變動，先更新 fixture 與 parser 測試，再改正式解析器
 - 之後新增或修改程式碼時，函式需補上繁體中文註解或 docstring，簡要說明該函式的用途
   - 以讓人快速理解職責為主，不需要寫成冗長逐行解說
+  - 函式、類別、模組的用途說明優先使用 `"""..."""` docstring
+  - 只有在補充局部邏輯、特殊條件或實作原因時，才使用 `# ...` 單行註解
 
 ## 協作規則
 
@@ -44,6 +47,9 @@
   - `type` 與 `scope` 使用英文
   - `summary`、`body`、`footer` 一律使用繁體中文
   - 不可預設輸出英文版 `summary`
+- 更新 `docs/TASK_BREAKDOWN.md` 時，已完成項目需同步標示為已完成
+  - 完成項目標為 `- o ...`，未完成項目不加任何前綴，直接使用一般清單 `- ...`
+  - 避免計劃表與實際進度脫節
 - 讀取 `.md` 文件時，一律使用 PowerShell 搭配 UTF-8：
   - 先設定 `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8`
   - 再使用 `Get-Content -Encoding UTF8`

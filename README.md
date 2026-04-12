@@ -7,9 +7,9 @@
 ## 當前定位
 
 - 長期目標為支援多站，但第一版先限定在 `ikyu.com`
-- V1 採 `HTTP-first` 方案，優先直接抓取頁面 HTML 與 hydration 資料
+- V1 目前以附著專用 Chrome profile 為主，透過真人 session 讀取與刷新 `ikyu` 頁面
 - V1 先支援精確監看單一 `hotel + room + plan + occupancy + date`
-- 瀏覽器自動化列為 fallback，不作為第一階段主路徑
+- GUI 建立 watch 與後續背景輪詢，都以可附著的專用 Chrome session 為目前主線
 
 ## 專案結構
 
@@ -27,3 +27,4 @@
 - [docs/V1_SPEC.md](/e:/P3/xx/ticket/hotel_price_watch/docs/V1_SPEC.md)
 - [docs/ARCHITECTURE_PLAN.md](/e:/P3/xx/ticket/hotel_price_watch/docs/ARCHITECTURE_PLAN.md)
 - [docs/TASK_BREAKDOWN.md](/e:/P3/xx/ticket/hotel_price_watch/docs/TASK_BREAKDOWN.md)
+- [docs/HANDOFF_PLAN.md](/e:/P3/xx/ticket/hotel_price_watch/docs/HANDOFF_PLAN.md)

@@ -1,0 +1,13 @@
+{
+  "hotel_id": "hotel-123",
+  "target": {
+    "room_id": "room-1",
+    "plan_id": "plan-1"
+  },
+  "snapshot": {
+    "display_price_text": "￥24,000（税込）",
+    "normalized_price_amount": "24000",
+    "currency": "JPY",
+    "availability": "available"
+  }
+}

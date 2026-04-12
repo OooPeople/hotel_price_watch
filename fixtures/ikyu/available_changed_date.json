@@ -1,0 +1,11 @@
+{
+  "hotel_id": "hotel-123",
+  "canonical_url": "https://www.ikyu.com/hotel/hotel-123",
+  "candidates": [
+    {
+      "room_id": "room-1",
+      "plan_id": "plan-7",
+      "plan_name": "Late Checkout Package"
+    }
+  ]
+}

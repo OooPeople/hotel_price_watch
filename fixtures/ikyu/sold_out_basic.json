@@ -1,0 +1,13 @@
+{
+  "hotel_id": "hotel-123",
+  "target": {
+    "room_id": "room-1",
+    "plan_id": "plan-1"
+  },
+  "snapshot": {
+    "display_price_text": null,
+    "normalized_price_amount": null,
+    "currency": null,
+    "availability": "sold_out"
+  }
+}

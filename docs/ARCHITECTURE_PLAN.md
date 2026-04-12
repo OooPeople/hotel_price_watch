@@ -78,6 +78,7 @@ hotel_price_watch/
 - `OfferCandidate`
 - `WatchTarget`
 - `PriceSnapshot`
+- `PriceHistoryEntry`
 - `CheckResult`
 - `NotificationDecision`
 - `NotificationRule`
@@ -121,8 +122,7 @@ hotel_price_watch/
 這層包裝具體技術實作：
 
 - SQLite / SQLAlchemy
-- HTTP client
-- Playwright fallback
+- Chrome CDP attach / page refresh
 - Desktop / Discord / `ntfy`
 - file lock
 - single-instance coordination
@@ -139,8 +139,9 @@ hotel_price_watch/
 - `parse_seed_url()`
 - `normalize_search_draft()`
 - `fetch_candidates()`
+- `build_preview_from_browser_page()`
+- `build_snapshot_from_browser_page()`
 - `resolve_watch_target()`
-- `fetch_target_snapshot()`
 
 `sites/registry.py` 負責：
 
@@ -165,6 +166,7 @@ hotel_price_watch/
 - worker queue
 - 通知規則評估
 - 通知去重
+- 專用 Chrome 分頁刷新與節流訊號判定
 
 ### 3.7 `notifiers`
 
@@ -245,12 +247,13 @@ hotel_price_watch/
 - `parse_seed_url(url: str) -> SearchDraft`
 - `normalize_search_draft(draft: SearchDraft) -> SearchDraft`
 - `fetch_candidates(draft: SearchDraft) -> CandidateBundle`
+- `build_preview_from_browser_page(...) -> tuple[SearchDraft, CandidateBundle]`
+- `build_snapshot_from_browser_page(...) -> PriceSnapshot`
 - `resolve_watch_target(draft: SearchDraft, selection: CandidateSelection) -> WatchTarget`
-- `fetch_target_snapshot(target: WatchTarget) -> PriceSnapshot`
 
 建議輸入 / 輸出形狀保持站點無關：
 
-- 輸入只吃 `SearchDraft` / `WatchTarget`
+- 輸入只吃 `SearchDraft` / `WatchTarget` 與已附著中的 browser page 內容
 - 輸出只回 `CandidateBundle` / `PriceSnapshot`
 - 不讓 web UI 或 scheduler 直接依賴 `ikyu` HTML 細節
 
@@ -260,8 +263,10 @@ hotel_price_watch/
 - `normalized_price_amount`
 - `currency`
 - `availability`
-- `captured_at`
 - `source_kind`
+
+`PriceSnapshot` 表示 site adapter 回傳的單次站點快照，不包含 `watch_item_id` 或 `captured_at`。
+這些 runtime / persistence 欄位應由 monitor 層在寫入 `price_history` 時補成 `PriceHistoryEntry`。
 
 `availability` 在 V1 固定使用：
 
@@ -387,44 +392,38 @@ V1 採三段式保護：
 
 ### 8.1 核心資料流
 
-1. UI 建立 watch item
+1. UI 由使用者從專用 Chrome 分頁建立 watch item
 2. watch item 存進 SQLite
 3. scheduler 取出 enabled items
-4. `ikyu` client 抓 HTML
-5. parser 解析價格與可訂狀態
-6. compare engine 對比舊狀態
-7. rule evaluator 對 `PriceSnapshot` 與歷史狀態做通知判定
-8. repository 寫入 `latest_check_snapshots`、`check_events` 與必要的 `price_history`
-9. notifier 視事件決定是否通知
+4. monitor 附著專用 Chrome，找到或重建對應目標分頁
+5. monitor 主動刷新頁面
+6. parser 解析刷新後的價格與可訂狀態
+7. compare engine 對比舊狀態
+8. rule evaluator 對 `PriceSnapshot` 與歷史狀態做通知判定
+9. repository 寫入 `latest_check_snapshots`、`check_events` 與必要的 `price_history`
+10. notifier 視事件決定是否通知
 
-### 8.2 為什麼先用 HTTP-first
+### 8.2 為什麼目前改採專用 Chrome 主線
 
-- `ikyu` 目前可從 HTML 與 hydration 資料取得核心價格資訊
-- HTTP 模式較省資源，也更適合長時間背景執行
-- GUI 與監看引擎可完全分離，不受瀏覽器 tab 凍結影響
-- 即使之後加入 browser fallback，也應是 adapter 內部替補機制，而不是主路徑
+- `ikyu` 真站目前對直接 HTTP 請求有明顯阻擋與風控
+- 使用者以專用 Chrome profile 建立真人 session 後，preview 與候選解析已證明可行
+- 目前最穩定的做法，是由 monitor 附著該 Chrome session、主動刷新目標頁面後再解析
+- `HTTP-first` 仍保留為未來重新評估方向，但不再作為 V1 正式主路徑
 
-### 8.3 Browser fallback 觸發條件
+### 8.3 Chrome-driven monitor 的風險與限制
 
-只有以下情況才需要考慮：
-
-- 直接 HTML 已拿不到目標價格
-- 目標頁需要互動後才會顯示資料
-- parser 長期因站點變動失效
-
-即使加入 browser fallback，也應保持：
-
-- 與核心 watch item 模型共用
-- 與通知模組共用
-- 可單獨關閉
+- 背景或非焦點分頁可能被 Chrome 節流
+- 若分頁被 tab discard、記憶體節省或站方重導，monitor 需能偵測並記錄
+- 站方阻擋頁、節流訊號、刷新失敗，都應寫入 `check_events` / debug
+- V1 需允許專用 Chrome 縮小至工作列，但不能假設所有背景頁行為都與前景相同
 
 V1 的具體策略先定為：
 
-- `timeout` / 一般 network error：backoff，仍維持 HTTP-first
+- `timeout` / 一般刷新失敗：backoff
 - `parse_failed` 連續 `3` 次：標記 `degraded`
-- `429`：長 backoff，視為 rate-limited
-- `403`：暫停該 watch item，提示人工介入
-- V1 不自動啟 browser fallback，只保留架構介面
+- 站方阻擋頁：暫停該 watch item，提示人工介入
+- 若偵測到 `visibilityState=hidden` 或 `hasFocus=false`，保留節流訊號供歷史與 debug 顯示
+- 專用 Chrome 分頁由 monitor 主動刷新，不依賴使用者當前正在看的前景分頁
 
 ## 9. 測試策略
 
@@ -455,7 +454,7 @@ V1 的具體策略先定為：
 - parser 測試直接驗證 site adapter 契約，不透過 web UI
 - domain / notification rule 測試不得依賴資料庫或網路
 - integration test 可碰 SQLite，但不直接對外打 `ikyu`
-- browser fallback 不列入 V1 自動測試主路徑
+- 專用 Chrome attach / tab listing / page refresh 屬於 V1 自動測試的一部分
 
 ## 10. 參考方向
 
@@ -474,3 +473,88 @@ V1 的具體策略先定為：
 - 長時間監看應由 app-level runtime 管理
 - site adapter 應用抽象介面隔離站點差異
 - config、domain、infrastructure 應分層，避免未來擴站時耦合惡化
+
+## 11. Review 後需先收斂的差距
+
+以下差距已在整體性 review 中確認，需在 Milestone 7 前先收斂：
+
+### 11.1 runtime 已初步接線，但仍需穩定化
+
+- monitor scheduler / worker / compare / notify 模組已存在
+- 已以 `lifespan` 將 app-level runtime 初步接上
+- 已在 `dev_start` 初步接上 port + lock file 的單實例檢查
+- Chrome 分頁選取已初步改成 session 內較穩定的 page key
+- `ikyu` 分頁比對已先納入 `rm/pln/cid/ppc/rc` 等 query 訊號
+- 建立 watch 後會將 `browser_tab_id` 與 `browser_page_url` 存回 draft，供 runtime 輪詢優先沿用
+- 已補首頁與 `/health` 的 runtime 狀態摘要，讓 GUI 可直接觀測 monitor 是否在跑與 Chrome session 是否可附著
+- 已補 runtime 啟停與 active watch 同步測試，確認 scheduler 只註冊 enabled/unpaused watch，且 runtime 停止後會清空 scheduler 狀態
+- 已補多 watch 與 runtime 啟動後新增 watch 的 loop 測試，確認後續 tick 會重新同步 watch 並執行檢查
+- 已將 blocked page / throttling / tab discard 整理成 watch 詳細頁可直接判讀的 runtime 訊號摘要
+- 已深化 `dev_start` 的既有實例導向：沿用既有實例前會先探測 `/health`，並比對 lock file 與 `/health` 回報的 `instance_id`
+- 目前仍需補單實例與既有實例導向體驗整合、背景穩定性驗證與更多 runtime 測試
+
+### 11.2 `SiteAdapter` 契約需改成正式支援 Chrome-driven 主線
+
+目前已完成：
+
+- `SiteAdapter` 已明確定義 browser page preview 的正式介面
+- `ChromeTabPreviewService` 不再依賴 `hasattr()` 或 ad-hoc 特例
+- `SiteAdapter` 已初步定義 Chrome-driven snapshot 的正式介面
+
+目前仍需收斂：
+
+- 將 Chrome-driven runtime 路徑完整納入同一份正式契約
+
+### 11.3 舊的 target -> URL -> HTML 假設需清除
+
+目前文件已接受 Chrome-driven monitor 主線，但實作內仍殘留：
+
+- target 組 URL 後抓 HTML 的 snapshot 路徑
+- Chrome-driven runtime 以外的舊 snapshot 假設
+
+目前已完成：
+
+- form-based preview / create flow 的舊假設已移除
+
+需收斂成：
+
+- 單一路徑：attach Chrome -> 找或重建分頁 -> refresh -> parse
+- 若未來重新引入 `HTTP-first`，需明確設計成獨立雙軌，而不是殘留在同一條主線中
+
+### 11.4 全域通知通道設定已初步接到 runtime
+
+目前已完成：
+
+- 設定模型
+- SQLite 儲存
+- GUI 設定頁
+- runtime 對 notifier / dispatcher 的初步接線
+- 讓設定能影響 notifier 建立與實際發送
+- 設定頁已有測試通知按鈕，會走與正式通知相同的 notifier / dispatcher 路徑
+- 已有最小 runtime 測試驗證通知發送與 dispatch 結果寫入
+
+目前尚缺：
+
+- 更完整的 runtime 驗證與觀測
+- 長時間執行下的失敗、節流與重試行為驗證
+
+### 11.5 Chrome 背景節流風險仍只做被動偵測
+
+目前已有：
+
+- `possible_throttling` 訊號
+- 初步 runtime 寫入 `debug_artifacts`
+- preview captures 與 runtime `debug_artifacts` 已在 GUI 上明確分工：
+  - preview captures 只用於建立 watch / parser / browser 預覽除錯
+  - runtime `debug_artifacts` 只用於背景輪詢期間的節流、blocked page、tab discard 等訊號
+- 已補最小的 runtime 失敗 / 恢復測試：
+  - `403/blocked page` 會暫停 watch
+  - 前次失敗與 degraded 狀態會在下次成功時重置
+- Chrome 分頁選取不再依賴易變的 index 型 `tab_id`
+- 已先降低同飯店多房型分頁時的抓錯風險
+
+目前尚缺：
+
+- background runtime 的策略反應
+- 歷史與 UI 對節流 / tab discard / blocked page 的完整顯示
+- 專用 profile 預設是否要關閉高效能 / 記憶體節省策略的正式決策
