@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import Callable
 
 CURRENT_SCHEMA_VERSION = 5
+SQLITE_BUSY_TIMEOUT_MS = 5_000
+MIN_SUPPORTED_SCHEMA_VERSION = 2
 
 
 class SchemaVersionMismatchError(RuntimeError):
@@ -22,7 +25,7 @@ class SqliteDatabase:
         """建立已啟用 foreign keys 的 SQLite 連線。"""
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
+        _configure_connection(connection)
         return connection
 
     def initialize(self) -> None:
@@ -163,9 +166,25 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
             discord_webhook_url TEXT,
             updated_at_utc TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE INDEX IF NOT EXISTS idx_check_events_watch_checked_at
+        ON check_events(watch_item_id, checked_at_utc DESC, id DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_price_history_watch_captured_at
+        ON price_history(watch_item_id, captured_at_utc DESC, id DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_debug_artifacts_watch_captured_at
+        ON debug_artifacts(watch_item_id, captured_at_utc DESC, id DESC);
         """
     )
     _persist_schema_version_if_missing(connection)
+
+
+def _configure_connection(connection: sqlite3.Connection) -> None:
+    """套用 SQLite 背景長駐執行所需的連線層設定。"""
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+    connection.execute("PRAGMA journal_mode = WAL")
 
 
 def _validate_existing_schema_version(connection: sqlite3.Connection) -> None:
@@ -184,49 +203,40 @@ def _validate_existing_schema_version(connection: sqlite3.Connection) -> None:
 
 
 def _migrate_schema_if_supported(connection: sqlite3.Connection) -> None:
-    """處理目前程式可接受的最小 schema 升級。"""
+    """依版本鏈逐步執行目前程式可接受的 schema 升級。"""
     row = connection.execute(
         "SELECT value FROM metadata WHERE key = 'schema_version'",
     ).fetchone()
     if row is None:
         return
 
-    current_value = row["value"]
-    if current_value == "2" and CURRENT_SCHEMA_VERSION >= 3:
-        connection.execute(
-            "UPDATE metadata SET value = ? WHERE key = 'schema_version'",
-            ("3",),
-        )
-        current_value = "3"
+    try:
+        current_version = int(row["value"])
+    except ValueError as exc:
+        raise SchemaVersionMismatchError(
+            f"expected integer schema version, got {row['value']}"
+        ) from exc
 
-    if current_value == "3" and CURRENT_SCHEMA_VERSION == 4:
-        connection.execute(
-            "ALTER TABLE watch_item_drafts ADD COLUMN browser_tab_id TEXT"
+    if current_version < MIN_SUPPORTED_SCHEMA_VERSION:
+        raise SchemaVersionMismatchError(
+            f"expected schema version between {MIN_SUPPORTED_SCHEMA_VERSION} and "
+            f"{CURRENT_SCHEMA_VERSION}, got {current_version}"
         )
-        connection.execute(
-            "ALTER TABLE watch_item_drafts ADD COLUMN browser_page_url TEXT"
-        )
-        connection.execute(
-            "UPDATE metadata SET value = ? WHERE key = 'schema_version'",
-            (str(CURRENT_SCHEMA_VERSION),),
-        )
-        current_value = "4"
 
-    if current_value == "4" and CURRENT_SCHEMA_VERSION >= 5:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS notification_throttle_states (
-                channel_name TEXT NOT NULL,
-                dedupe_key TEXT NOT NULL,
-                last_sent_at_utc TEXT NOT NULL,
-                PRIMARY KEY (channel_name, dedupe_key)
+    migration_chain = _build_migration_chain()
+    while current_version < CURRENT_SCHEMA_VERSION:
+        migrate = migration_chain.get(current_version)
+        if migrate is None:
+            raise SchemaVersionMismatchError(
+                f"no migration path from schema version {current_version} to "
+                f"{CURRENT_SCHEMA_VERSION}"
             )
-            """
-        )
+        next_version = migrate(connection)
         connection.execute(
             "UPDATE metadata SET value = ? WHERE key = 'schema_version'",
-            (str(CURRENT_SCHEMA_VERSION),),
+            (str(next_version),),
         )
+        current_version = next_version
 
 
 def _persist_schema_version_if_missing(connection: sqlite3.Connection) -> None:
@@ -238,3 +248,40 @@ def _persist_schema_version_if_missing(connection: sqlite3.Connection) -> None:
         """,
         (str(CURRENT_SCHEMA_VERSION),),
     )
+
+
+def _build_migration_chain() -> dict[int, Callable[[sqlite3.Connection], int]]:
+    """建立 `n -> n+1` 的明確 migration 對應表。"""
+    return {
+        2: _migrate_2_to_3,
+        3: _migrate_3_to_4,
+        4: _migrate_4_to_5,
+    }
+
+
+def _migrate_2_to_3(connection: sqlite3.Connection) -> int:
+    """執行 schema `2 -> 3` 升版。"""
+    del connection
+    return 3
+
+
+def _migrate_3_to_4(connection: sqlite3.Connection) -> int:
+    """執行 schema `3 -> 4` 升版。"""
+    connection.execute("ALTER TABLE watch_item_drafts ADD COLUMN browser_tab_id TEXT")
+    connection.execute("ALTER TABLE watch_item_drafts ADD COLUMN browser_page_url TEXT")
+    return 4
+
+
+def _migrate_4_to_5(connection: sqlite3.Connection) -> int:
+    """執行 schema `4 -> 5` 升版。"""
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS notification_throttle_states (
+            channel_name TEXT NOT NULL,
+            dedupe_key TEXT NOT NULL,
+            last_sent_at_utc TEXT NOT NULL,
+            PRIMARY KEY (channel_name, dedupe_key)
+        )
+        """
+    )
+    return 5

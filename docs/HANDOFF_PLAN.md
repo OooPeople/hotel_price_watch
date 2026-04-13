@@ -84,6 +84,7 @@
 目前尚未完成：
 
 - 更完整的長時間運作、節流與重試行為驗證
+- 單次通知與單次 check 的 transaction / lifetime 邊界再收斂
 
 ## 3. 建議執行順序
 
@@ -113,6 +114,10 @@
   - 前次失敗 / degraded 狀態會在下次成功時正確清零
   - `dev_start` 在既有實例、stale lock、正常啟動三種情境下的行為
 - runtime 與全域測試通知在設定未變時，已會重用 dispatcher，不再每次重建
+- 背景排程與「立即檢查」已共用同一套 per-watch inflight task，不會對同一個 watch 並行執行
+- runtime 已改成以單一 repository transaction 持久化 `latest_check_snapshot`、`check_event`、`price_history`、`notification_state` 與 `debug_artifact`
+- SQLite 連線已套用 `WAL`、`busy_timeout`，並補上 `check_events`、`price_history`、`debug_artifacts` 的歷史查詢 index
+- schema 升版已改成 `n -> n+1` 的明確鏈式 migration，並有 `2 -> 5`、`3 -> 5` 的整合測試
 
 下一步目標：
 
@@ -123,6 +128,7 @@
 - `src/app/bootstrap/container.py`
 - `src/app/main.py`
 - `src/app/monitor/`
+- `src/app/infrastructure/db/`
 
 ### Step 2: 重整 `SiteAdapter` 正式契約
 
@@ -198,9 +204,31 @@
 - `docs/V1_SPEC.md`
   - 若 watch 控制操作、睡眠補掃與 dispatcher 長存化完成，需同步更新
 
+## 4.1 本次 review 的採納結果
+
+本次 `review.md` 中，判定仍成立且應優先處理的是：
+
+- 同一個 watch 的執行互斥
+- 單次 check 的 transaction 一致性
+- SQLite 的長期背景運作準備（WAL / busy_timeout / history index）
+- migration 鏈式升版
+
+以下項目已由近期進度消化，不再列為當前主 blocker：
+
+- 通知節流狀態持久化
+- `NotificationDispatcher` 每次 dispatch 重建
+- 舊的 form-based create flow
+- 舊的 `fetch_target_snapshot()` 契約
+
+以下項目合理，但優先度次於上面四項：
+
+- 拆 `main.py`
+- 拆 `web/views.py`
+- 進一步拆分 `ChromeCdpHtmlFetcher`
+
 ## 5. 交接時的注意事項
 
 - 驗證時建議只對本次修改檔案跑 `ruff`
 - `uv` 偶爾會撞到本機 cache 權限問題；必要時需在既有批准的前綴下重跑
-- 目前 schema 已升到 `4`
-- 若讀到舊 DB，現有程式已支援 `2 -> 3 -> 4` 的最小 migration
+- 目前 schema 已升到 `5`
+- 若讀到舊 DB，現有程式已支援 `2 -> 3 -> 4 -> 5` 的最小 migration

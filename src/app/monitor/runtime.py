@@ -100,6 +100,7 @@ class ChromeDrivenMonitorRuntime:
         self._loop_task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
         self._inflight_tasks: dict[str, asyncio.Task[None]] = {}
+        self._assignment_tasks: set[asyncio.Task[None]] = set()
         self._last_tick_at: datetime | None = None
         self._last_watch_sync_at: datetime | None = None
         self._dispatcher_cache: (
@@ -122,6 +123,14 @@ class ChromeDrivenMonitorRuntime:
             with suppress(asyncio.CancelledError):
                 await self._loop_task
         self._loop_task = None
+
+        assignment_tasks = tuple(self._assignment_tasks)
+        for task in assignment_tasks:
+            task.cancel()
+        for task in assignment_tasks:
+            with suppress(asyncio.CancelledError):
+                await task
+        self._assignment_tasks.clear()
 
         inflight_tasks = tuple(self._inflight_tasks.values())
         for task in inflight_tasks:
@@ -268,28 +277,14 @@ class ChromeDrivenMonitorRuntime:
         )
 
         await asyncio.to_thread(
-            self._runtime_repository.save_latest_check_snapshot,
-            artifacts.latest_check_snapshot,
+            self._runtime_repository.persist_check_outcome,
+            latest_snapshot=artifacts.latest_check_snapshot,
+            check_event=artifacts.check_event,
+            notification_state=next_notification_state,
+            price_history_entry=artifacts.price_history_entry,
+            debug_artifact=debug_artifact,
+            debug_retention_limit=self._debug_retention_limit,
         )
-        await asyncio.to_thread(
-            self._runtime_repository.append_check_event,
-            artifacts.check_event,
-        )
-        if artifacts.price_history_entry is not None:
-            await asyncio.to_thread(
-                self._runtime_repository.append_price_history,
-                artifacts.price_history_entry,
-            )
-        await asyncio.to_thread(
-            self._runtime_repository.save_notification_state,
-            next_notification_state,
-        )
-        if debug_artifact is not None:
-            await asyncio.to_thread(
-                self._runtime_repository.append_debug_artifact,
-                debug_artifact,
-                retention_limit=self._debug_retention_limit,
-            )
 
         if error_handling.should_pause:
             paused_watch = replace(
@@ -305,8 +300,9 @@ class ChromeDrivenMonitorRuntime:
             self._scheduler.remove_watch(watch_item_id)
 
     async def request_check_now(self, watch_item_id: str) -> None:
-        """提供 GUI 立即檢查入口，直接執行單次 watch 檢查。"""
-        await self.run_watch_check_once(watch_item_id)
+        """提供 GUI 立即檢查入口，並與背景排程共用同一個互斥執行任務。"""
+        task = self._get_or_create_watch_check_task(watch_item_id)
+        await asyncio.shield(task)
 
     async def _run_loop(self) -> None:
         """持續同步 watch 定義並取出到期工作。"""
@@ -328,28 +324,27 @@ class ChromeDrivenMonitorRuntime:
             for assignment in assignments:
                 task = asyncio.create_task(
                     self._run_assignment(assignment.watch_item_id),
-                    name=f"watch-check:{assignment.watch_item_id}",
+                    name=f"watch-assignment:{assignment.watch_item_id}",
                 )
-                self._inflight_tasks[assignment.watch_item_id] = task
+                self._assignment_tasks.add(task)
 
-                def _forget_inflight_task(
+                def _forget_assignment_task(
                     completed: asyncio.Task[None],
                     *,
-                    watch_item_id: str = assignment.watch_item_id,
+                    assignment_task: asyncio.Task[None] = task,
                 ) -> None:
-                    """在 worker 結束後清理 inflight task 追蹤。"""
+                    """在 assignment task 結束後清理背景 worker 追蹤。"""
                     del completed
-                    self._inflight_tasks.pop(watch_item_id, None)
+                    self._assignment_tasks.discard(assignment_task)
 
-                task.add_done_callback(
-                    _forget_inflight_task
-                )
+                task.add_done_callback(_forget_assignment_task)
             await asyncio.sleep(self._tick_seconds)
 
     async def _run_assignment(self, watch_item_id: str) -> None:
         """執行單次排程工作，並在完成後更新下一次執行時間。"""
+        task = self._get_or_create_watch_check_task(watch_item_id)
         try:
-            await self.run_watch_check_once(watch_item_id)
+            await asyncio.shield(task)
         finally:
             latest_snapshot = self._runtime_repository.get_latest_check_snapshot(watch_item_id)
             backoff_until = latest_snapshot.backoff_until if latest_snapshot is not None else None
@@ -359,6 +354,29 @@ class ChromeDrivenMonitorRuntime:
                     finished_at=_utcnow(),
                     backoff_until=backoff_until,
                 )
+
+    def _get_or_create_watch_check_task(
+        self,
+        watch_item_id: str,
+    ) -> asyncio.Task[None]:
+        """回傳同一個 watch 共用的檢查 task，避免背景排程與手動檢查並行執行。"""
+        existing_task = self._inflight_tasks.get(watch_item_id)
+        if existing_task is not None and not existing_task.done():
+            return existing_task
+
+        task = asyncio.create_task(
+            self.run_watch_check_once(watch_item_id),
+            name=f"watch-check:{watch_item_id}",
+        )
+        self._inflight_tasks[watch_item_id] = task
+
+        def _forget_inflight_task(completed: asyncio.Task[None]) -> None:
+            """在單次 watch 檢查結束後清理 inflight 追蹤。"""
+            del completed
+            self._inflight_tasks.pop(watch_item_id, None)
+
+        task.add_done_callback(_forget_inflight_task)
+        return task
 
     async def _sync_watch_definitions(
         self,

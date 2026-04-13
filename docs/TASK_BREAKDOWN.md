@@ -131,6 +131,10 @@
 - o 為 Chrome 分頁比對加入最低分門檻與保守 fallback
 - o 將通知節流狀態持久化，避免 app 重啟後通道冷卻歸零
 - o 收斂 `NotificationDispatcher` 生命週期，避免每次 dispatch 重新建立
+- o 讓背景排程與「立即檢查」共用同一套 per-watch 互斥，避免同一個 watch 並行執行
+- o 將單次 check 的多筆寫入整合為單一 transaction，避免部分成功、部分失敗
+- o 為 SQLite 補齊 WAL、busy timeout 與歷史查詢 index
+- o 將 migration 改成明確的鏈式升版，不再用條件式版本跳轉
 
 ### Milestone 6.5 驗收條件
 
@@ -199,3 +203,7 @@
 - o 為 Chrome 分頁比對加入最低分門檻與保守 fallback
 - o 將通知節流狀態持久化
 - o 收斂 `NotificationDispatcher` 生命週期，避免每次 dispatch 重新建立
+- o 讓背景排程與「立即檢查」共用同一套 per-watch 互斥
+- o 將單次 check 的多筆寫入整合為單一 transaction
+- o 為 SQLite 補齊 WAL、busy timeout 與歷史查詢 index
+- o 將 migration 改成明確的鏈式升版

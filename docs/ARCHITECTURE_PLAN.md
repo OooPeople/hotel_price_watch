@@ -492,6 +492,9 @@ V1 的具體策略先定為：
 - 已將睡眠恢復後補掃正式接入 runtime loop，且會尊重既有 backoff 視窗
 - 已將 blocked page / throttling / tab discard 整理成 watch 詳細頁可直接判讀的 runtime 訊號摘要
 - 已深化 `dev_start` 的既有實例導向：沿用既有實例前會先探測 `/health`，並比對 lock file 與 `/health` 回報的 `instance_id`
+- 已讓背景排程與「立即檢查」共用同一套 per-watch inflight task，避免同一個 watch 並行執行
+- 已將單次 check 的主要持久化寫入整合為單一 repository transaction，避免部分成功、部分失敗
+- 已為 SQLite 連線補上 `WAL` 與 `busy_timeout`，並補齊歷史查詢常用 index
 - 目前仍需補單實例與既有實例導向體驗整合、背景穩定性驗證與更多 runtime 測試
 
 ### 11.2 `SiteAdapter` 契約需改成正式支援 Chrome-driven 主線
@@ -540,6 +543,32 @@ V1 的具體策略先定為：
 
 - 更完整的 runtime 驗證與觀測
 - 長時間執行下的失敗、節流與重試行為驗證
+
+### 11.4.1 SQLite 長期背景運作仍需補強
+
+目前已有：
+
+- SQLite schema、repository 與 migration 骨架
+- `notification_states`、`notification_throttle_states` 等狀態持久化
+- `WAL` mode
+- `busy timeout`
+- 歷史查詢與最近 N 筆讀取所需 index
+
+目前尚缺：
+
+- 明確的資料保留政策
+
+### 11.4.2 Migration 已收斂為鏈式升版
+
+目前已有：
+
+- `migrate_n_to_n_plus_1` 形式的明確鏈式 migration
+- 清楚宣告最小支援版本
+- `2 -> 5` 與 `3 -> 5` 的整合測試覆蓋
+
+目前尚缺：
+
+- 單段 migration 的更細粒度單元測試（若未來版本持續增加再評估）
 
 ### 11.5 Chrome 背景節流風險仍只做被動偵測
 

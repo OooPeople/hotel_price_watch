@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import threading
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -154,6 +155,32 @@ class _TimeoutChromeFetcher(_FakeChromeFetcher):
         """直接拋出逾時錯誤，驗證 runtime 會映射成 network_timeout。"""
         del expected_url, fallback_url, preferred_tab_id
         raise TimeoutError("refresh timed out")
+
+
+class _BlockingChromeFetcher(_FakeChromeFetcher):
+    """模擬長時間刷新，驗證同一 watch 的檢查會共用同一個 inflight task。"""
+
+    def __init__(self) -> None:
+        self.call_count = 0
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def refresh_capture_for_url(
+        self,
+        *,
+        expected_url: str,
+        fallback_url: str | None = None,
+        preferred_tab_id: str | None = None,
+    ) -> ChromeTabCapture:
+        """在外部釋放前暫停刷新流程，模擬已在進行中的背景檢查。"""
+        self.call_count += 1
+        self.started.set()
+        self.release.wait(timeout=2)
+        return super().refresh_capture_for_url(
+            expected_url=expected_url,
+            fallback_url=fallback_url,
+            preferred_tab_id=preferred_tab_id,
+        )
 
 
 class _RecordingNotifier:
@@ -1157,6 +1184,101 @@ def test_runtime_reuses_dispatcher_when_settings_unchanged(tmp_path) -> None:
     asyncio.run(runtime.run_watch_check_once(watch_item.id))
 
     assert notifier_factory.call_count == 1
+
+
+def test_request_check_now_reuses_same_inflight_task_for_same_watch(tmp_path) -> None:
+    """同一個 watch 同時觸發兩次立即檢查時，應只執行一次實際刷新。"""
+    database = SqliteDatabase(tmp_path / "watcher.db")
+    database.initialize()
+    watch_repository = SqliteWatchItemRepository(database)
+    runtime_repository = SqliteRuntimeRepository(database)
+    settings_repository = SqliteAppSettingsRepository(database)
+    app_settings_service = AppSettingsService(settings_repository)
+
+    watch_item = _build_runtime_watch_item("watch-runtime-check-now-lock")
+    watch_repository.save(watch_item)
+    watch_repository.save_draft(watch_item.id, _build_runtime_draft(watch_item.canonical_url))
+
+    site_registry = SiteRegistry()
+    site_registry.register(_FakeRuntimeAdapter())
+    fetcher = _BlockingChromeFetcher()
+    runtime = ChromeDrivenMonitorRuntime(
+        watch_item_repository=watch_repository,
+        runtime_repository=runtime_repository,
+        site_registry=site_registry,
+        chrome_fetcher=fetcher,
+        app_settings_service=app_settings_service,
+    )
+
+    import asyncio
+
+    async def _scenario() -> None:
+        first = asyncio.create_task(runtime.request_check_now(watch_item.id))
+        await asyncio.to_thread(fetcher.started.wait, 1)
+        second = asyncio.create_task(runtime.request_check_now(watch_item.id))
+        await asyncio.sleep(0)
+        assert fetcher.call_count == 1
+        fetcher.release.set()
+        await asyncio.gather(first, second)
+
+    asyncio.run(_scenario())
+
+    assert fetcher.call_count == 1
+    assert runtime._inflight_tasks == {}
+
+
+def test_background_assignment_and_check_now_share_same_inflight_task(tmp_path) -> None:
+    """背景排程與立即檢查同時命中同一個 watch 時，應共用同一個檢查 task。"""
+    database = SqliteDatabase(tmp_path / "watcher.db")
+    database.initialize()
+    watch_repository = SqliteWatchItemRepository(database)
+    runtime_repository = SqliteRuntimeRepository(database)
+    settings_repository = SqliteAppSettingsRepository(database)
+    app_settings_service = AppSettingsService(settings_repository)
+
+    watch_item = _build_runtime_watch_item("watch-runtime-assignment-lock")
+    watch_repository.save(watch_item)
+    watch_repository.save_draft(watch_item.id, _build_runtime_draft(watch_item.canonical_url))
+    runtime_repository.save_latest_check_snapshot(
+        _build_latest_snapshot(
+            watch_item_id=watch_item.id,
+            amount=Decimal("22990"),
+            checked_at=datetime(2026, 4, 13, 10, 0, tzinfo=UTC),
+        )
+    )
+
+    site_registry = SiteRegistry()
+    site_registry.register(_FakeRuntimeAdapter())
+    fetcher = _BlockingChromeFetcher()
+    runtime = ChromeDrivenMonitorRuntime(
+        watch_item_repository=watch_repository,
+        runtime_repository=runtime_repository,
+        site_registry=site_registry,
+        chrome_fetcher=fetcher,
+        app_settings_service=app_settings_service,
+    )
+    runtime._scheduler.register_watch(
+        watch_item_id=watch_item.id,
+        interval_seconds=watch_item.scheduler_interval_seconds,
+        now=datetime(2026, 4, 13, 10, 0, tzinfo=UTC),
+        next_run_at=datetime(2026, 4, 13, 10, 0, tzinfo=UTC),
+    )
+
+    import asyncio
+
+    async def _scenario() -> None:
+        background = asyncio.create_task(runtime._run_assignment(watch_item.id))
+        await asyncio.to_thread(fetcher.started.wait, 1)
+        manual = asyncio.create_task(runtime.request_check_now(watch_item.id))
+        await asyncio.sleep(0)
+        assert fetcher.call_count == 1
+        fetcher.release.set()
+        await asyncio.gather(background, manual)
+
+    asyncio.run(_scenario())
+
+    assert fetcher.call_count == 1
+    assert runtime._inflight_tasks == {}
 
 
 def _build_latest_snapshot(

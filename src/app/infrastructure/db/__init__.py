@@ -7,6 +7,7 @@ from app.infrastructure.db.repositories import (
 )
 from app.infrastructure.db.schema import (
     CURRENT_SCHEMA_VERSION,
+    SQLITE_BUSY_TIMEOUT_MS,
     SchemaVersionMismatchError,
     SqliteDatabase,
     initialize_schema,
@@ -14,6 +15,7 @@ from app.infrastructure.db.schema import (
 
 __all__ = [
     "CURRENT_SCHEMA_VERSION",
+    "SQLITE_BUSY_TIMEOUT_MS",
     "SchemaVersionMismatchError",
     "SqliteAppSettingsRepository",
     "SqliteDatabase",

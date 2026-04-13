@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from sqlite3 import Row
+from sqlite3 import Connection, Row
 
 from app.config.models import NotificationChannelSettings
 from app.domain.entities import (
@@ -191,38 +191,34 @@ class SqliteRuntimeRepository:
     def __init__(self, database: SqliteDatabase) -> None:
         self._database = database
 
+    def persist_check_outcome(
+        self,
+        *,
+        latest_snapshot: LatestCheckSnapshot,
+        check_event: CheckEvent,
+        notification_state: NotificationState,
+        price_history_entry: PriceHistoryEntry | None = None,
+        debug_artifact: DebugArtifact | None = None,
+        debug_retention_limit: int = 20,
+    ) -> None:
+        """以單一 transaction 保存單次檢查的所有持久化結果。"""
+        with self._database.connect() as connection:
+            self._save_latest_check_snapshot(connection, latest_snapshot)
+            self._append_check_event(connection, check_event)
+            if price_history_entry is not None:
+                self._append_price_history(connection, price_history_entry)
+            self._save_notification_state(connection, notification_state)
+            if debug_artifact is not None:
+                self._append_debug_artifact(
+                    connection,
+                    debug_artifact,
+                    retention_limit=debug_retention_limit,
+                )
+
     def save_latest_check_snapshot(self, snapshot: LatestCheckSnapshot) -> None:
         """新增或更新 watch item 的最新檢查摘要。"""
         with self._database.connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO latest_check_snapshots (
-                    watch_item_id, checked_at_utc, availability,
-                    normalized_price_amount, currency, backoff_until_utc,
-                    is_degraded, consecutive_failures, last_error_code
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(watch_item_id) DO UPDATE SET
-                    checked_at_utc = excluded.checked_at_utc,
-                    availability = excluded.availability,
-                    normalized_price_amount = excluded.normalized_price_amount,
-                    currency = excluded.currency,
-                    backoff_until_utc = excluded.backoff_until_utc,
-                    is_degraded = excluded.is_degraded,
-                    consecutive_failures = excluded.consecutive_failures,
-                    last_error_code = excluded.last_error_code
-                """,
-                (
-                    snapshot.watch_item_id,
-                    _datetime_to_text(snapshot.checked_at),
-                    snapshot.availability.value,
-                    _decimal_to_text(snapshot.normalized_price_amount),
-                    snapshot.currency,
-                    _datetime_to_text(snapshot.backoff_until),
-                    int(snapshot.is_degraded),
-                    snapshot.consecutive_failures,
-                    snapshot.last_error_code,
-                ),
-            )
+            self._save_latest_check_snapshot(connection, snapshot)
 
     def get_latest_check_snapshot(self, watch_item_id: str) -> LatestCheckSnapshot | None:
         """讀出單一 watch item 的最新檢查摘要。"""
@@ -248,28 +244,7 @@ class SqliteRuntimeRepository:
     def append_check_event(self, event: CheckEvent) -> None:
         """追加單次檢查事件，保留完整事件列表。"""
         with self._database.connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO check_events (
-                    watch_item_id, checked_at_utc, availability, event_kinds_json,
-                    normalized_price_amount, currency, error_code, notification_status,
-                    sent_channels_json, throttled_channels_json, failed_channels_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event.watch_item_id,
-                    _datetime_to_text(event.checked_at),
-                    event.availability.value,
-                    json.dumps(list(event.event_kinds)),
-                    _decimal_to_text(event.normalized_price_amount),
-                    event.currency,
-                    event.error_code,
-                    event.notification_status.value,
-                    json.dumps(list(event.sent_channels)),
-                    json.dumps(list(event.throttled_channels)),
-                    json.dumps(list(event.failed_channels)),
-                ),
-            )
+            self._append_check_event(connection, event)
 
     def list_check_events(self, watch_item_id: str) -> list[CheckEvent]:
         """依時間列出某個 watch item 的檢查歷史。"""
@@ -302,22 +277,7 @@ class SqliteRuntimeRepository:
     def append_price_history(self, entry: PriceHistoryEntry) -> None:
         """追加成功價格點，供價格曲線與歷史頁使用。"""
         with self._database.connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO price_history (
-                    watch_item_id, captured_at_utc, display_price_text,
-                    normalized_price_amount, currency, source_kind
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    entry.watch_item_id,
-                    _datetime_to_text(entry.captured_at),
-                    entry.display_price_text,
-                    str(entry.normalized_price_amount),
-                    entry.currency,
-                    entry.source_kind.value,
-                ),
-            )
+            self._append_price_history(connection, entry)
 
     def list_price_history(self, watch_item_id: str) -> list[PriceHistoryEntry]:
         """依時間列出某個 watch item 的成功價格歷史。"""
@@ -345,33 +305,7 @@ class SqliteRuntimeRepository:
     def save_notification_state(self, state: NotificationState) -> None:
         """新增或更新去重用的通知狀態。"""
         with self._database.connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO notification_states (
-                    watch_item_id, last_notified_price, last_notified_availability,
-                    last_notified_at_utc, consecutive_failures,
-                    consecutive_parse_failures, degraded_notified_at_utc
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(watch_item_id) DO UPDATE SET
-                    last_notified_price = excluded.last_notified_price,
-                    last_notified_availability = excluded.last_notified_availability,
-                    last_notified_at_utc = excluded.last_notified_at_utc,
-                    consecutive_failures = excluded.consecutive_failures,
-                    consecutive_parse_failures = excluded.consecutive_parse_failures,
-                    degraded_notified_at_utc = excluded.degraded_notified_at_utc
-                """,
-                (
-                    state.watch_item_id,
-                    _decimal_to_text(state.last_notified_price),
-                    None
-                    if state.last_notified_availability is None
-                    else state.last_notified_availability.value,
-                    _datetime_to_text(state.last_notified_at),
-                    state.consecutive_failures,
-                    state.consecutive_parse_failures,
-                    _datetime_to_text(state.degraded_notified_at),
-                ),
-            )
+            self._save_notification_state(connection, state)
 
     def get_notification_state(self, watch_item_id: str) -> NotificationState | None:
         """讀出單一 watch item 的通知去重狀態。"""
@@ -443,35 +377,11 @@ class SqliteRuntimeRepository:
     def append_debug_artifact(self, artifact: DebugArtifact, *, retention_limit: int) -> None:
         """追加 debug artifact，並依 watch item 套用保留上限。"""
         with self._database.connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO debug_artifacts (
-                    watch_item_id, captured_at_utc, reason, payload_text, source_url, http_status
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    artifact.watch_item_id,
-                    _datetime_to_text(artifact.captured_at),
-                    artifact.reason,
-                    artifact.payload_text,
-                    artifact.source_url,
-                    artifact.http_status,
-                ),
+            self._append_debug_artifact(
+                connection,
+                artifact,
+                retention_limit=retention_limit,
             )
-            if retention_limit > 0:
-                connection.execute(
-                    """
-                    DELETE FROM debug_artifacts
-                    WHERE watch_item_id = ?
-                      AND id NOT IN (
-                        SELECT id FROM debug_artifacts
-                        WHERE watch_item_id = ?
-                        ORDER BY captured_at_utc DESC, id DESC
-                        LIMIT ?
-                      )
-                    """,
-                    (artifact.watch_item_id, artifact.watch_item_id, retention_limit),
-                )
 
     def list_debug_artifacts(self, watch_item_id: str) -> list[DebugArtifact]:
         """依時間列出 debug artifact，供錯誤排查使用。"""
@@ -495,6 +405,166 @@ class SqliteRuntimeRepository:
             )
             for row in rows
         ]
+
+    def _save_latest_check_snapshot(
+        self,
+        connection: Connection,
+        snapshot: LatestCheckSnapshot,
+    ) -> None:
+        """在既有 connection 上保存最新檢查摘要。"""
+        connection.execute(
+            """
+            INSERT INTO latest_check_snapshots (
+                watch_item_id, checked_at_utc, availability,
+                normalized_price_amount, currency, backoff_until_utc,
+                is_degraded, consecutive_failures, last_error_code
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(watch_item_id) DO UPDATE SET
+                checked_at_utc = excluded.checked_at_utc,
+                availability = excluded.availability,
+                normalized_price_amount = excluded.normalized_price_amount,
+                currency = excluded.currency,
+                backoff_until_utc = excluded.backoff_until_utc,
+                is_degraded = excluded.is_degraded,
+                consecutive_failures = excluded.consecutive_failures,
+                last_error_code = excluded.last_error_code
+            """,
+            (
+                snapshot.watch_item_id,
+                _datetime_to_text(snapshot.checked_at),
+                snapshot.availability.value,
+                _decimal_to_text(snapshot.normalized_price_amount),
+                snapshot.currency,
+                _datetime_to_text(snapshot.backoff_until),
+                int(snapshot.is_degraded),
+                snapshot.consecutive_failures,
+                snapshot.last_error_code,
+            ),
+        )
+
+    def _append_check_event(
+        self,
+        connection: Connection,
+        event: CheckEvent,
+    ) -> None:
+        """在既有 connection 上追加單次檢查事件。"""
+        connection.execute(
+            """
+            INSERT INTO check_events (
+                watch_item_id, checked_at_utc, availability, event_kinds_json,
+                normalized_price_amount, currency, error_code, notification_status,
+                sent_channels_json, throttled_channels_json, failed_channels_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event.watch_item_id,
+                _datetime_to_text(event.checked_at),
+                event.availability.value,
+                json.dumps(list(event.event_kinds)),
+                _decimal_to_text(event.normalized_price_amount),
+                event.currency,
+                event.error_code,
+                event.notification_status.value,
+                json.dumps(list(event.sent_channels)),
+                json.dumps(list(event.throttled_channels)),
+                json.dumps(list(event.failed_channels)),
+            ),
+        )
+
+    def _append_price_history(
+        self,
+        connection: Connection,
+        entry: PriceHistoryEntry,
+    ) -> None:
+        """在既有 connection 上追加成功價格歷史。"""
+        connection.execute(
+            """
+            INSERT INTO price_history (
+                watch_item_id, captured_at_utc, display_price_text,
+                normalized_price_amount, currency, source_kind
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                entry.watch_item_id,
+                _datetime_to_text(entry.captured_at),
+                entry.display_price_text,
+                str(entry.normalized_price_amount),
+                entry.currency,
+                entry.source_kind.value,
+            ),
+        )
+
+    def _save_notification_state(
+        self,
+        connection: Connection,
+        state: NotificationState,
+    ) -> None:
+        """在既有 connection 上保存通知去重狀態。"""
+        connection.execute(
+            """
+            INSERT INTO notification_states (
+                watch_item_id, last_notified_price, last_notified_availability,
+                last_notified_at_utc, consecutive_failures,
+                consecutive_parse_failures, degraded_notified_at_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(watch_item_id) DO UPDATE SET
+                last_notified_price = excluded.last_notified_price,
+                last_notified_availability = excluded.last_notified_availability,
+                last_notified_at_utc = excluded.last_notified_at_utc,
+                consecutive_failures = excluded.consecutive_failures,
+                consecutive_parse_failures = excluded.consecutive_parse_failures,
+                degraded_notified_at_utc = excluded.degraded_notified_at_utc
+            """,
+            (
+                state.watch_item_id,
+                _decimal_to_text(state.last_notified_price),
+                None
+                if state.last_notified_availability is None
+                else state.last_notified_availability.value,
+                _datetime_to_text(state.last_notified_at),
+                state.consecutive_failures,
+                state.consecutive_parse_failures,
+                _datetime_to_text(state.degraded_notified_at),
+            ),
+        )
+
+    def _append_debug_artifact(
+        self,
+        connection: Connection,
+        artifact: DebugArtifact,
+        *,
+        retention_limit: int,
+    ) -> None:
+        """在既有 connection 上追加 debug artifact 並套用保留上限。"""
+        connection.execute(
+            """
+            INSERT INTO debug_artifacts (
+                watch_item_id, captured_at_utc, reason, payload_text, source_url, http_status
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                artifact.watch_item_id,
+                _datetime_to_text(artifact.captured_at),
+                artifact.reason,
+                artifact.payload_text,
+                artifact.source_url,
+                artifact.http_status,
+            ),
+        )
+        if retention_limit > 0:
+            connection.execute(
+                """
+                DELETE FROM debug_artifacts
+                WHERE watch_item_id = ?
+                  AND id NOT IN (
+                    SELECT id FROM debug_artifacts
+                    WHERE watch_item_id = ?
+                    ORDER BY captured_at_utc DESC, id DESC
+                    LIMIT ?
+                  )
+                """,
+                (artifact.watch_item_id, artifact.watch_item_id, retention_limit),
+            )
 
 
 class SqliteAppSettingsRepository:
