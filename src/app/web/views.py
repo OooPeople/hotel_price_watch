@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import datetime
 from decimal import Decimal
 from html import escape
 from typing import Iterable
@@ -15,7 +15,6 @@ from app.domain.entities import (
     DebugArtifact,
     LatestCheckSnapshot,
     NotificationState,
-    PriceHistoryEntry,
     WatchItem,
 )
 from app.domain.enums import NotificationLeafKind
@@ -46,6 +45,10 @@ def render_watch_list_page(
             f"{watch_item.target.check_in_date.isoformat()} - "
             f"{watch_item.target.check_out_date.isoformat()}"
         )
+        actions_html = _render_watch_action_controls(
+            watch_item=watch_item,
+            show_check_now=False,
+        )
         rows.append(
             f"""
             <tr>
@@ -58,16 +61,8 @@ def render_watch_list_page(
               <td>{escape(watch_item.plan_name)}</td>
               <td>{date_range}</td>
               <td>{watch_item.scheduler_interval_seconds}</td>
-              <td>{"啟用" if watch_item.enabled else "停用"}</td>
-              <td>
-                <form
-                  action="/watches/{escape(watch_item.id)}/delete"
-                  method="post"
-                  style="margin:0;"
-                >
-                  <button type="submit" style="{_danger_button_style()}">刪除</button>
-                </form>
-              </td>
+              <td>{escape(_describe_watch_status(watch_item))}</td>
+              <td>{actions_html}</td>
             </tr>
             """
         )
@@ -122,16 +117,8 @@ def _render_runtime_status_section(runtime_status: MonitorRuntimeStatus | None) 
 
     running_text = "運行中" if runtime_status.is_running else "未啟動"
     chrome_text = "可附著" if runtime_status.chrome_debuggable else "不可附著"
-    last_tick_text = (
-        runtime_status.last_tick_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
-        if runtime_status.last_tick_at is not None
-        else "none"
-    )
-    last_sync_text = (
-        runtime_status.last_watch_sync_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
-        if runtime_status.last_watch_sync_at is not None
-        else "none"
-    )
+    last_tick_text = _format_datetime_for_display(runtime_status.last_tick_at)
+    last_sync_text = _format_datetime_for_display(runtime_status.last_watch_sync_at)
     return f"""
     <section style="{_CARD_STYLE};margin-top:20px;">
       <h2 style="margin:0;">Background Monitor</h2>
@@ -283,9 +270,9 @@ def render_watch_detail_page(
     watch_item: WatchItem,
     latest_snapshot: LatestCheckSnapshot | None,
     check_events: tuple[CheckEvent, ...],
-    price_history: tuple[PriceHistoryEntry, ...],
     notification_state: NotificationState | None,
     debug_artifacts: tuple[DebugArtifact, ...],
+    flash_message: str | None = None,
 ) -> str:
     """渲染單一 watch item 的詳細頁與歷史摘要。"""
     target_date_range = (
@@ -299,8 +286,16 @@ def render_watch_detail_page(
         debug_artifacts=debug_artifacts,
     )
     check_events_html = _render_check_events_section(check_events)
-    price_history_html = _render_price_history_section(price_history)
     debug_artifacts_html = _render_debug_artifacts_section(debug_artifacts)
+    flash_html = (
+        f'<p style="{_SUCCESS_STYLE}">{escape(flash_message)}</p>'
+        if flash_message
+        else ""
+    )
+    action_controls_html = _render_watch_action_controls(
+        watch_item=watch_item,
+        show_check_now=True,
+    )
 
     return _page_layout(
         title=f"Watch Detail - {watch_item.hotel_name}",
@@ -317,6 +312,7 @@ def render_watch_detail_page(
               ，{watch_item.target.people_count} 人 / {watch_item.target.room_count} 房
             </p>
             <p>輪詢秒數：{watch_item.scheduler_interval_seconds}</p>
+            <p>目前狀態：{escape(_describe_watch_status(watch_item))}</p>
             <p>Canonical URL：<code>{escape(watch_item.canonical_url)}</code></p>
             <p>
               <a
@@ -326,10 +322,11 @@ def render_watch_detail_page(
                 通知設定
               </a>
             </p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">{action_controls_html}</div>
           </div>
+          {flash_html}
           {latest_snapshot_html}
           {check_events_html}
-          {price_history_html}
           {debug_artifacts_html}
         </section>
         """,
@@ -473,11 +470,7 @@ def render_notification_channel_settings_page(
         if flash_message
         else ""
     )
-    test_result_html = (
-        f'<p style="{_SUCCESS_STYLE}">{escape(test_result_message)}</p>'
-        if test_result_message
-        else ""
-    )
+    test_result_html = _render_notification_test_result_section(test_result_message)
     return _page_layout(
         title="全域通知設定",
         body=f"""
@@ -803,11 +796,7 @@ def render_debug_capture_list_page(
     """渲染 preview debug capture 列表頁。"""
     rows = []
     for capture in captures:
-        captured_at = (
-            capture.captured_at_utc.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
-            if capture.captured_at_utc is not None
-            else "unknown"
-        )
+        captured_at = _format_datetime_for_display(capture.captured_at_utc)
         latest_status = capture.diagnostics[-1].status if capture.diagnostics else "n/a"
         candidate_count = (
             str(capture.candidate_count)
@@ -868,7 +857,7 @@ def render_debug_capture_list_page(
             <thead>
               <tr>
                 <th style="{_cell_style(head=True)}">Capture ID</th>
-                <th style="{_cell_style(head=True)}">UTC 時間</th>
+                <th style="{_cell_style(head=True)}">時間</th>
                 <th style="{_cell_style(head=True)}">解析飯店名</th>
                 <th style="{_cell_style(head=True)}">候選數</th>
                 <th style="{_cell_style(head=True)}">最後狀態</th>
@@ -887,11 +876,7 @@ def render_debug_capture_detail_page(
     capture: DebugCaptureDetail,
 ) -> str:
     """渲染單筆 preview debug capture 詳細內容頁。"""
-    captured_at = (
-        capture.summary.captured_at_utc.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
-        if capture.summary.captured_at_utc is not None
-        else "unknown"
-    )
+    captured_at = _format_datetime_for_display(capture.summary.captured_at_utc)
     diagnostics_html = _render_diagnostics_section(capture.summary.diagnostics)
     html_preview = (
         escape(capture.html_content[:5000])
@@ -905,7 +890,7 @@ def render_debug_capture_detail_page(
           <div>
             <a href="/debug/captures" style="color:#0f766e;text-decoration:none;">← 回 captures</a>
             <h1>{escape(capture.summary.capture_id)}</h1>
-            <p>UTC 時間：{escape(captured_at)}</p>
+            <p>時間：{escape(captured_at)}</p>
             <p>Capture 類型：{escape(capture.summary.capture_scope)}</p>
             <p>Seed URL：<code>{escape(capture.summary.seed_url)}</code></p>
             <p>解析飯店名：{escape(capture.summary.parsed_hotel_name)}</p>
@@ -963,14 +948,14 @@ def _render_latest_snapshot_section(
         else "none"
     )
     last_notified_at = (
-        notification_state.last_notified_at.isoformat()
+        _format_datetime_for_display(notification_state.last_notified_at)
         if notification_state and notification_state.last_notified_at
         else "none"
     )
     return f"""
     <section style="{_CARD_STYLE}">
       <h2>最近摘要</h2>
-      <p>最近檢查：{escape(latest_snapshot.checked_at.isoformat())}</p>
+      <p>最近檢查：{escape(_format_datetime_for_display(latest_snapshot.checked_at))}</p>
       <p>Availability：{escape(latest_snapshot.availability.value)}</p>
       <p>最近價格：{escape(latest_price)}</p>
       <p>連續失敗次數：{latest_snapshot.consecutive_failures}</p>
@@ -1005,7 +990,7 @@ def _render_check_events_section(check_events: tuple[CheckEvent, ...]) -> str:
         """
 
     rows = []
-    for event in check_events[-20:]:
+    for event in sorted(check_events, key=lambda item: item.checked_at, reverse=True)[:20]:
         event_kind_text = ", ".join(event.event_kinds) or "checked"
         event_price_text = _format_optional_money(
             event.currency,
@@ -1014,7 +999,9 @@ def _render_check_events_section(check_events: tuple[CheckEvent, ...]) -> str:
         rows.append(
             f"""
             <tr>
-              <td style="{_cell_style(head=False)}">{escape(event.checked_at.isoformat())}</td>
+              <td style="{_cell_style(head=False)}">
+                {escape(_format_datetime_for_display(event.checked_at))}
+              </td>
               <td style="{_cell_style(head=False)}">{escape(event.availability.value)}</td>
               <td style="{_cell_style(head=False)}">{escape(event_kind_text)}</td>
               <td style="{_cell_style(head=False)}">{escape(event_price_text)}</td>
@@ -1044,45 +1031,6 @@ def _render_check_events_section(check_events: tuple[CheckEvent, ...]) -> str:
     """
 
 
-def _render_price_history_section(price_history: tuple[PriceHistoryEntry, ...]) -> str:
-    """渲染成功價格歷史。"""
-    if not price_history:
-        return f"""
-        <section style="{_CARD_STYLE}">
-          <h2>價格歷史</h2>
-          <p>目前尚無成功價格紀錄。</p>
-        </section>
-        """
-
-    rows = []
-    for entry in price_history[-20:]:
-        rows.append(
-            f"""
-            <tr>
-              <td style="{_cell_style(head=False)}">{escape(entry.captured_at.isoformat())}</td>
-              <td style="{_cell_style(head=False)}">{escape(entry.display_price_text)}</td>
-              <td style="{_cell_style(head=False)}">{escape(entry.source_kind.value)}</td>
-            </tr>
-            """
-        )
-
-    return f"""
-    <section style="{_CARD_STYLE}">
-      <h2>價格歷史</h2>
-      <table style="width:100%;border-collapse:collapse;">
-        <thead>
-          <tr>
-            <th style="{_cell_style(head=True)}">時間</th>
-            <th style="{_cell_style(head=True)}">價格</th>
-            <th style="{_cell_style(head=True)}">來源</th>
-          </tr>
-        </thead>
-        <tbody>{"".join(rows)}</tbody>
-      </table>
-    </section>
-    """
-
-
 def _render_debug_artifacts_section(debug_artifacts: tuple[DebugArtifact, ...]) -> str:
     """渲染與單一 watch item 關聯的 debug artifact 摘要。"""
     if not debug_artifacts:
@@ -1103,7 +1051,9 @@ def _render_debug_artifacts_section(debug_artifacts: tuple[DebugArtifact, ...]) 
         rows.append(
             f"""
             <tr>
-              <td style="{_cell_style(head=False)}">{escape(artifact.captured_at.isoformat())}</td>
+              <td style="{_cell_style(head=False)}">
+                {escape(_format_datetime_for_display(artifact.captured_at))}
+              </td>
               <td style="{_cell_style(head=False)}">{escape(reason_text)}</td>
               <td style="{_cell_style(head=False)}">{escape(artifact.source_url or "none")}</td>
               <td style="{_cell_style(head=False)}">{escape(http_status_text)}</td>
@@ -1150,7 +1100,7 @@ def _render_runtime_signal_summary(debug_artifacts: tuple[DebugArtifact, ...]) -
 
     latest_artifact = recent_artifacts[0]
     latest_reason = _describe_debug_reason(latest_artifact.reason)
-    latest_at = latest_artifact.captured_at.isoformat()
+    latest_at = _format_datetime_for_display(latest_artifact.captured_at)
     summary_parts = [
         f"{_describe_debug_reason(reason)} {count} 次"
         for reason, count in sorted(counts.items())
@@ -1163,6 +1113,100 @@ def _render_runtime_signal_summary(debug_artifacts: tuple[DebugArtifact, ...]) -
       <span>{escape(summary_text)}</span>
     </div>
     """
+
+
+def _render_watch_action_controls(*, watch_item: WatchItem, show_check_now: bool) -> str:
+    """依 watch 狀態渲染可用的啟用、暫停、停用與立即檢查操作。"""
+    actions: list[str] = []
+    if watch_item.enabled and watch_item.paused_reason is None:
+        if show_check_now:
+            actions.append(
+                _render_watch_action_form(
+                    watch_item_id=watch_item.id,
+                    action="check-now",
+                    label="立即檢查",
+                    button_style=_primary_button_style(),
+                )
+            )
+        actions.append(
+            _render_watch_action_form(
+                watch_item_id=watch_item.id,
+                action="pause",
+                label="暫停",
+                button_style=_secondary_button_style(),
+            )
+        )
+        actions.append(
+            _render_watch_action_form(
+                watch_item_id=watch_item.id,
+                action="disable",
+                label="停用",
+                button_style=_secondary_button_style(),
+            )
+        )
+    elif watch_item.enabled and watch_item.paused_reason is not None:
+        actions.append(
+            _render_watch_action_form(
+                watch_item_id=watch_item.id,
+                action="resume",
+                label="恢復",
+                button_style=_primary_button_style(),
+            )
+        )
+        actions.append(
+            _render_watch_action_form(
+                watch_item_id=watch_item.id,
+                action="disable",
+                label="停用",
+                button_style=_secondary_button_style(),
+            )
+        )
+    else:
+        actions.append(
+            _render_watch_action_form(
+                watch_item_id=watch_item.id,
+                action="enable",
+                label="啟用",
+                button_style=_primary_button_style(),
+            )
+        )
+    actions.append(
+        _render_watch_action_form(
+            watch_item_id=watch_item.id,
+            action="delete",
+            label="刪除",
+            button_style=_danger_button_style(),
+        )
+    )
+    return '<div style="display:flex;gap:8px;flex-wrap:wrap;">' + "".join(actions) + "</div>"
+
+
+def _render_watch_action_form(
+    *,
+    watch_item_id: str,
+    action: str,
+    label: str,
+    button_style: str,
+) -> str:
+    """渲染單一 watch 操作按鈕表單。"""
+    return f"""
+    <form
+      action="/watches/{escape(watch_item_id)}/{escape(action)}"
+      method="post"
+      style="margin:0;"
+    >
+      <button type="submit" style="{button_style}">{escape(label)}</button>
+    </form>
+    """
+
+
+def _describe_watch_status(watch_item: WatchItem) -> str:
+    """把 watch 的啟用與暫停狀態整理成較易讀的文字。"""
+    if not watch_item.enabled:
+        return "停用"
+    if watch_item.paused_reason is not None:
+        return "暫停"
+    return "啟用"
 
 
 def _page_layout(*, title: str, body: str) -> str:
@@ -1270,6 +1314,13 @@ def _format_decimal_for_display(amount) -> str:
     return format(amount.normalize(), "f")
 
 
+def _format_datetime_for_display(value: datetime | None) -> str:
+    """將 aware datetime 轉成使用者電腦目前的本地時間格式。"""
+    if value is None:
+        return "none"
+    return value.astimezone().strftime("%Y/%m/%d %H:%M")
+
+
 def _format_optional_money(currency: str | None, amount: Decimal | None) -> str:
     """把可選價格欄位整理成較易讀的文字。"""
     if amount is None:
@@ -1325,6 +1376,39 @@ def _render_notification_target_price_hint(kind: NotificationLeafKind) -> str:
         "只有當價格低於此門檻時才會通知。"
         "</p>"
     )
+
+
+def _render_notification_test_result_section(test_result_message: str | None) -> str:
+    """把測試通知結果整理成較易讀的摘要區塊。"""
+    if not test_result_message:
+        return ""
+
+    sent_text = _extract_test_result_segment(test_result_message, "sent")
+    throttled_text = _extract_test_result_segment(test_result_message, "throttled")
+    failed_text = _extract_test_result_segment(test_result_message, "failed")
+    details_text = _extract_test_result_segment(test_result_message, "details")
+    return f"""
+    <section style="{_CARD_STYLE}">
+      <h2 style="margin:0;">測試通知結果</h2>
+      <p style="margin:0;">成功通道：{escape(sent_text or "none")}</p>
+      <p style="margin:0;">節流通道：{escape(throttled_text or "none")}</p>
+      <p style="margin:0;">失敗通道：{escape(failed_text or "none")}</p>
+      <p style="margin:0;">失敗原因：{escape(details_text or "none")}</p>
+    </section>
+    """
+
+
+def _extract_test_result_segment(message: str, key: str) -> str:
+    """從 redirect 的測試通知摘要中取出指定欄位內容。"""
+    marker = f"{key}="
+    if marker not in message:
+        return ""
+
+    suffix = message.split(marker, 1)[1]
+    for separator in ("；", ";"):
+        if separator in suffix:
+            return suffix.split(separator, 1)[0].strip()
+    return suffix.strip()
 
 
 def _notification_target_price_wrapper_style(kind: NotificationLeafKind) -> str:

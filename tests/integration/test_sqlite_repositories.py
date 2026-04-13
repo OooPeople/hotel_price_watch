@@ -11,6 +11,7 @@ from app.domain.entities import (
     DebugArtifact,
     LatestCheckSnapshot,
     NotificationState,
+    NotificationThrottleState,
     PriceHistoryEntry,
     WatchItem,
 )
@@ -171,6 +172,28 @@ def test_runtime_repository_persists_latest_history_and_notification_state(tmp_p
     assert repository.list_check_events("watch-1") == [event]
     assert repository.list_price_history("watch-1") == [price_history]
     assert repository.get_notification_state("watch-1") == notification_state
+
+
+def test_runtime_repository_persists_notification_throttle_state(tmp_path) -> None:
+    """驗證通道級節流狀態可正確往返保存。"""
+    database = SqliteDatabase(tmp_path / "watcher.db")
+    database.initialize()
+    repository = SqliteRuntimeRepository(database)
+    state = NotificationThrottleState(
+        channel_name="discord",
+        dedupe_key="watch-1:price_drop:available:22000",
+        last_sent_at=datetime(2026, 4, 12, 10, 0, 0),
+    )
+
+    repository.save_notification_throttle_state(state)
+
+    assert (
+        repository.get_notification_throttle_state(
+            channel_name="discord",
+            dedupe_key="watch-1:price_drop:available:22000",
+        )
+        == state
+    )
 
 
 def test_debug_artifact_retention_keeps_only_latest_items(tmp_path) -> None:

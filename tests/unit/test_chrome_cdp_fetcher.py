@@ -287,3 +287,58 @@ def test_find_best_page_prefers_matching_query_over_same_hotel_root() -> None:
 
     assert best_page is not None
     assert best_page.url == expected_url
+
+
+def test_find_best_page_rejects_same_hotel_with_wrong_room_plan() -> None:
+    """若同飯店分頁的 room/plan 不吻合，應回傳 None 走保守 fallback。"""
+    fetcher = ChromeCdpHtmlFetcher()
+    expected_url = (
+        "https://www.ikyu.com/zh-tw/00082173/"
+        "?adc=1&cid=20260918&pln=11035620&ppc=2&rc=1&rm=10191605&si=1&st=1"
+    )
+
+    class _Page:
+        def __init__(self, url: str) -> None:
+            self.url = url
+
+        def is_closed(self) -> bool:
+            return False
+
+    class _Context:
+        def __init__(self) -> None:
+            self.pages = [
+                _Page(
+                    "https://www.ikyu.com/zh-tw/00082173/"
+                    "?adc=1&cid=20260918&pln=99999999&ppc=2&rc=1&rm=88888888&si=1&st=1"
+                ),
+            ]
+
+    best_page = fetcher._find_best_page(_Context(), expected_url=expected_url)
+
+    assert best_page is None
+
+
+def test_find_best_page_rejects_low_confidence_hotel_root_page() -> None:
+    """若只有同飯店根頁，應回傳 None 讓 runtime 自行導向精確目標頁。"""
+    fetcher = ChromeCdpHtmlFetcher()
+    expected_url = (
+        "https://www.ikyu.com/zh-tw/00082173/"
+        "?adc=1&cid=20260918&pln=11035620&ppc=2&rc=1&rm=10191605&si=1&st=1"
+    )
+
+    class _Page:
+        def __init__(self, url: str) -> None:
+            self.url = url
+
+        def is_closed(self) -> bool:
+            return False
+
+    class _Context:
+        def __init__(self) -> None:
+            self.pages = [
+                _Page("https://www.ikyu.com/zh-tw/00082173/?top=rooms"),
+            ]
+
+    best_page = fetcher._find_best_page(_Context(), expected_url=expected_url)
+
+    assert best_page is None

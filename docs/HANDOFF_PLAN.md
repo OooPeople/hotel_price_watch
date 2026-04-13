@@ -20,14 +20,15 @@
 - 從專用 Chrome 分頁選擇 `ikyu` 頁面建立 watch
 - 顯示飯店、房型、價格與每人每晚衍生值
 - watch 列表、刪除、通知規則設定
+- watch 的啟用 / 停用 / 暫停 / 恢復 / 手動立即檢查
 - 全域通知通道設定頁
 - 全域通知設定頁的測試通知按鈕
 - debug captures 列表 / 詳細頁 / 清空
 - watch 詳細頁、歷史與錯誤摘要
 
-## 2. review 已確認的核心問題
+## 2. 目前主要缺口
 
-### 2.1 最大問題：background runtime 已初步接線，但還沒完成穩定化
+### 2.1 background runtime 已接線，但仍需最後一段穩定化
 
 目前 monitor 模組已能透過 app 啟動流程帶起，但仍屬初步版本：
 
@@ -37,9 +38,7 @@
 
 目前尚未正式完成：
 
-- 單實例保護的 deeper 整合與既有實例導向體驗
-- 更長期穩定的 Chrome 分頁識別策略
-- 節流 / blocked page / tab discard 的完整 runtime 策略
+- 更完整的長時間運作、節流與重試行為驗證
 
 換句話說，現在已不是只有 GUI / preview / CRUD，但仍不能把它視為最終穩定版背景輪詢。
 
@@ -56,12 +55,14 @@
 
 - 避免 preview 與 runtime 後續再長出新特例
 
-### 2.3 舊的 `HTTP-first` / form-based 假設仍殘留
+### 2.3 舊的 `HTTP-first` / form-based 假設大多已清除，但 runtime 層仍需最後收斂
 
-文件已改成 Chrome-driven monitor 主線，但程式內還殘留：
+文件已改成 Chrome-driven monitor 主線。舊的 form-based create flow 已清掉，但 runtime 層仍要避免再長出回到舊模型的特例。
 
-- target -> URL -> HTML 的 snapshot 假設
-- 舊的 target snapshot 仍偏向由 URL 重建，而不是正式 Chrome-driven runtime
+目前仍需注意：
+
+- runtime 後續新增能力時，不要再回頭引入 target -> URL -> HTML 的隱性雙軌
+- browser preview、browser snapshot、runtime refresh 需維持同一份正式契約
 
 目前已完成：
 
@@ -70,9 +71,9 @@
 - 建立 watch 會優先沿用目前 preview 來源，而不是再走舊的表單覆寫路徑
 - 舊的 target -> URL -> HTML snapshot 契約已從 `SiteAdapter` 正式介面移除
 
-這些都會擾亂後續維護。
+若這裡不守住，後續維護仍會再次被雙主線拖亂。
 
-### 2.4 全域通知設定已初步生效，但還需 runtime 驗證
+### 2.4 全域通知設定已可實際發送，但 runtime 行為仍需收斂
 
 目前已完成：
 
@@ -82,8 +83,7 @@
 
 目前尚未完成：
 
-- 補更完整的 runtime 測試與可觀測性
-- 驗證長時間運作下的節流、失敗與重試行為
+- 更完整的長時間運作、節流與重試行為驗證
 
 ## 3. 建議執行順序
 
@@ -104,6 +104,7 @@
 - blocked page / throttling / tab discard 已整理成 watch 詳細頁上方的 runtime 訊號摘要，不再只藏在 debug artifact 表格中
 - `dev_start` 在沿用既有實例前，已會先探測 `/health`，避免把失效的舊執行個體誤判成可沿用
 - `dev_start` 在沿用既有實例前，已會比對 lock file 與 `/health` 回報的 `instance_id`，避免誤連到另一個不一致的執行個體
+- runtime 錯誤映射已改為型別導向，不再依賴訊息字串
 - 已有最小單元測試驗證：
   - 單次 runtime check 會寫入 `latest_check_snapshots` / `check_events` / `price_history`
   - 命中通知規則時會經過 dispatcher 發送
@@ -111,13 +112,11 @@
   - `403/blocked page` 會暫停 watch 並寫入錯誤摘要
   - 前次失敗 / degraded 狀態會在下次成功時正確清零
   - `dev_start` 在既有實例、stale lock、正常啟動三種情境下的行為
+- runtime 與全域測試通知在設定未變時，已會重用 dispatcher，不再每次重建
 
 下一步目標：
 
-- 補單實例保護整合
-- 補更完整的 background runtime 測試
-- 將目前 draft 層級的 browser 線索策略收斂成更長期的正式模型
-- o 已收斂 preview captures 與 runtime `debug_artifacts` 的分工
+- 補更完整的長時間運作、節流與重試行為驗證
 
 建議切入點：
 
@@ -130,7 +129,8 @@
 目標：
 
 - 已完成 browser page preview 正式介面化
-- 下一步要把 Chrome-driven snapshot 也變成正式介面
+- 已完成 browser page snapshot 正式介面化
+- 下一步重點是避免 runtime 路徑再長出 ad-hoc 特例
 
 建議切入點：
 
@@ -151,13 +151,14 @@
 - `src/app/application/watch_editor.py`
 - `src/app/main.py`
 
-### Step 4: 補強 notifier runtime 驗證
+### Step 4: 補強 notifier runtime 驗證與生命週期
 
 目前已完成：
 
 - 全域通知通道設定已可影響 runtime notifier 建立
 - desktop / ntfy / Discord 已能由 runtime 決定是否發送
 - 全域通知設定頁已可送出一則真正走 dispatcher / notifier 路徑的測試通知
+- 通道節流狀態已持久化，app 重啟後不會重置通道冷卻
 
 下一步目標：
 
@@ -186,7 +187,7 @@
 - `src/app/monitor/`
 - `src/app/application/debug_captures.py`
 
-## 4. 建議新增或修改的文件說明
+## 4. 文件維護方式
 
 若下一個對話要繼續做 runtime，建議同步維護：
 
@@ -195,11 +196,10 @@
 - `docs/ARCHITECTURE_PLAN.md`
   - 若 `SiteAdapter` 契約有變，優先更新
 - `docs/V1_SPEC.md`
-  - 若背景輪詢正式接線完成，再把「目前實作現況註記」更新掉
+  - 若 watch 控制操作、睡眠補掃與 dispatcher 長存化完成，需同步更新
 
 ## 5. 交接時的注意事項
 
-- 目前 `uv run ruff check .` 仍會被 repo 內 `tickets_hunter/` 的既存 lint 問題干擾
 - 驗證時建議只對本次修改檔案跑 `ruff`
 - `uv` 偶爾會撞到本機 cache 權限問題；必要時需在既有批准的前綴下重跑
 - 目前 schema 已升到 `4`

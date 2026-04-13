@@ -7,7 +7,11 @@ from app.notifiers.discord import DiscordWebhookNotifier
 from app.notifiers.formatters import build_notification_message
 from app.notifiers.models import NotificationMessage
 from app.notifiers.ntfy import NtfyNotifier
-from app.notifiers.throttling import InMemoryNotificationThrottle, NotificationDispatcher
+from app.notifiers.throttling import (
+    InMemoryNotificationThrottle,
+    NotificationDispatcher,
+    PersistentNotificationThrottle,
+)
 
 __all__ = [
     "DesktopNotifier",
@@ -18,5 +22,6 @@ __all__ = [
     "NotificationMessage",
     "Notifier",
     "NtfyNotifier",
+    "PersistentNotificationThrottle",
     "build_notification_message",
 ]

@@ -8,6 +8,9 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Callable
 
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
 from app.application.app_settings import AppSettingsService
 from app.config.models import NotificationChannelSettings
 from app.domain.entities import (
@@ -19,6 +22,7 @@ from app.domain.entities import (
 from app.domain.enums import Availability, CheckErrorCode, SourceKind
 from app.domain.notification_engine import compare_snapshots, evaluate_notification_rule
 from app.infrastructure.browser import ChromeCdpHtmlFetcher
+from app.infrastructure.browser.ikyu_page_guards import IkyuBlockedPageError
 from app.infrastructure.db.repositories import (
     SqliteRuntimeRepository,
     SqliteWatchItemRepository,
@@ -27,14 +31,15 @@ from app.monitor.policies import (
     build_monitor_check_artifacts,
     decide_error_handling,
     reset_notification_state_after_success,
+    should_trigger_wakeup_rescan,
 )
 from app.monitor.scheduler import MonitorScheduler
 from app.notifiers import (
     DesktopNotifier,
     DiscordWebhookNotifier,
-    InMemoryNotificationThrottle,
     NotificationDispatcher,
     NtfyNotifier,
+    PersistentNotificationThrottle,
     build_notification_message,
 )
 from app.notifiers.base import Notifier
@@ -69,9 +74,11 @@ class ChromeDrivenMonitorRuntime:
         app_settings_service: AppSettingsService,
         scheduler: MonitorScheduler | None = None,
         notifier_factory: NotifierFactory | None = None,
+        notification_throttle: PersistentNotificationThrottle | None = None,
         tick_seconds: float = 1.0,
         max_workers: int = 2,
         debug_retention_limit: int = 20,
+        wakeup_rescan_threshold_seconds: float = 120.0,
     ) -> None:
         """建立 background monitor runtime 所需的主要依賴。"""
         self._watch_item_repository = watch_item_repository
@@ -81,15 +88,23 @@ class ChromeDrivenMonitorRuntime:
         self._app_settings_service = app_settings_service
         self._scheduler = scheduler or MonitorScheduler()
         self._notifier_factory = notifier_factory or _build_enabled_notifiers
-        self._notification_throttle = InMemoryNotificationThrottle()
+        self._notification_throttle = (
+            notification_throttle or PersistentNotificationThrottle(runtime_repository)
+        )
         self._tick_seconds = tick_seconds
         self._max_workers = max_workers
         self._debug_retention_limit = debug_retention_limit
+        self._wakeup_rescan_threshold = timedelta(
+            seconds=wakeup_rescan_threshold_seconds
+        )
         self._loop_task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
         self._inflight_tasks: dict[str, asyncio.Task[None]] = {}
         self._last_tick_at: datetime | None = None
         self._last_watch_sync_at: datetime | None = None
+        self._dispatcher_cache: (
+            tuple[NotificationChannelSettings, NotificationDispatcher] | None
+        ) = None
 
     async def start(self) -> None:
         """啟動 background monitor loop。"""
@@ -187,7 +202,7 @@ class ChromeDrivenMonitorRuntime:
                 checked_at=checked_at,
             )
         except Exception as exc:
-            error_code = _map_runtime_exception_to_error_code(exc)
+            error_code = _map_runtime_exception_to_error_code_typed(exc)
             current_snapshot = PriceSnapshot(
                 display_price_text=None,
                 normalized_price_amount=None,
@@ -289,12 +304,23 @@ class ChromeDrivenMonitorRuntime:
             await asyncio.to_thread(self._watch_item_repository.save, paused_watch)
             self._scheduler.remove_watch(watch_item_id)
 
+    async def request_check_now(self, watch_item_id: str) -> None:
+        """提供 GUI 立即檢查入口，直接執行單次 watch 檢查。"""
+        await self.run_watch_check_once(watch_item_id)
+
     async def _run_loop(self) -> None:
         """持續同步 watch 定義並取出到期工作。"""
         while not self._stop_event.is_set():
             now = _utcnow()
+            resumed_after_sleep = (
+                self._last_tick_at is not None
+                and now - self._last_tick_at >= self._wakeup_rescan_threshold
+            )
             self._last_tick_at = now
-            await self._sync_watch_definitions(now=now)
+            await self._sync_watch_definitions(
+                now=now,
+                resumed_after_sleep=resumed_after_sleep,
+            )
             assignments = self._scheduler.dequeue_due_work(
                 now=now,
                 max_workers=self._max_workers,
@@ -334,7 +360,12 @@ class ChromeDrivenMonitorRuntime:
                     backoff_until=backoff_until,
                 )
 
-    async def _sync_watch_definitions(self, *, now: datetime) -> None:
+    async def _sync_watch_definitions(
+        self,
+        *,
+        now: datetime,
+        resumed_after_sleep: bool = False,
+    ) -> None:
         """把 DB 內 watch item 的實際狀態同步到 scheduler。"""
         watch_items = await asyncio.to_thread(self._watch_item_repository.list_all)
         self._last_watch_sync_at = now
@@ -353,6 +384,19 @@ class ChromeDrivenMonitorRuntime:
                 self._runtime_repository.get_latest_check_snapshot,
                 watch_item.id,
             )
+            if resumed_after_sleep and should_trigger_wakeup_rescan(
+                resumed_at=now,
+                last_checked_at=(
+                    latest_snapshot.checked_at if latest_snapshot is not None else None
+                ),
+                backoff_until=(
+                    latest_snapshot.backoff_until if latest_snapshot is not None else None
+                ),
+            ):
+                self._scheduler.reschedule_now(
+                    watch_item_id=watch_item.id,
+                    now=now,
+                )
             desired_next_run_at = _compute_next_run_at(
                 latest_snapshot=latest_snapshot,
                 interval_seconds=watch_item.scheduler_interval_seconds,
@@ -380,8 +424,32 @@ class ChromeDrivenMonitorRuntime:
     ):
         """依全域設定建立 notifier 並實際送出通知。"""
         settings = self._app_settings_service.get_notification_channel_settings()
+        dispatcher = self._get_or_build_dispatcher(settings)
+        if dispatcher is None:
+            return None
+        message = build_notification_message(
+            watch_item=watch_item,
+            check_result=check_result,
+            decision=notification_decision,
+        )
+        return dispatcher.dispatch(
+            message=message,
+            attempted_at=attempted_at,
+        )
+
+    def _get_or_build_dispatcher(
+        self,
+        settings: NotificationChannelSettings,
+    ) -> NotificationDispatcher | None:
+        """在設定未變動時重用 dispatcher，避免每次檢查都重新建立。"""
+        if self._dispatcher_cache is not None:
+            cached_settings, cached_dispatcher = self._dispatcher_cache
+            if cached_settings == settings:
+                return cached_dispatcher
+
         enabled_notifiers = self._notifier_factory(settings)
         if not enabled_notifiers:
+            self._dispatcher_cache = None
             return None
 
         dispatcher = NotificationDispatcher(
@@ -393,15 +461,8 @@ class ChromeDrivenMonitorRuntime:
                 "discord": 300,
             },
         )
-        message = build_notification_message(
-            watch_item=watch_item,
-            check_result=check_result,
-            decision=notification_decision,
-        )
-        return dispatcher.dispatch(
-            message=message,
-            attempted_at=attempted_at,
-        )
+        self._dispatcher_cache = (settings, dispatcher)
+        return dispatcher
 
 
 def _previous_snapshot_from_latest(latest_snapshot) -> PriceSnapshot | None:
@@ -448,6 +509,17 @@ def _map_runtime_exception_to_error_code(exc: Exception) -> CheckErrorCode:
         return CheckErrorCode.FORBIDDEN_403
     if "timeout" in message.lower() or "逾時" in message:
         return CheckErrorCode.NETWORK_TIMEOUT
+    return CheckErrorCode.NETWORK_ERROR
+
+
+def _map_runtime_exception_to_error_code_typed(exc: Exception) -> CheckErrorCode:
+    """將 runtime 例外映射為監看錯誤代碼。"""
+    if isinstance(exc, IkyuBlockedPageError):
+        return CheckErrorCode.FORBIDDEN_403
+    if isinstance(exc, (TimeoutError, PlaywrightTimeoutError)):
+        return CheckErrorCode.NETWORK_TIMEOUT
+    if isinstance(exc, PlaywrightError):
+        return CheckErrorCode.NETWORK_ERROR
     return CheckErrorCode.NETWORK_ERROR
 
 

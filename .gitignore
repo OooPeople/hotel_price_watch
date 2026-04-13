@@ -1,8 +1,9 @@
 __pycache__/
 .pytest_cache/
+.pytest_tmp*/
+.pytest_run*/
 .mypy_cache/
 .ruff_cache/
-.tmp_pytest/
 .venv/
 venv/
 build/
@@ -29,3 +30,4 @@ data/chrome_cdp_profile/
 data/browser_profiles/
 data/browser-profile-debug/
 data/browser-profile-stealth-debug/
+data/app_instance.lock

@@ -50,6 +50,7 @@ class ChromeCdpHtmlFetcher:
     launch_timeout_seconds: float = 10.0
     manual_wait_timeout_seconds: float = 180.0
     profile_start_url: str = "https://www.ikyu.com/"
+    minimum_confident_match_score: int = 35
     chrome_candidates: tuple[str, ...] = (
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
@@ -299,6 +300,8 @@ class ChromeCdpHtmlFetcher:
         """在目前所有分頁中挑出最接近目標 URL 的頁面。"""
         best_page = None
         best_score = -1
+        best_signature = None
+        expected_signature = _extract_ikyu_match_signature(expected_url)
         for page in context.pages:
             if page.is_closed():
                 continue
@@ -306,7 +309,16 @@ class ChromeCdpHtmlFetcher:
             if score > best_score:
                 best_page = page
                 best_score = score
-        if best_score <= 0:
+                best_signature = _extract_ikyu_match_signature(page.url)
+        if (
+            best_score <= 0
+            or best_signature is None
+            or not self._is_confident_page_match(
+                current_signature=best_signature,
+                expected_signature=expected_signature,
+                score=best_score,
+            )
+        ):
             return None
         return best_page
 
@@ -471,6 +483,33 @@ class ChromeCdpHtmlFetcher:
         if current.path.rstrip("/").startswith(expected.path.rstrip("/")):
             return 2
         return 1
+
+    def _is_confident_page_match(
+        self,
+        *,
+        current_signature: _IkyuMatchSignature,
+        expected_signature: _IkyuMatchSignature,
+        score: int,
+    ) -> bool:
+        """判斷目前分頁是否足夠接近目標條件，值得沿用而不是保守 fallback。"""
+        expected_has_precise_target = (
+            expected_signature.room_id is not None or expected_signature.plan_id is not None
+        )
+        if not expected_has_precise_target:
+            return score > 0
+
+        if score < self.minimum_confident_match_score:
+            return False
+
+        room_matches = (
+            current_signature.room_id is not None
+            and current_signature.room_id == expected_signature.room_id
+        )
+        plan_matches = (
+            current_signature.plan_id is not None
+            and current_signature.plan_id == expected_signature.plan_id
+        )
+        return room_matches or plan_matches
 
     def _looks_like_ready_ikyu_page(self, *, current_url: str, expected_url: str) -> bool:
         """判斷目前頁面是否已離開首頁並進到與目標飯店相符的 `ikyu` 頁面。"""

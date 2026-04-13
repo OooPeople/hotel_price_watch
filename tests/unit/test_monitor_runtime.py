@@ -7,17 +7,21 @@ from decimal import Decimal
 from app.application.app_settings import AppSettingsService
 from app.config.models import NotificationChannelSettings
 from app.domain.entities import PriceSnapshot, WatchItem
-from app.domain.enums import Availability, NotificationLeafKind, SourceKind
+from app.domain.enums import Availability, CheckErrorCode, NotificationLeafKind, SourceKind
 from app.domain.notification_rules import RuleLeaf
 from app.domain.value_objects import SearchDraft, WatchTarget
 from app.infrastructure.browser.chrome_cdp_fetcher import ChromeTabCapture, ChromeTabSummary
+from app.infrastructure.browser.ikyu_page_guards import IkyuBlockedPageError
 from app.infrastructure.db import (
     SqliteAppSettingsRepository,
     SqliteDatabase,
     SqliteRuntimeRepository,
     SqliteWatchItemRepository,
 )
-from app.monitor.runtime import ChromeDrivenMonitorRuntime
+from app.monitor.runtime import (
+    ChromeDrivenMonitorRuntime,
+    _map_runtime_exception_to_error_code_typed,
+)
 from app.notifiers.base import Notifier
 from app.notifiers.models import NotificationMessage
 from app.sites.base import CandidateSelection, SiteAdapter
@@ -134,7 +138,22 @@ class _ForbiddenChromeFetcher(_FakeChromeFetcher):
     ) -> ChromeTabCapture:
         """直接拋出含 403 訊號的例外，驗證 runtime 會進入暫停流程。"""
         del expected_url, fallback_url, preferred_tab_id
-        raise RuntimeError("ikyu 已回傳阻擋頁面 403")
+        raise IkyuBlockedPageError("ikyu 已回傳阻擋頁面。")
+
+
+class _TimeoutChromeFetcher(_FakeChromeFetcher):
+    """模擬專用 Chrome 分頁刷新逾時。"""
+
+    def refresh_capture_for_url(
+        self,
+        *,
+        expected_url: str,
+        fallback_url: str | None = None,
+        preferred_tab_id: str | None = None,
+    ) -> ChromeTabCapture:
+        """直接拋出逾時錯誤，驗證 runtime 會映射成 network_timeout。"""
+        del expected_url, fallback_url, preferred_tab_id
+        raise TimeoutError("refresh timed out")
 
 
 class _RecordingNotifier:
@@ -148,6 +167,23 @@ class _RecordingNotifier:
     def send(self, message: NotificationMessage) -> None:
         """靽? dispatch ?????荔?靘葫閰阡?霅?"""
         self.messages.append(message)
+
+
+class _CountingNotifierFactory:
+    """記錄 notifier factory 呼叫次數，驗證 dispatcher 快取是否生效。"""
+
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def __call__(
+        self,
+        settings: NotificationChannelSettings,
+    ) -> tuple[Notifier, ...]:
+        """依設定建立最小 notifier 集合。"""
+        self.call_count += 1
+        if not settings.desktop_enabled:
+            return ()
+        return (_RecordingNotifier(),)
 
 
 class _FakeRuntimeAdapter(SiteAdapter):
@@ -663,6 +699,57 @@ def test_runtime_pauses_watch_when_chrome_refresh_hits_403(tmp_path) -> None:
     assert price_history == []
 
 
+def test_runtime_records_timeout_as_network_timeout(tmp_path) -> None:
+    """Chrome 刷新逾時時，runtime 應記錄為 network_timeout。"""
+    database = SqliteDatabase(tmp_path / "watcher.db")
+    database.initialize()
+    watch_repository = SqliteWatchItemRepository(database)
+    runtime_repository = SqliteRuntimeRepository(database)
+    settings_repository = SqliteAppSettingsRepository(database)
+    app_settings_service = AppSettingsService(settings_repository)
+
+    watch_item = _build_runtime_watch_item("watch-runtime-timeout")
+    watch_repository.save(watch_item)
+    watch_repository.save_draft(
+        watch_item.id,
+        _build_runtime_draft(watch_item.canonical_url),
+    )
+
+    site_registry = SiteRegistry()
+    site_registry.register(_FakeRuntimeAdapter())
+    runtime = ChromeDrivenMonitorRuntime(
+        watch_item_repository=watch_repository,
+        runtime_repository=runtime_repository,
+        site_registry=site_registry,
+        chrome_fetcher=_TimeoutChromeFetcher(),
+        app_settings_service=app_settings_service,
+    )
+
+    import asyncio
+
+    asyncio.run(runtime.run_watch_check_once(watch_item.id))
+
+    latest_snapshot = runtime_repository.get_latest_check_snapshot(watch_item.id)
+    assert latest_snapshot is not None
+    assert latest_snapshot.last_error_code == "network_timeout"
+
+
+def test_runtime_error_mapping_no_longer_depends_on_message_fragments() -> None:
+    """錯誤映射應以型別為主，不再因訊息片段誤判。"""
+    assert (
+        _map_runtime_exception_to_error_code_typed(IkyuBlockedPageError("blocked"))
+        is CheckErrorCode.FORBIDDEN_403
+    )
+    assert (
+        _map_runtime_exception_to_error_code_typed(TimeoutError("timeout"))
+        is CheckErrorCode.NETWORK_TIMEOUT
+    )
+    assert (
+        _map_runtime_exception_to_error_code_typed(RuntimeError("room 403-B"))
+        is CheckErrorCode.NETWORK_ERROR
+    )
+
+
 def test_runtime_success_resets_previous_failure_and_degraded_state(tmp_path) -> None:
     """前次失敗後若本次成功，runtime 應清掉 failure/backoff/degraded 狀態。"""
     database = SqliteDatabase(tmp_path / "watcher.db")
@@ -902,14 +989,14 @@ def test_runtime_loop_syncs_watch_added_after_start(tmp_path) -> None:
         """先啟動空的 runtime，再動態加入 watch 驗證後續 sync。"""
         await runtime.start()
         try:
-            await asyncio.sleep(0.03)
+            await asyncio.sleep(0.05)
             watch_item = _build_runtime_watch_item("watch-runtime-added-later")
             watch_repository.save(watch_item)
             watch_repository.save_draft(
                 watch_item.id,
                 _build_runtime_draft(watch_item.canonical_url),
             )
-            await asyncio.sleep(0.08)
+            await asyncio.sleep(0.15)
         finally:
             await runtime.stop()
 
@@ -924,22 +1011,173 @@ def test_runtime_loop_syncs_watch_added_after_start(tmp_path) -> None:
     assert latest_snapshot.normalized_price_amount == Decimal("22990")
 
 
+def test_runtime_wakeup_rescan_reschedules_existing_watch(tmp_path) -> None:
+    """睡眠恢復後若不在 backoff 期，既有 watch 應被立即補掃。"""
+    database = SqliteDatabase(tmp_path / "watcher.db")
+    database.initialize()
+    watch_repository = SqliteWatchItemRepository(database)
+    runtime_repository = SqliteRuntimeRepository(database)
+    settings_repository = SqliteAppSettingsRepository(database)
+    app_settings_service = AppSettingsService(settings_repository)
+
+    watch_item = _build_runtime_watch_item("watch-runtime-wakeup")
+    watch_repository.save(watch_item)
+    runtime_repository.save_latest_check_snapshot(
+        _build_latest_snapshot(
+            watch_item_id=watch_item.id,
+            amount=Decimal("22990"),
+            checked_at=datetime(2026, 4, 13, 9, 50, tzinfo=UTC),
+        )
+    )
+
+    site_registry = SiteRegistry()
+    site_registry.register(_FakeRuntimeAdapter())
+    runtime = ChromeDrivenMonitorRuntime(
+        watch_item_repository=watch_repository,
+        runtime_repository=runtime_repository,
+        site_registry=site_registry,
+        chrome_fetcher=_FakeChromeFetcher(),
+        app_settings_service=app_settings_service,
+    )
+
+    import asyncio
+
+    initial_now = datetime(2026, 4, 13, 10, 0, tzinfo=UTC)
+    resumed_at = datetime(2026, 4, 13, 12, 30, tzinfo=UTC)
+
+    asyncio.run(runtime._sync_watch_definitions(now=initial_now))
+    before_schedule = runtime._scheduler.get_schedule(watch_item.id)
+    assert before_schedule is not None
+    assert before_schedule.next_run_at >= initial_now
+
+    asyncio.run(
+        runtime._sync_watch_definitions(
+            now=resumed_at,
+            resumed_after_sleep=True,
+        )
+    )
+    after_schedule = runtime._scheduler.get_schedule(watch_item.id)
+    assert after_schedule is not None
+    assert after_schedule.next_run_at == resumed_at
+
+
+def test_runtime_wakeup_rescan_respects_backoff_window(tmp_path) -> None:
+    """睡眠恢復後若仍在 backoff 期，不應強制立即補掃。"""
+    database = SqliteDatabase(tmp_path / "watcher.db")
+    database.initialize()
+    watch_repository = SqliteWatchItemRepository(database)
+    runtime_repository = SqliteRuntimeRepository(database)
+    settings_repository = SqliteAppSettingsRepository(database)
+    app_settings_service = AppSettingsService(settings_repository)
+
+    watch_item = _build_runtime_watch_item("watch-runtime-wakeup-backoff")
+    watch_repository.save(watch_item)
+    runtime_repository.save_latest_check_snapshot(
+        _build_latest_snapshot(
+            watch_item_id=watch_item.id,
+            amount=Decimal("22990"),
+            checked_at=datetime(2026, 4, 13, 9, 50, tzinfo=UTC),
+            backoff_until=datetime(2026, 4, 13, 13, 0, tzinfo=UTC),
+        )
+    )
+
+    site_registry = SiteRegistry()
+    site_registry.register(_FakeRuntimeAdapter())
+    runtime = ChromeDrivenMonitorRuntime(
+        watch_item_repository=watch_repository,
+        runtime_repository=runtime_repository,
+        site_registry=site_registry,
+        chrome_fetcher=_FakeChromeFetcher(),
+        app_settings_service=app_settings_service,
+    )
+
+    import asyncio
+
+    initial_now = datetime(2026, 4, 13, 10, 0, tzinfo=UTC)
+    resumed_at = datetime(2026, 4, 13, 12, 30, tzinfo=UTC)
+
+    asyncio.run(runtime._sync_watch_definitions(now=initial_now))
+    asyncio.run(
+        runtime._sync_watch_definitions(
+            now=resumed_at,
+            resumed_after_sleep=True,
+        )
+    )
+    schedule = runtime._scheduler.get_schedule(watch_item.id)
+    assert schedule is not None
+    assert schedule.next_run_at == datetime(2026, 4, 13, 13, 0, tzinfo=UTC)
+
+
+def test_runtime_reuses_dispatcher_when_settings_unchanged(tmp_path) -> None:
+    """runtime 在設定未變時不應每次檢查都重建 dispatcher。"""
+    database = SqliteDatabase(tmp_path / "watcher.db")
+    database.initialize()
+    watch_repository = SqliteWatchItemRepository(database)
+    runtime_repository = SqliteRuntimeRepository(database)
+    settings_repository = SqliteAppSettingsRepository(database)
+    app_settings_service = AppSettingsService(settings_repository)
+
+    watch_item = _build_runtime_watch_item("watch-runtime-dispatcher-cache")
+    watch_repository.save(watch_item)
+    watch_repository.save_draft(
+        watch_item.id,
+        _build_runtime_draft(watch_item.canonical_url),
+    )
+    runtime_repository.save_latest_check_snapshot(
+        _build_latest_snapshot(
+            watch_item_id=watch_item.id,
+            amount=Decimal("25000"),
+        )
+    )
+    app_settings_service.settings_repository.save_notification_channel_settings(
+        NotificationChannelSettings(desktop_enabled=True)
+    )
+
+    site_registry = SiteRegistry()
+    site_registry.register(_FakeRuntimeAdapter())
+    notifier_factory = _CountingNotifierFactory()
+    runtime = ChromeDrivenMonitorRuntime(
+        watch_item_repository=watch_repository,
+        runtime_repository=runtime_repository,
+        site_registry=site_registry,
+        chrome_fetcher=_FakeChromeFetcher(),
+        app_settings_service=app_settings_service,
+        notifier_factory=notifier_factory,
+    )
+
+    import asyncio
+
+    asyncio.run(runtime.run_watch_check_once(watch_item.id))
+    runtime_repository.save_latest_check_snapshot(
+        _build_latest_snapshot(
+            watch_item_id=watch_item.id,
+            amount=Decimal("26000"),
+        )
+    )
+    asyncio.run(runtime.run_watch_check_once(watch_item.id))
+
+    assert notifier_factory.call_count == 1
+
+
 def _build_latest_snapshot(
     *,
     watch_item_id: str,
     amount: Decimal,
     consecutive_failures: int = 0,
     last_error_code: str | None = None,
+    backoff_until: datetime | None = None,
+    checked_at: datetime | None = None,
 ):
     """撱箇? runtime 皜祈岫?函?銝?蝑?latest snapshot??"""
     from app.domain.entities import LatestCheckSnapshot
 
     return LatestCheckSnapshot(
         watch_item_id=watch_item_id,
-        checked_at=datetime.now(UTC),
+        checked_at=checked_at or datetime.now(UTC),
         availability=Availability.AVAILABLE,
         normalized_price_amount=amount,
         currency="JPY",
+        backoff_until=backoff_until,
         consecutive_failures=consecutive_failures,
         last_error_code=last_error_code,
     )

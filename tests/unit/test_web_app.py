@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from urllib.parse import parse_qs, urlparse
@@ -50,6 +51,7 @@ class _FakeMonitorRuntime:
     def __init__(self) -> None:
         self.started = 0
         self.stopped = 0
+        self.check_now_calls: list[str] = []
 
     async def start(self) -> None:
         """記錄 runtime 已啟動。"""
@@ -71,6 +73,10 @@ class _FakeMonitorRuntime:
             last_watch_sync_at=datetime(2026, 4, 12, 12, 0, tzinfo=timezone.utc),
         )
 
+    async def request_check_now(self, watch_item_id: str) -> None:
+        """記錄 GUI 是否要求立刻檢查指定 watch。"""
+        self.check_now_calls.append(watch_item_id)
+
 
 def test_create_app_registers_gui_routes(tmp_path) -> None:
     container = _build_test_container(tmp_path)
@@ -86,6 +92,11 @@ def test_create_app_registers_gui_routes(tmp_path) -> None:
     assert "/watches" in paths
     assert "/watches/{watch_item_id}" in paths
     assert "/watches/{watch_item_id}/delete" in paths
+    assert "/watches/{watch_item_id}/enable" in paths
+    assert "/watches/{watch_item_id}/disable" in paths
+    assert "/watches/{watch_item_id}/pause" in paths
+    assert "/watches/{watch_item_id}/resume" in paths
+    assert "/watches/{watch_item_id}/check-now" in paths
     assert "/debug/captures" in paths
     assert "/debug/captures/latest" in paths
     assert "/debug/captures/{capture_id}" in paths
@@ -147,6 +158,8 @@ def test_render_watch_list_page_shows_existing_watch_items() -> None:
     assert "Standard Twin" in html
     assert "已建立 watch" in html
     assert "刪除" in html
+    assert "暫停" in html
+    assert "停用" in html
     assert "/watches/watch-list-1" in html
     assert "/settings/notifications" in html
     assert "Background Monitor" in html
@@ -314,6 +327,31 @@ def test_render_notification_channel_settings_page_shows_saved_values() -> None:
     assert "發送測試通知" in html
 
 
+def test_render_notification_channel_settings_page_shows_structured_test_result() -> None:
+    """測試通知結果應以結構化區塊呈現各通道狀態與失敗原因。"""
+    html = render_notification_channel_settings_page(
+        settings=NotificationChannelSettings(
+            desktop_enabled=True,
+            ntfy_enabled=True,
+            ntfy_server_url="https://ntfy.example.com",
+            ntfy_topic="hotel-watch",
+            discord_enabled=True,
+            discord_webhook_url="https://discord.example.com/webhook",
+        ),
+        test_result_message=(
+            "測試通知結果：sent=desktop；"
+            "throttled=none；"
+            "failed=ntfy, discord；"
+            "details=ntfy: timed out | discord: HTTP Error 400"
+        ),
+    )
+
+    assert "測試通知結果" in html
+    assert "成功通道：desktop" in html
+    assert "失敗通道：ntfy, discord" in html
+    assert "失敗原因：ntfy: timed out | discord: HTTP Error 400" in html
+
+
 def test_render_notification_settings_page_shows_any_drop_hint() -> None:
     """價格下降規則時，畫面應明示目標價會被忽略。"""
     html = render_notification_settings_page(
@@ -447,8 +485,8 @@ def test_post_global_notification_test_uses_saved_dispatch_path(tmp_path) -> Non
     assert response.status_code == 303
     location = response.headers["location"]
     test_message = parse_qs(urlparse(location).query)["test_message"][0]
-    assert "測試通知結果" in test_message
     assert "sent=desktop" in test_message
+    assert "details=none" in test_message
 
 
 def test_post_global_notification_test_requires_enabled_channel(tmp_path) -> None:
@@ -461,6 +499,80 @@ def test_post_global_notification_test_requires_enabled_channel(tmp_path) -> Non
 
     assert response.status_code == 400
     assert "目前沒有任何已啟用的通知通道可供測試" in response.text
+
+
+def test_post_watch_disable_updates_status(tmp_path) -> None:
+    """停用 watch route 應把 watch 標成 disabled。"""
+    container = _build_test_container(tmp_path)
+    container.watch_item_repository.save(_build_watch_item())
+    client = TestClient(create_app(container))
+
+    response = client.post("/watches/watch-list-1/disable", follow_redirects=False)
+
+    assert response.status_code == 303
+    updated_watch = container.watch_item_repository.get("watch-list-1")
+    assert updated_watch is not None
+    assert updated_watch.enabled is False
+    assert updated_watch.paused_reason == "manually_disabled"
+
+
+def test_post_watch_pause_and_resume_updates_status(tmp_path) -> None:
+    """暫停與恢復 watch route 應正確切換 paused 狀態。"""
+    container = _build_test_container(tmp_path)
+    container.watch_item_repository.save(_build_watch_item())
+    client = TestClient(create_app(container))
+
+    pause_response = client.post("/watches/watch-list-1/pause", follow_redirects=False)
+    assert pause_response.status_code == 303
+    paused_watch = container.watch_item_repository.get("watch-list-1")
+    assert paused_watch is not None
+    assert paused_watch.enabled is True
+    assert paused_watch.paused_reason == "manually_paused"
+
+    resume_response = client.post("/watches/watch-list-1/resume", follow_redirects=False)
+    assert resume_response.status_code == 303
+    resumed_watch = container.watch_item_repository.get("watch-list-1")
+    assert resumed_watch is not None
+    assert resumed_watch.enabled is True
+    assert resumed_watch.paused_reason is None
+
+
+def test_post_watch_enable_reactivates_disabled_watch(tmp_path) -> None:
+    """啟用 route 應可把 disabled watch 恢復為 enabled。"""
+    container = _build_test_container(tmp_path)
+    container.watch_item_repository.save(_build_watch_item())
+    disabled_watch = container.watch_item_repository.get("watch-list-1")
+    assert disabled_watch is not None
+    container.watch_item_repository.save(
+        replace(
+            disabled_watch,
+            enabled=False,
+            paused_reason="manually_disabled",
+        )
+    )
+    client = TestClient(create_app(container))
+
+    response = client.post("/watches/watch-list-1/enable", follow_redirects=False)
+
+    assert response.status_code == 303
+    enabled_watch = container.watch_item_repository.get("watch-list-1")
+    assert enabled_watch is not None
+    assert enabled_watch.enabled is True
+    assert enabled_watch.paused_reason is None
+
+
+def test_post_watch_check_now_calls_monitor_runtime(tmp_path) -> None:
+    """立即檢查 route 應呼叫 runtime 的 check-now 入口。"""
+    container = _build_test_container(tmp_path)
+    container.watch_item_repository.save(_build_watch_item())
+    fake_runtime = _FakeMonitorRuntime()
+    container.monitor_runtime = fake_runtime
+    client = TestClient(create_app(container))
+
+    response = client.post("/watches/watch-list-1/check-now", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert fake_runtime.check_now_calls == ["watch-list-1"]
 
 
 def test_post_global_notification_settings_preserves_invalid_form_value(tmp_path) -> None:
@@ -498,22 +610,21 @@ def test_render_watch_list_page_shows_debug_link() -> None:
 
 
 def test_render_watch_detail_page_shows_runtime_sections() -> None:
-    """watch 詳細頁應顯示歷史、價格與 debug artifact 區塊。"""
+    """watch 詳細頁應顯示歷史與 debug artifact 區塊。"""
     html = render_watch_detail_page(
         watch_item=_build_watch_item(),
         latest_snapshot=_build_latest_snapshot(),
         check_events=(_build_check_event(),),
-        price_history=(_build_price_history_entry(),),
         notification_state=_build_notification_state(),
         debug_artifacts=(
             _build_debug_artifact(),
             _build_discarded_debug_artifact(),
         ),
+        flash_message="已觸發 立即檢查",
     )
 
     assert "最近摘要" in html
     assert "檢查歷史" in html
-    assert "價格歷史" in html
     assert "Debug Artifacts" in html
     assert "background runtime 寫入的 debug artifact" in html
     assert "preview captures" in html
@@ -523,6 +634,8 @@ def test_render_watch_detail_page_shows_runtime_sections() -> None:
     assert "最近 runtime 訊號" in html
     assert "解析失敗 1 次" in html
     assert "分頁曾被瀏覽器丟棄 1 次" in html
+    assert "立即檢查" in html
+    assert "已觸發 立即檢查" in html
 
 
 def test_render_debug_capture_pages_show_capture_content(tmp_path) -> None:
@@ -1033,21 +1146,6 @@ def _build_check_event():
         error_code="http_403",
         notification_status=NotificationDeliveryStatus.SENT,
         sent_channels=("desktop",),
-    )
-
-
-def _build_price_history_entry():
-    """建立 watch 詳細頁測試用的價格歷史。"""
-    from app.domain.entities import PriceHistoryEntry
-    from app.domain.enums import SourceKind
-
-    return PriceHistoryEntry(
-        watch_item_id="watch-list-1",
-        captured_at=datetime(2026, 4, 12, 10, 0, tzinfo=timezone.utc),
-        display_price_text="JPY 22990",
-        normalized_price_amount=Decimal("22990"),
-        currency="JPY",
-        source_kind=SourceKind.BROWSER,
     )
 
 

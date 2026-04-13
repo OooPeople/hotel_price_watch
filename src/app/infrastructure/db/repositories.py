@@ -13,6 +13,7 @@ from app.domain.entities import (
     DebugArtifact,
     LatestCheckSnapshot,
     NotificationState,
+    NotificationThrottleState,
     PriceHistoryEntry,
     WatchItem,
 )
@@ -391,6 +392,52 @@ class SqliteRuntimeRepository:
             consecutive_failures=row["consecutive_failures"],
             consecutive_parse_failures=row["consecutive_parse_failures"],
             degraded_notified_at=_text_to_datetime(row["degraded_notified_at_utc"]),
+        )
+
+    def save_notification_throttle_state(
+        self,
+        state: NotificationThrottleState,
+    ) -> None:
+        """保存通道級節流所需的最近成功發送時間。"""
+        with self._database.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO notification_throttle_states (
+                    channel_name, dedupe_key, last_sent_at_utc
+                ) VALUES (?, ?, ?)
+                ON CONFLICT(channel_name, dedupe_key) DO UPDATE SET
+                    last_sent_at_utc = excluded.last_sent_at_utc
+                """,
+                (
+                    state.channel_name,
+                    state.dedupe_key,
+                    _datetime_to_text(state.last_sent_at),
+                ),
+            )
+
+    def get_notification_throttle_state(
+        self,
+        *,
+        channel_name: str,
+        dedupe_key: str,
+    ) -> NotificationThrottleState | None:
+        """讀出通道級節流狀態；不存在時回傳 `None`。"""
+        with self._database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM notification_throttle_states
+                WHERE channel_name = ? AND dedupe_key = ?
+                """,
+                (channel_name, dedupe_key),
+            ).fetchone()
+        if row is None:
+            return None
+        last_sent_at = _text_to_datetime(row["last_sent_at_utc"])
+        assert last_sent_at is not None
+        return NotificationThrottleState(
+            channel_name=row["channel_name"],
+            dedupe_key=row["dedupe_key"],
+            last_sent_at=last_sent_at,
         )
 
     def append_debug_artifact(self, artifact: DebugArtifact, *, retention_limit: int) -> None:

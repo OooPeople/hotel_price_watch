@@ -1,7 +1,12 @@
 from datetime import datetime, timedelta
 
+from app.domain.entities import NotificationThrottleState
 from app.notifiers.models import NotificationMessage
-from app.notifiers.throttling import InMemoryNotificationThrottle, NotificationDispatcher
+from app.notifiers.throttling import (
+    InMemoryNotificationThrottle,
+    NotificationDispatcher,
+    PersistentNotificationThrottle,
+)
 
 
 def test_dispatcher_sends_to_all_channels_when_not_throttled() -> None:
@@ -76,7 +81,38 @@ def test_dispatcher_continues_when_one_channel_fails() -> None:
     assert result.sent_channels == ("desktop",)
     assert result.failed_channels == ("discord",)
     assert result.throttled_channels == ()
+    assert result.failure_details == {"discord": "discord failed for watch-1"}
     assert second_result.failed_channels == ("discord",)
+    assert second_result.throttled_channels == ("desktop",)
+    assert len(desktop.messages) == 1
+
+
+def test_persistent_throttle_survives_new_dispatcher_instance() -> None:
+    """驗證通道級節流狀態會跨 dispatcher 實例持續存在。"""
+    desktop = FakeNotifier("desktop")
+    state_store = FakeThrottleStateStore()
+    first_dispatcher = NotificationDispatcher(
+        notifiers=(desktop,),
+        throttle=PersistentNotificationThrottle(state_store),
+        cooldown_seconds_by_channel={"desktop": 300},
+    )
+    second_dispatcher = NotificationDispatcher(
+        notifiers=(desktop,),
+        throttle=PersistentNotificationThrottle(state_store),
+        cooldown_seconds_by_channel={"desktop": 300},
+    )
+
+    first_result = first_dispatcher.dispatch(
+        message=_message(),
+        attempted_at=datetime(2026, 4, 12, 10, 0, 0),
+    )
+    second_result = second_dispatcher.dispatch(
+        message=_message(),
+        attempted_at=datetime(2026, 4, 12, 10, 1, 0),
+    )
+
+    assert first_result.sent_channels == ("desktop",)
+    assert second_result.sent_channels == ()
     assert second_result.throttled_channels == ("desktop",)
     assert len(desktop.messages) == 1
 
@@ -102,6 +138,29 @@ class FailingNotifier:
     def send(self, message: NotificationMessage) -> None:
         """模擬通道發送失敗。"""
         raise RuntimeError(f"{self.channel_name} failed for {message.watch_item_id}")
+
+
+class FakeThrottleStateStore:
+    """用於驗證持久化節流行為的記憶體 state store。"""
+
+    def __init__(self) -> None:
+        self._states: dict[tuple[str, str], NotificationThrottleState] = {}
+
+    def get_notification_throttle_state(
+        self,
+        *,
+        channel_name: str,
+        dedupe_key: str,
+    ) -> NotificationThrottleState | None:
+        """讀出指定通道與 dedupe key 的節流狀態。"""
+        return self._states.get((channel_name, dedupe_key))
+
+    def save_notification_throttle_state(
+        self,
+        state: NotificationThrottleState,
+    ) -> None:
+        """保存指定通道與 dedupe key 的節流狀態。"""
+        self._states[(state.channel_name, state.dedupe_key)] = state
 
 
 def _message() -> NotificationMessage:

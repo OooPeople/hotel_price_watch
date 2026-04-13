@@ -138,6 +138,16 @@ class NotificationDispatchResult:
     throttled_channels: tuple[str, ...]
     failed_channels: tuple[str, ...]
     attempted_at: datetime
+    failure_details: dict[str, str] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class NotificationThrottleState:
+    """表示通道級節流所需的最近成功發送時間。"""
+
+    channel_name: str
+    dedupe_key: str
+    last_sent_at: datetime
 
 
 @dataclass(frozen=True, slots=True)

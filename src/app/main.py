@@ -116,7 +116,7 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         return HTMLResponse(render_chrome_tab_selection_page(tabs=tabs))
 
     @app.get("/watches/{watch_item_id}", response_class=HTMLResponse, tags=["web"])
-    def watch_detail_page(watch_item_id: str) -> HTMLResponse:
+    def watch_detail_page(watch_item_id: str, request: Request) -> HTMLResponse:
         """顯示單一 watch item 的歷史與錯誤摘要。"""
         watch_item = container.watch_item_repository.get(watch_item_id)
         if watch_item is None:
@@ -125,9 +125,9 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
             watch_item=watch_item,
             latest_snapshot=container.runtime_repository.get_latest_check_snapshot(watch_item_id),
             check_events=tuple(container.runtime_repository.list_check_events(watch_item_id)),
-            price_history=tuple(container.runtime_repository.list_price_history(watch_item_id)),
             notification_state=container.runtime_repository.get_notification_state(watch_item_id),
             debug_artifacts=tuple(container.runtime_repository.list_debug_artifacts(watch_item_id)),
+            flash_message=request.query_params.get("message"),
         )
         return HTMLResponse(html)
 
@@ -459,11 +459,19 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         sent_channels = ", ".join(dispatch_result.sent_channels) or "none"
         throttled_channels = ", ".join(dispatch_result.throttled_channels) or "none"
         failed_channels = ", ".join(dispatch_result.failed_channels) or "none"
+        failure_details = (
+            " | ".join(
+                f"{channel}: {detail}"
+                for channel, detail in (dispatch_result.failure_details or {}).items()
+            )
+            or "none"
+        )
         return RedirectResponse(
             url=(
                 "/settings/notifications?"
                 f"test_message=測試通知結果：sent={sent_channels}；"
-                f"throttled={throttled_channels}；failed={failed_channels}"
+                f"throttled={throttled_channels}；failed={failed_channels}；"
+                f"details={failure_details}"
             ),
             status_code=303,
         )
@@ -477,6 +485,66 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         )
         return RedirectResponse(
             url="/?message=已刪除%20watch%20item",
+            status_code=303,
+        )
+
+    @app.post("/watches/{watch_item_id}/enable", response_class=HTMLResponse, tags=["web"])
+    async def enable_watch(watch_item_id: str) -> Response:
+        """啟用指定 watch item。"""
+        watch_item = await run_in_threadpool(
+            container.watch_editor_service.enable_watch_item,
+            watch_item_id,
+        )
+        return RedirectResponse(
+            url=f"/watches/{watch_item.id}?message=已啟用%20watch",
+            status_code=303,
+        )
+
+    @app.post("/watches/{watch_item_id}/disable", response_class=HTMLResponse, tags=["web"])
+    async def disable_watch(watch_item_id: str) -> Response:
+        """停用指定 watch item。"""
+        watch_item = await run_in_threadpool(
+            container.watch_editor_service.disable_watch_item,
+            watch_item_id,
+        )
+        return RedirectResponse(
+            url=f"/watches/{watch_item.id}?message=已停用%20watch",
+            status_code=303,
+        )
+
+    @app.post("/watches/{watch_item_id}/pause", response_class=HTMLResponse, tags=["web"])
+    async def pause_watch(watch_item_id: str) -> Response:
+        """暫停指定 watch item。"""
+        watch_item = await run_in_threadpool(
+            container.watch_editor_service.pause_watch_item,
+            watch_item_id,
+        )
+        return RedirectResponse(
+            url=f"/watches/{watch_item.id}?message=已暫停%20watch",
+            status_code=303,
+        )
+
+    @app.post("/watches/{watch_item_id}/resume", response_class=HTMLResponse, tags=["web"])
+    async def resume_watch(watch_item_id: str) -> Response:
+        """恢復指定 watch item。"""
+        watch_item = await run_in_threadpool(
+            container.watch_editor_service.resume_watch_item,
+            watch_item_id,
+        )
+        return RedirectResponse(
+            url=f"/watches/{watch_item.id}?message=已恢復%20watch",
+            status_code=303,
+        )
+
+    @app.post("/watches/{watch_item_id}/check-now", response_class=HTMLResponse, tags=["web"])
+    async def check_watch_now(watch_item_id: str) -> Response:
+        """立即執行單一 watch item 的檢查。"""
+        runtime = container.monitor_runtime
+        if runtime is None:
+            return HTMLResponse("background monitor runtime is not available", status_code=503)
+        await runtime.request_check_now(watch_item_id)
+        return RedirectResponse(
+            url=f"/watches/{watch_item_id}?message=已觸發%20立即檢查",
             status_code=303,
         )
 

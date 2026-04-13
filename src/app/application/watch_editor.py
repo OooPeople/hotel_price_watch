@@ -137,6 +137,57 @@ class WatchEditorService:
         self._watch_item_repository.save(updated_watch_item)
         return updated_watch_item
 
+    def enable_watch_item(self, watch_item_id: str) -> WatchItem:
+        """啟用既有 watch item，並清除人工停用或暫停狀態。"""
+        watch_item = self._get_watch_item_or_raise(watch_item_id)
+        updated_watch_item = replace(
+            watch_item,
+            enabled=True,
+            paused_reason=None,
+        )
+        self._watch_item_repository.save(updated_watch_item)
+        return updated_watch_item
+
+    def disable_watch_item(self, watch_item_id: str) -> WatchItem:
+        """停用既有 watch item，使其不再進入 background monitor。"""
+        watch_item = self._get_watch_item_or_raise(watch_item_id)
+        updated_watch_item = replace(
+            watch_item,
+            enabled=False,
+            paused_reason="manually_disabled",
+        )
+        self._watch_item_repository.save(updated_watch_item)
+        return updated_watch_item
+
+    def pause_watch_item(self, watch_item_id: str) -> WatchItem:
+        """暫停既有 watch item，但保留啟用設定以便後續恢復。"""
+        watch_item = self._get_watch_item_or_raise(watch_item_id)
+        updated_watch_item = replace(
+            watch_item,
+            enabled=True,
+            paused_reason="manually_paused",
+        )
+        self._watch_item_repository.save(updated_watch_item)
+        return updated_watch_item
+
+    def resume_watch_item(self, watch_item_id: str) -> WatchItem:
+        """恢復先前被暫停或人工停用的 watch item。"""
+        watch_item = self._get_watch_item_or_raise(watch_item_id)
+        updated_watch_item = replace(
+            watch_item,
+            enabled=True,
+            paused_reason=None,
+        )
+        self._watch_item_repository.save(updated_watch_item)
+        return updated_watch_item
+
+    def _get_watch_item_or_raise(self, watch_item_id: str) -> WatchItem:
+        """讀取既有 watch item；若不存在則明確拋錯。"""
+        watch_item = self._watch_item_repository.get(watch_item_id)
+        if watch_item is None:
+            raise ValueError("watch item not found")
+        return watch_item
+
 
 def _find_selected_candidate(
     *,

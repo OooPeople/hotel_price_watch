@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 
 class SchemaVersionMismatchError(RuntimeError):
@@ -135,6 +135,13 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
             FOREIGN KEY (watch_item_id) REFERENCES watch_items(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS notification_throttle_states (
+            channel_name TEXT NOT NULL,
+            dedupe_key TEXT NOT NULL,
+            last_sent_at_utc TEXT NOT NULL,
+            PRIMARY KEY (channel_name, dedupe_key)
+        );
+
         CREATE TABLE IF NOT EXISTS debug_artifacts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             watch_item_id TEXT NOT NULL,
@@ -198,6 +205,23 @@ def _migrate_schema_if_supported(connection: sqlite3.Connection) -> None:
         )
         connection.execute(
             "ALTER TABLE watch_item_drafts ADD COLUMN browser_page_url TEXT"
+        )
+        connection.execute(
+            "UPDATE metadata SET value = ? WHERE key = 'schema_version'",
+            (str(CURRENT_SCHEMA_VERSION),),
+        )
+        current_value = "4"
+
+    if current_value == "4" and CURRENT_SCHEMA_VERSION >= 5:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS notification_throttle_states (
+                channel_name TEXT NOT NULL,
+                dedupe_key TEXT NOT NULL,
+                last_sent_at_utc TEXT NOT NULL,
+                PRIMARY KEY (channel_name, dedupe_key)
+            )
+            """
         )
         connection.execute(
             "UPDATE metadata SET value = ? WHERE key = 'schema_version'",

@@ -125,6 +125,12 @@
 - o 將 blocked page / throttling / tab discard 整理成 watch 詳細頁可直接判讀的 runtime 訊號摘要
 - o 深化單實例與既有實例導向整合，沿用既有實例前會先探測 `/health`
 - o 深化單實例與既有實例導向整合，沿用既有實例前會比對 lock file 與 `/health` 的 `instance_id`
+- o 將 runtime 錯誤映射改為型別導向，不再依賴字串比對
+- o 補 watch 的啟用 / 停用 / 暫停 / 手動立即檢查 GUI 與 route
+- o 接上睡眠恢復後的補掃邏輯
+- o 為 Chrome 分頁比對加入最低分門檻與保守 fallback
+- o 將通知節流狀態持久化，避免 app 重啟後通道冷卻歸零
+- o 收斂 `NotificationDispatcher` 生命週期，避免每次 dispatch 重新建立
 
 ### Milestone 6.5 驗收條件
 
@@ -184,7 +190,12 @@
 - o 將 Chrome-driven snapshot 也收斂成正式介面
 - o 清理 `preview_from_form_inputs()` 與舊的 form-based create flow 假設
 - o 將 notifier / dispatcher 接到 runtime，讓全域通知設定真正生效
-- 定義並實作 watch item 對應 Chrome 分頁的穩定識別策略
 - o 補 runtime 狀態摘要與 health/homepage 可觀測性
 - o 決定並整理 preview captures 與 runtime `debug_artifacts` 的分工
 - o 補 background runtime 的 `403/blocked page` 暫停與成功恢復重置測試
+- o 將 runtime 錯誤映射改為型別導向，不再依賴字串比對
+- o 補 watch 的啟用 / 停用 / 暫停 / 手動立即檢查 GUI 與 route
+- o 接上睡眠恢復後的補掃邏輯
+- o 為 Chrome 分頁比對加入最低分門檻與保守 fallback
+- o 將通知節流狀態持久化
+- o 收斂 `NotificationDispatcher` 生命週期，避免每次 dispatch 重新建立

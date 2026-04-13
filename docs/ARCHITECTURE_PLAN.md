@@ -489,6 +489,7 @@ V1 的具體策略先定為：
 - 已補首頁與 `/health` 的 runtime 狀態摘要，讓 GUI 可直接觀測 monitor 是否在跑與 Chrome session 是否可附著
 - 已補 runtime 啟停與 active watch 同步測試，確認 scheduler 只註冊 enabled/unpaused watch，且 runtime 停止後會清空 scheduler 狀態
 - 已補多 watch 與 runtime 啟動後新增 watch 的 loop 測試，確認後續 tick 會重新同步 watch 並執行檢查
+- 已將睡眠恢復後補掃正式接入 runtime loop，且會尊重既有 backoff 視窗
 - 已將 blocked page / throttling / tab discard 整理成 watch 詳細頁可直接判讀的 runtime 訊號摘要
 - 已深化 `dev_start` 的既有實例導向：沿用既有實例前會先探測 `/health`，並比對 lock file 與 `/health` 回報的 `instance_id`
 - 目前仍需補單實例與既有實例導向體驗整合、背景穩定性驗證與更多 runtime 測試
@@ -532,6 +533,8 @@ V1 的具體策略先定為：
 - 讓設定能影響 notifier 建立與實際發送
 - 設定頁已有測試通知按鈕，會走與正式通知相同的 notifier / dispatcher 路徑
 - 已有最小 runtime 測試驗證通知發送與 dispatch 結果寫入
+- 通道節流狀態已持久化，app 重啟後不會重置通道冷卻
+- runtime 與全域測試通知在設定未變時，已會重用 dispatcher，不再每次重建
 
 目前尚缺：
 
@@ -552,9 +555,26 @@ V1 的具體策略先定為：
   - 前次失敗與 degraded 狀態會在下次成功時重置
 - Chrome 分頁選取不再依賴易變的 index 型 `tab_id`
 - 已先降低同飯店多房型分頁時的抓錯風險
+- 已為 Chrome 分頁比對加入最低分門檻，對低信心頁面改走保守 fallback
 
 目前尚缺：
 
 - background runtime 的策略反應
 - 歷史與 UI 對節流 / tab discard / blocked page 的完整顯示
 - 專用 profile 預設是否要關閉高效能 / 記憶體節省策略的正式決策
+
+### 11.6 GUI 控制面仍缺 watch 操作入口
+
+目前已有：
+
+- watch 列表
+- watch 詳細頁
+- 刪除
+- 通知規則設定
+- 啟用 / 停用 / 暫停 / 恢復 / 手動立即檢查
+
+目前尚缺：
+
+- 操作後的更多 runtime 回饋與整體使用流程驗證
+
+這些控制能力已接到 web 層；目前剩下的是更完整的流程驗證與 runtime 連動收斂。

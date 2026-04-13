@@ -1,4 +1,5 @@
 import json
+import urllib.error
 
 from app.notifiers.desktop import DesktopNotifier
 from app.notifiers.discord import DiscordWebhookNotifier
@@ -30,13 +31,19 @@ def test_ntfy_notifier_posts_plain_text_payload() -> None:
 
     assert requests == [
         (
-            "https://ntfy.example.com/hotel-watch",
+            "https://ntfy.example.com",
             {
-                "Title": "價格下降：Ocean Hotel",
-                "Tags": "price-drop",
-                "Content-Type": "text/plain; charset=utf-8",
+                "Content-Type": "application/json; charset=utf-8",
             },
-            "價格：JPY 22000".encode("utf-8"),
+            json.dumps(
+                {
+                    "topic": "hotel-watch",
+                    "title": "價格下降：Ocean Hotel",
+                    "message": "價格：JPY 22000",
+                    "tags": ["price-drop"],
+                },
+                ensure_ascii=False,
+            ).encode("utf-8"),
         )
     ]
 
@@ -53,11 +60,44 @@ def test_discord_notifier_posts_json_payload() -> None:
     assert len(requests) == 1
     url, headers, body = requests[0]
     assert url == "https://discord.example.com/webhook"
-    assert headers == {"Content-Type": "application/json; charset=utf-8"}
+    assert headers == {
+        "Content-Type": "application/json; charset=utf-8",
+        "Accept": "*/*",
+        "User-Agent": "python-requests/2.32.3",
+    }
     assert json.loads(body.decode("utf-8")) == {
         "username": "hotel_price_watch",
         "content": "**價格下降：Ocean Hotel**\n價格：JPY 22000",
     }
+
+
+def test_discord_notifier_raises_readable_http_error() -> None:
+    """Discord webhook 若回應 HTTPError，應附帶較可讀的錯誤內容。"""
+
+    def failing_poster(url: str, headers: dict[str, str], body: bytes) -> None:
+        del url, headers, body
+        raise urllib.error.HTTPError(
+            url="https://discord.example.com/webhook",
+            code=403,
+            msg="Forbidden",
+            hdrs=None,
+            fp=None,
+        )
+
+    notifier = DiscordWebhookNotifier(
+        webhook_url="https://discord.example.com/webhook",
+        http_poster=failing_poster,
+    )
+
+    try:
+        notifier.send(_message())
+    except urllib.error.HTTPError:
+        raise AssertionError("should not leak raw HTTPError") from None
+    except Exception as exc:  # noqa: BLE001
+        assert "403" in str(exc)
+        assert "Forbidden" in str(exc)
+    else:
+        raise AssertionError("expected discord notifier to raise")
 
 
 def _message() -> NotificationMessage:
