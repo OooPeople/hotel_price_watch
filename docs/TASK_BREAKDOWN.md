@@ -91,6 +91,8 @@
 - o state-changing POST route 已補本機 `Origin/Referer` 驗證
 - o notifier 外部 HTTP 請求已補顯式 timeout
 - o runtime 啟動時會低速恢復 enabled 且未 paused 的 watch 分頁，輪詢時仍保留缺頁補建
+- o 已引入正式 `WatchRuntimeState`，GUI 不再靠零散欄位拼湊目前狀態語意
+- o 已補 server-side invariant：輪詢秒數下限、正數目標價、通知 URL 必須為合法 `http/https`
 
 ### Milestone 6.5 尚未完成
 
@@ -102,6 +104,7 @@
 - o 已驗證通知通道冷卻會跨 runtime 重啟保留
 - o 已驗證單一通知通道失敗不會中止整次 check，且其他通道仍可成功送出
 - o 已驗證連續 timeout 會遞增 backoff，且 backoff 後成功檢查會清掉 failure 狀態
+- o 已引入 `runtime_state_events`，把 blocked / paused / resumed / recovered transition 納入正式事件模型
 
 ## Milestone 7: Packaging（尚未開始）
 

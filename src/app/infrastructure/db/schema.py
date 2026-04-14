@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import Callable
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 SQLITE_BUSY_TIMEOUT_MS = 5_000
 MIN_SUPPORTED_SCHEMA_VERSION = 2
 
@@ -156,6 +156,17 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
             FOREIGN KEY (watch_item_id) REFERENCES watch_items(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS runtime_state_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            watch_item_id TEXT NOT NULL,
+            occurred_at_utc TEXT NOT NULL,
+            event_kind TEXT NOT NULL,
+            from_state TEXT,
+            to_state TEXT,
+            detail_text TEXT,
+            FOREIGN KEY (watch_item_id) REFERENCES watch_items(id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS notification_channel_settings (
             singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
             desktop_enabled INTEGER NOT NULL,
@@ -175,8 +186,12 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_debug_artifacts_watch_captured_at
         ON debug_artifacts(watch_item_id, captured_at_utc DESC, id DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_runtime_state_events_watch_occurred_at
+        ON runtime_state_events(watch_item_id, occurred_at_utc DESC, id DESC);
         """
     )
+    _normalize_watch_item_runtime_columns(connection)
     _persist_schema_version_if_missing(connection)
 
 
@@ -256,6 +271,7 @@ def _build_migration_chain() -> dict[int, Callable[[sqlite3.Connection], int]]:
         2: _migrate_2_to_3,
         3: _migrate_3_to_4,
         4: _migrate_4_to_5,
+        5: _migrate_5_to_6,
     }
 
 
@@ -285,3 +301,58 @@ def _migrate_4_to_5(connection: sqlite3.Connection) -> int:
         """
     )
     return 5
+
+
+def _migrate_5_to_6(connection: sqlite3.Connection) -> int:
+    """執行 schema `5 -> 6` 升版。"""
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS runtime_state_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            watch_item_id TEXT NOT NULL,
+            occurred_at_utc TEXT NOT NULL,
+            event_kind TEXT NOT NULL,
+            from_state TEXT,
+            to_state TEXT,
+            detail_text TEXT,
+            FOREIGN KEY (watch_item_id) REFERENCES watch_items(id) ON DELETE CASCADE
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_runtime_state_events_watch_occurred_at
+        ON runtime_state_events(watch_item_id, occurred_at_utc DESC, id DESC)
+        """
+    )
+    _normalize_watch_item_runtime_columns(connection)
+    return 6
+
+
+def _normalize_watch_item_runtime_columns(connection: sqlite3.Connection) -> None:
+    """把舊版 watch_items 的停用/暫停欄位組合收斂成正式語意。"""
+    watch_items_table = connection.execute(
+        """
+        SELECT name FROM sqlite_master
+        WHERE type = 'table' AND name = 'watch_items'
+        """
+    ).fetchone()
+    if watch_items_table is None:
+        return
+    connection.execute(
+        """
+        UPDATE watch_items
+        SET enabled = 1
+        WHERE paused_reason IS NOT NULL
+          AND paused_reason != 'manually_disabled'
+          AND enabled = 0
+        """
+    )
+    connection.execute(
+        """
+        UPDATE watch_items
+        SET enabled = 0
+        WHERE paused_reason = 'manually_disabled'
+          AND enabled = 1
+        """
+    )

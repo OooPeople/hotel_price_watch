@@ -6,11 +6,14 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from uuid import uuid4
 
-from app.domain.entities import WatchItem
-from app.domain.enums import NotificationLeafKind
+from datetime import UTC, datetime
+
+from app.domain import derive_watch_runtime_state
+from app.domain.entities import RuntimeStateEvent, WatchItem
+from app.domain.enums import NotificationLeafKind, RuntimeStateEventKind
 from app.domain.notification_rules import RuleLeaf
 from app.domain.value_objects import SearchDraft, WatchTarget
-from app.infrastructure.db.repositories import SqliteWatchItemRepository
+from app.infrastructure.db.repositories import SqliteRuntimeRepository, SqliteWatchItemRepository
 from app.sites.base import CandidateBundle, CandidateSelection, LookupDiagnostic
 from app.sites.registry import SiteRegistry
 
@@ -34,14 +37,18 @@ class WatchCreationPreview:
 class WatchEditorService:
     """負責從 seed URL 建立 watch item 的 editor 流程。"""
 
+    MIN_SCHEDULER_INTERVAL_SECONDS = 60
+
     def __init__(
         self,
         *,
         site_registry: SiteRegistry,
         watch_item_repository: SqliteWatchItemRepository,
+        runtime_repository: SqliteRuntimeRepository,
     ) -> None:
         self._site_registry = site_registry
         self._watch_item_repository = watch_item_repository
+        self._runtime_repository = runtime_repository
 
     def preview_from_seed_url(self, seed_url: str) -> WatchCreationPreview:
         """解析 seed URL，並抓回可供 UI 選擇的候選方案。"""
@@ -77,6 +84,7 @@ class WatchEditorService:
         target_price: Decimal | None,
     ) -> WatchItem:
         """依使用者在 editor 中確認的條件建立正式 watch item。"""
+        self._validate_scheduler_interval(scheduler_interval_seconds)
         selected_candidate = _find_selected_candidate(
             candidate_bundle=preview.candidate_bundle,
             room_id=room_id,
@@ -144,12 +152,22 @@ class WatchEditorService:
     def enable_watch_item(self, watch_item_id: str) -> WatchItem:
         """啟用既有 watch item，並清除人工停用或暫停狀態。"""
         watch_item = self._get_watch_item_or_raise(watch_item_id)
+        previous_state = derive_watch_runtime_state(
+            watch_item=watch_item,
+            latest_snapshot=None,
+        )
         updated_watch_item = replace(
             watch_item,
             enabled=True,
             paused_reason=None,
         )
         self._watch_item_repository.save(updated_watch_item)
+        self._record_runtime_state_event(
+            watch_item_id=watch_item_id,
+            event_kind=RuntimeStateEventKind.MANUAL_ENABLE,
+            from_watch_item=watch_item,
+            to_watch_item=updated_watch_item,
+        )
         return updated_watch_item
 
     def disable_watch_item(self, watch_item_id: str) -> WatchItem:
@@ -161,6 +179,12 @@ class WatchEditorService:
             paused_reason="manually_disabled",
         )
         self._watch_item_repository.save(updated_watch_item)
+        self._record_runtime_state_event(
+            watch_item_id=watch_item_id,
+            event_kind=RuntimeStateEventKind.MANUAL_DISABLE,
+            from_watch_item=watch_item,
+            to_watch_item=updated_watch_item,
+        )
         return updated_watch_item
 
     def pause_watch_item(self, watch_item_id: str) -> WatchItem:
@@ -172,6 +196,12 @@ class WatchEditorService:
             paused_reason="manually_paused",
         )
         self._watch_item_repository.save(updated_watch_item)
+        self._record_runtime_state_event(
+            watch_item_id=watch_item_id,
+            event_kind=RuntimeStateEventKind.MANUAL_PAUSE,
+            from_watch_item=watch_item,
+            to_watch_item=updated_watch_item,
+        )
         return updated_watch_item
 
     def resume_watch_item(self, watch_item_id: str) -> WatchItem:
@@ -183,6 +213,12 @@ class WatchEditorService:
             paused_reason=None,
         )
         self._watch_item_repository.save(updated_watch_item)
+        self._record_runtime_state_event(
+            watch_item_id=watch_item_id,
+            event_kind=RuntimeStateEventKind.MANUAL_RESUME,
+            from_watch_item=watch_item,
+            to_watch_item=updated_watch_item,
+        )
         return updated_watch_item
 
     def mark_existing_watch_for_preview(
@@ -224,6 +260,38 @@ class WatchEditorService:
         if watch_item is None:
             raise ValueError("watch item not found")
         return watch_item
+
+    def _validate_scheduler_interval(self, scheduler_interval_seconds: int) -> None:
+        """驗證輪詢秒數下限，避免不合理排程直接寫入 DB。"""
+        if scheduler_interval_seconds < self.MIN_SCHEDULER_INTERVAL_SECONDS:
+            raise ValueError(
+                f"輪詢秒數至少需 {self.MIN_SCHEDULER_INTERVAL_SECONDS} 秒"
+            )
+
+    def _record_runtime_state_event(
+        self,
+        *,
+        watch_item_id: str,
+        event_kind: RuntimeStateEventKind,
+        from_watch_item: WatchItem,
+        to_watch_item: WatchItem,
+    ) -> None:
+        """在人工操作後補記正式狀態轉移事件。"""
+        self._runtime_repository.append_runtime_state_event(
+            RuntimeStateEvent(
+                watch_item_id=watch_item_id,
+                occurred_at=datetime.now(UTC),
+                event_kind=event_kind,
+                from_state=derive_watch_runtime_state(
+                    watch_item=from_watch_item,
+                    latest_snapshot=None,
+                ),
+                to_state=derive_watch_runtime_state(
+                    watch_item=to_watch_item,
+                    latest_snapshot=None,
+                ),
+            )
+        )
 
 
 def _find_selected_candidate(

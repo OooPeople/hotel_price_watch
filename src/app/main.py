@@ -19,7 +19,7 @@ from app.application.debug_captures import (
 from app.application.preview_guard import PreviewCooldownError
 from app.application.watch_editor import WatchCreationPreview
 from app.bootstrap.container import AppContainer, build_app_container
-from app.domain.entities import WatchItem
+from app.domain.entities import LatestCheckSnapshot, WatchItem
 from app.domain.enums import NotificationLeafKind
 from app.domain.value_objects import SearchDraft
 from app.monitor.runtime import MonitorRuntimeStatus
@@ -77,6 +77,7 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         flash_message = request.query_params.get("message")
         html = render_watch_list_page(
             watch_items=container.watch_item_repository.list_all(),
+            latest_snapshots_by_watch_id=_latest_snapshots_by_watch_id(container),
             flash_message=flash_message,
             runtime_status=_get_runtime_status(container),
         )
@@ -145,6 +146,9 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
             check_events=tuple(container.runtime_repository.list_check_events(watch_item_id)),
             notification_state=container.runtime_repository.get_notification_state(watch_item_id),
             debug_artifacts=tuple(container.runtime_repository.list_debug_artifacts(watch_item_id)),
+            runtime_state_events=tuple(
+                container.runtime_repository.list_runtime_state_events(watch_item_id)
+            ),
             flash_message=request.query_params.get("message"),
         )
         return HTMLResponse(html)
@@ -912,12 +916,24 @@ def _get_runtime_status(container: AppContainer) -> MonitorRuntimeStatus | None:
     return container.monitor_runtime.get_status()
 
 
+def _latest_snapshots_by_watch_id(
+    container: AppContainer,
+) -> dict[str, LatestCheckSnapshot | None]:
+    """建立首頁與局部更新使用的最新摘要索引。"""
+    watch_items = tuple(container.watch_item_repository.list_all())
+    return {
+        watch_item.id: container.runtime_repository.get_latest_check_snapshot(watch_item.id)
+        for watch_item in watch_items
+    }
+
+
 def _build_watch_list_fragments(container: AppContainer) -> dict[str, str]:
     """建立首頁局部更新所需的 runtime 與 watch 列表 HTML 片段。"""
     return {
         "runtime_html": render_runtime_status_fragment(_get_runtime_status(container)),
         "table_body_html": render_watch_list_rows_fragment(
-            container.watch_item_repository.list_all()
+            container.watch_item_repository.list_all(),
+            latest_snapshots_by_watch_id=_latest_snapshots_by_watch_id(container),
         ),
     }
 
@@ -934,6 +950,9 @@ def _build_watch_detail_fragments(
         check_events=tuple(container.runtime_repository.list_check_events(watch_item.id)),
         notification_state=container.runtime_repository.get_notification_state(watch_item.id),
         debug_artifacts=tuple(container.runtime_repository.list_debug_artifacts(watch_item.id)),
+        runtime_state_events=tuple(
+            container.runtime_repository.list_runtime_state_events(watch_item.id)
+        ),
     )
 
 

@@ -69,6 +69,7 @@ def build_app_container(db_path: str | Path | None = None) -> AppContainer:
     watch_editor_service = WatchEditorService(
         site_registry=site_registry,
         watch_item_repository=watch_item_repository,
+        runtime_repository=runtime_repository,
     )
     app_settings_service = AppSettingsService(
         settings_repository=app_settings_repository,

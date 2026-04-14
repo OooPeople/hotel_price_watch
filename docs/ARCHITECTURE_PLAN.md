@@ -22,6 +22,7 @@
 - 站點解析與監看核心分離
 - runtime 與 GUI 使用同一份正式 `SiteAdapter` 契約
 - watch 最新狀態、歷史、通知狀態、debug 摘要分離保存
+- GUI 與 runtime 對 watch 狀態的解讀應透過正式 `WatchRuntimeState` 收斂
 
 ## 2. 建議目錄
 
@@ -118,6 +119,7 @@ V1 目前只有 `ikyu`，但核心仍以 adapter 契約隔離站點細節。
 - `price_history`
 - `notification_states`
 - `notification_throttle_states`
+- `runtime_state_events`
 - `debug_artifacts`
 - `notification_channel_settings`
 
@@ -128,7 +130,9 @@ V1 目前只有 `ikyu`，但核心仍以 adapter 契約隔離站點細節。
 - `check_events` 放每次檢查的整理後歷史
 - `price_history` 只放成功價格點
 - `notification_states` / `notification_throttle_states` 分別管理通知去重與通道冷卻
+- `runtime_state_events` 放正式狀態轉移歷史，例如 blocked / resumed / recovered
 - `debug_artifacts` 放 runtime 與 parser 的診斷訊號
+- 不用 `watch_item.enabled` / `paused_reason` 以外的零散欄位在 UI 中直接拼湊狀態文字
 
 ## 5. `SiteAdapter` 契約
 
@@ -254,3 +258,13 @@ V1 正式主線下，`SiteAdapter` 只需要支援 browser-driven 路徑。
 
 - 把 runtime 欄位塞回 `watch_item`
 - 讓最新狀態、通知狀態、debug 摘要互相重疊
+- 讓頁面自行用多個 primitive 欄位重新解讀 blocked / paused / recover 狀態
+
+### 9.5 schema 已進入第 6 版
+
+目前 schema 已包含：
+
+- `notification_throttle_states`
+- `runtime_state_events`
+
+且初始化流程會把舊版 `enabled/paused_reason` 寫法正規化成目前正式語意。

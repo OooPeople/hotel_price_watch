@@ -14,13 +14,16 @@ from app.domain.entities import (
     NotificationState,
     NotificationThrottleState,
     PriceHistoryEntry,
+    RuntimeStateEvent,
     WatchItem,
 )
 from app.domain.enums import (
     Availability,
     NotificationDeliveryStatus,
     NotificationLeafKind,
+    RuntimeStateEventKind,
     SourceKind,
+    WatchRuntimeState,
 )
 from app.domain.notification_rules import RuleLeaf
 from app.domain.value_objects import SearchDraft, WatchTarget
@@ -156,12 +159,19 @@ def test_initialize_schema_migrates_from_v2_to_latest_via_chain(tmp_path) -> Non
             WHERE type = 'table' AND name = 'notification_throttle_states'
             """
         ).fetchone()
+        runtime_state_events_table = connection.execute(
+            """
+            SELECT name FROM sqlite_master
+            WHERE type = 'table' AND name = 'runtime_state_events'
+            """
+        ).fetchone()
 
     assert version_row is not None
     assert version_row["value"] == str(CURRENT_SCHEMA_VERSION)
     assert "browser_tab_id" in draft_columns
     assert "browser_page_url" in draft_columns
     assert throttle_table is not None
+    assert runtime_state_events_table is not None
 
 
 def test_initialize_schema_migrates_from_v3_to_latest_via_chain(tmp_path) -> None:
@@ -215,12 +225,88 @@ def test_initialize_schema_migrates_from_v3_to_latest_via_chain(tmp_path) -> Non
             WHERE type = 'table' AND name = 'notification_throttle_states'
             """
         ).fetchone()
+        runtime_state_events_table = connection.execute(
+            """
+            SELECT name FROM sqlite_master
+            WHERE type = 'table' AND name = 'runtime_state_events'
+            """
+        ).fetchone()
 
     assert version_row is not None
     assert version_row["value"] == str(CURRENT_SCHEMA_VERSION)
     assert "browser_tab_id" in draft_columns
     assert "browser_page_url" in draft_columns
     assert throttle_table is not None
+    assert runtime_state_events_table is not None
+
+
+def test_initialize_schema_migrates_from_v5_to_latest_via_chain(tmp_path) -> None:
+    """驗證既有 v5 資料庫會經過 `5 -> 6` 鏈式升版。"""
+    database = SqliteDatabase(tmp_path / "watcher.db")
+
+    with database.connect() as connection:
+        connection.execute(
+            """
+            CREATE TABLE metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO metadata (key, value) VALUES ('schema_version', '5')"
+        )
+
+    database.initialize()
+
+    with database.connect() as connection:
+        version_row = connection.execute(
+            "SELECT value FROM metadata WHERE key = 'schema_version'"
+        ).fetchone()
+        runtime_state_events_table = connection.execute(
+            """
+            SELECT name FROM sqlite_master
+            WHERE type = 'table' AND name = 'runtime_state_events'
+            """
+        ).fetchone()
+
+    assert version_row is not None
+    assert version_row["value"] == str(CURRENT_SCHEMA_VERSION)
+    assert runtime_state_events_table is not None
+
+
+def test_initialize_schema_normalizes_legacy_paused_watch_rows(tmp_path) -> None:
+    """舊版把暫停誤寫成 disabled 的資料，初始化後應收斂成正式語意。"""
+    database = SqliteDatabase(tmp_path / "watcher.db")
+    database.initialize()
+
+    with database.connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO watch_items (
+                id, site, hotel_id, room_id, plan_id,
+                check_in_date, check_out_date, people_count, room_count,
+                hotel_name, room_name, plan_name, canonical_url,
+                notification_rule_json, scheduler_interval_seconds,
+                enabled, paused_reason, created_at_utc, updated_at_utc
+            ) VALUES (
+                'watch-legacy', 'ikyu', '00082173', '10191605', '11035620',
+                '2026-09-18', '2026-09-19', 2, 1,
+                'Hotel', 'Room', 'Plan', 'https://example.test',
+                '{\"type\":\"leaf\",\"kind\":\"any_drop\",\"target_price\":null}',
+                600,
+                0, 'http_403', '2026-04-15T10:00:00+00:00', '2026-04-15T10:00:00+00:00'
+            )
+            """
+        )
+
+    database.initialize()
+    repository = SqliteWatchItemRepository(database)
+    watch_item = repository.get("watch-legacy")
+
+    assert watch_item is not None
+    assert watch_item.enabled is True
+    assert watch_item.paused_reason == "http_403"
 
 
 def test_watch_items_table_does_not_mix_runtime_columns(tmp_path) -> None:
@@ -346,6 +432,26 @@ def test_runtime_repository_persists_notification_throttle_state(tmp_path) -> No
         )
         == state
     )
+
+
+def test_runtime_repository_persists_runtime_state_events(tmp_path) -> None:
+    """runtime 狀態事件應能正確保存並回讀。"""
+    database = SqliteDatabase(tmp_path / "watcher.db")
+    database.initialize()
+    SqliteWatchItemRepository(database).save(_build_watch_item())
+    repository = SqliteRuntimeRepository(database)
+    event = RuntimeStateEvent(
+        watch_item_id="watch-1",
+        occurred_at=datetime(2026, 4, 15, 12, 0, 0),
+        event_kind=RuntimeStateEventKind.RECOVERED_AFTER_SUCCESS,
+        from_state=WatchRuntimeState.RECOVER_PENDING,
+        to_state=WatchRuntimeState.ACTIVE,
+        detail_text="403 阻擋後首度成功檢查",
+    )
+
+    repository.append_runtime_state_event(event)
+
+    assert repository.list_runtime_state_events("watch-1") == [event]
 
 
 def test_runtime_repository_returns_last_effective_availability(tmp_path) -> None:

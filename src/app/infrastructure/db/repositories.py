@@ -15,6 +15,7 @@ from app.domain.entities import (
     NotificationState,
     NotificationThrottleState,
     PriceHistoryEntry,
+    RuntimeStateEvent,
     WatchItem,
 )
 from app.domain.enums import (
@@ -22,7 +23,9 @@ from app.domain.enums import (
     LogicalOperator,
     NotificationDeliveryStatus,
     NotificationLeafKind,
+    RuntimeStateEventKind,
     SourceKind,
+    WatchRuntimeState,
 )
 from app.domain.notification_rules import CompositeRule, NotificationRule, RuleLeaf
 from app.domain.value_objects import SearchDraft, WatchTarget
@@ -199,6 +202,7 @@ class SqliteRuntimeRepository:
         notification_state: NotificationState,
         price_history_entry: PriceHistoryEntry | None = None,
         debug_artifact: DebugArtifact | None = None,
+        runtime_state_events: tuple[RuntimeStateEvent, ...] = (),
         debug_retention_limit: int = 20,
     ) -> None:
         """以單一 transaction 保存單次檢查的所有持久化結果。"""
@@ -208,6 +212,8 @@ class SqliteRuntimeRepository:
             if price_history_entry is not None:
                 self._append_price_history(connection, price_history_entry)
             self._save_notification_state(connection, notification_state)
+            for runtime_state_event in runtime_state_events:
+                self._append_runtime_state_event(connection, runtime_state_event)
             if debug_artifact is not None:
                 self._append_debug_artifact(
                     connection,
@@ -405,6 +411,42 @@ class SqliteRuntimeRepository:
                 retention_limit=retention_limit,
             )
 
+    def append_runtime_state_event(self, event: RuntimeStateEvent) -> None:
+        """追加單一 runtime 狀態事件。"""
+        with self._database.connect() as connection:
+            self._append_runtime_state_event(connection, event)
+
+    def list_runtime_state_events(self, watch_item_id: str) -> list[RuntimeStateEvent]:
+        """依時間倒序列出 watch 的 runtime 狀態轉移事件。"""
+        with self._database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM runtime_state_events
+                WHERE watch_item_id = ?
+                ORDER BY occurred_at_utc DESC, id DESC
+                """,
+                (watch_item_id,),
+            ).fetchall()
+        return [
+            RuntimeStateEvent(
+                watch_item_id=row["watch_item_id"],
+                occurred_at=_text_to_datetime(row["occurred_at_utc"]),
+                event_kind=RuntimeStateEventKind(row["event_kind"]),
+                from_state=(
+                    None
+                    if row["from_state"] is None
+                    else WatchRuntimeState(row["from_state"])
+                ),
+                to_state=(
+                    None
+                    if row["to_state"] is None
+                    else WatchRuntimeState(row["to_state"])
+                ),
+                detail_text=row["detail_text"],
+            )
+            for row in rows
+        ]
+
     def list_debug_artifacts(self, watch_item_id: str) -> list[DebugArtifact]:
         """依時間列出 debug artifact，供錯誤排查使用。"""
         with self._database.connect() as connection:
@@ -587,6 +629,28 @@ class SqliteRuntimeRepository:
                 """,
                 (artifact.watch_item_id, artifact.watch_item_id, retention_limit),
             )
+
+    def _append_runtime_state_event(
+        self,
+        connection: Connection,
+        event: RuntimeStateEvent,
+    ) -> None:
+        """在既有 connection 上追加 runtime 狀態轉移事件。"""
+        connection.execute(
+            """
+            INSERT INTO runtime_state_events (
+                watch_item_id, occurred_at_utc, event_kind, from_state, to_state, detail_text
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event.watch_item_id,
+                _datetime_to_text(event.occurred_at),
+                event.event_kind.value,
+                None if event.from_state is None else event.from_state.value,
+                None if event.to_state is None else event.to_state.value,
+                event.detail_text,
+            ),
+        )
 
 
 class SqliteAppSettingsRepository:

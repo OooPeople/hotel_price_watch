@@ -54,6 +54,34 @@ class NotificationDeliveryStatus(StrEnum):
     PARTIAL = "partial"
 
 
+class WatchRuntimeState(StrEnum):
+    """表示 watch 目前在 GUI 與 runtime 上的正式狀態語意。"""
+
+    ACTIVE = "active"
+    BACKOFF_ACTIVE = "backoff_active"
+    DEGRADED_ACTIVE = "degraded_active"
+    RECOVER_PENDING = "recover_pending"
+    MANUALLY_PAUSED = "manually_paused"
+    MANUALLY_DISABLED = "manually_disabled"
+    PAUSED_BLOCKED_403 = "paused_blocked_403"
+    PAUSED_OTHER = "paused_other"
+
+
+class RuntimeStateEventKind(StrEnum):
+    """表示 watch runtime 狀態轉移歷史中的正式事件類型。"""
+
+    MANUAL_ENABLE = "manual_enable"
+    MANUAL_DISABLE = "manual_disable"
+    MANUAL_PAUSE = "manual_pause"
+    MANUAL_RESUME = "manual_resume"
+    PAUSE_DUE_TO_HTTP_403 = "pause_due_to_http_403"
+    ENTERED_BACKOFF = "entered_backoff"
+    CLEARED_BACKOFF = "cleared_backoff"
+    ENTERED_DEGRADED = "entered_degraded"
+    CLEARED_DEGRADED = "cleared_degraded"
+    RECOVERED_AFTER_SUCCESS = "recovered_after_success"
+
+
 class CheckErrorCode(StrEnum):
     """表示 monitor 在檢查過程中可能記錄的錯誤代碼。"""
 

@@ -13,6 +13,7 @@ from app.domain.entities import (
     NotificationThrottleState,
     PriceHistoryEntry,
     PriceSnapshot,
+    RuntimeStateEvent,
     WatchItem,
 )
 from app.domain.enums import (
@@ -22,12 +23,18 @@ from app.domain.enums import (
     NotificationDeliveryStatus,
     NotificationEventKind,
     NotificationLeafKind,
+    RuntimeStateEventKind,
     SourceKind,
+    WatchRuntimeState,
 )
 from app.domain.notification_engine import compare_snapshots, evaluate_notification_rule
 from app.domain.notification_rules import CompositeRule, NotificationRule, RuleLeaf
 from app.domain.pricing import calculate_price_per_person_per_night
 from app.domain.value_objects import SearchDraft, WatchTarget
+from app.domain.watch_runtime_state import (
+    derive_watch_runtime_state,
+    describe_watch_runtime_state,
+)
 
 __all__ = [
     "Availability",
@@ -50,12 +57,17 @@ __all__ = [
     "NotificationThrottleState",
     "PriceHistoryEntry",
     "PriceSnapshot",
+    "RuntimeStateEvent",
+    "RuntimeStateEventKind",
     "RuleLeaf",
     "SearchDraft",
     "SourceKind",
     "WatchItem",
+    "WatchRuntimeState",
     "WatchTarget",
     "calculate_price_per_person_per_night",
     "compare_snapshots",
+    "derive_watch_runtime_state",
+    "describe_watch_runtime_state",
     "evaluate_notification_rule",
 ]

@@ -21,6 +21,8 @@ class RuleLeaf:
             raise ValueError("below_target_price requires target_price")
         if self.kind is NotificationLeafKind.ANY_DROP and self.target_price is not None:
             raise ValueError("any_drop must not carry target_price")
+        if self.target_price is not None and self.target_price <= 0:
+            raise ValueError("target_price must be greater than zero")
 
 
 @dataclass(frozen=True, slots=True)

@@ -11,7 +11,9 @@ from app.domain.enums import (
     CheckErrorCode,
     NotificationDeliveryStatus,
     NotificationEventKind,
+    RuntimeStateEventKind,
     SourceKind,
+    WatchRuntimeState,
 )
 from app.domain.notification_rules import NotificationRule
 from app.domain.value_objects import WatchTarget
@@ -33,6 +35,13 @@ class WatchItem:
     paused_reason: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        """驗證 watch 啟用旗標與暫停原因的組合，避免寫入矛盾狀態。"""
+        if self.enabled and self.paused_reason == "manually_disabled":
+            raise ValueError("enabled watch must not carry manually_disabled")
+        if not self.enabled and self.paused_reason in {"manually_paused", "http_403"}:
+            raise ValueError("disabled watch must not carry active pause reason")
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,3 +187,15 @@ class DebugArtifact:
     payload_text: str
     source_url: str | None = None
     http_status: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeStateEvent:
+    """表示 watch 在背景運作或人工操作中的正式狀態轉移事件。"""
+
+    watch_item_id: str
+    occurred_at: datetime
+    event_kind: RuntimeStateEventKind
+    from_state: WatchRuntimeState | None = None
+    to_state: WatchRuntimeState | None = None
+    detail_text: str | None = None

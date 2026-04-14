@@ -17,10 +17,17 @@ from app.domain.entities import (
     DebugArtifact,
     NotificationState,
     PriceSnapshot,
+    RuntimeStateEvent,
     WatchItem,
 )
-from app.domain.enums import Availability, CheckErrorCode, SourceKind
+from app.domain.enums import (
+    Availability,
+    CheckErrorCode,
+    RuntimeStateEventKind,
+    SourceKind,
+)
 from app.domain.notification_engine import compare_snapshots, evaluate_notification_rule
+from app.domain.watch_runtime_state import derive_watch_runtime_state
 from app.infrastructure.browser import ChromeCdpHtmlFetcher
 from app.infrastructure.browser.ikyu_page_guards import IkyuBlockedPageError
 from app.infrastructure.db.repositories import (
@@ -293,13 +300,21 @@ class ChromeDrivenMonitorRuntime:
             notification_state=next_notification_state,
             price_history_entry=artifacts.price_history_entry,
             debug_artifact=debug_artifact,
+            runtime_state_events=_build_runtime_state_events(
+                watch_item=watch_item,
+                latest_snapshot=latest_snapshot,
+                next_snapshot=artifacts.latest_check_snapshot,
+                error_handling=error_handling,
+                error_code=error_code,
+                checked_at=checked_at,
+            ),
             debug_retention_limit=self._debug_retention_limit,
         )
 
         if error_handling.should_pause:
             paused_watch = replace(
                 watch_item,
-                enabled=False,
+                enabled=True,
                 paused_reason=(
                     error_handling.paused_reason.value
                     if error_handling.paused_reason is not None
@@ -644,3 +659,113 @@ def _build_enabled_notifiers(
 def _utcnow() -> datetime:
     """集中建立 runtime 使用的 UTC 現在時間。"""
     return datetime.now(UTC)
+
+
+def _build_runtime_state_events(
+    *,
+    watch_item: WatchItem,
+    latest_snapshot,
+    next_snapshot,
+    error_handling,
+    error_code: CheckErrorCode | None,
+    checked_at: datetime,
+) -> tuple[RuntimeStateEvent, ...]:
+    """依前後狀態差異整理正式 runtime 狀態轉移事件。"""
+    events: list[RuntimeStateEvent] = []
+    previous_state = derive_watch_runtime_state(
+        watch_item=watch_item,
+        latest_snapshot=latest_snapshot,
+        now=checked_at,
+    )
+    next_watch_item = (
+        replace(
+            watch_item,
+            enabled=True,
+            paused_reason=(
+                error_handling.paused_reason.value
+                if error_handling.paused_reason is not None
+                else error_code.value if error_code is not None else "paused"
+            ),
+        )
+        if error_handling.should_pause
+        else watch_item
+    )
+    current_state = derive_watch_runtime_state(
+        watch_item=next_watch_item,
+        latest_snapshot=next_snapshot,
+        now=checked_at,
+    )
+
+    if error_handling.should_pause and error_handling.paused_reason is CheckErrorCode.FORBIDDEN_403:
+        events.append(
+            RuntimeStateEvent(
+                watch_item_id=watch_item.id,
+                occurred_at=checked_at,
+                event_kind=RuntimeStateEventKind.PAUSE_DUE_TO_HTTP_403,
+                from_state=previous_state,
+                to_state=current_state,
+            )
+        )
+
+    previous_backoff = latest_snapshot.backoff_until if latest_snapshot is not None else None
+    next_backoff = next_snapshot.backoff_until
+    if previous_backoff is None and next_backoff is not None:
+        events.append(
+            RuntimeStateEvent(
+                watch_item_id=watch_item.id,
+                occurred_at=checked_at,
+                event_kind=RuntimeStateEventKind.ENTERED_BACKOFF,
+                from_state=previous_state,
+                to_state=current_state,
+            )
+        )
+    elif previous_backoff is not None and next_backoff is None:
+        events.append(
+            RuntimeStateEvent(
+                watch_item_id=watch_item.id,
+                occurred_at=checked_at,
+                event_kind=RuntimeStateEventKind.CLEARED_BACKOFF,
+                from_state=previous_state,
+                to_state=current_state,
+            )
+        )
+
+    previous_degraded = latest_snapshot.is_degraded if latest_snapshot is not None else False
+    next_degraded = next_snapshot.is_degraded
+    if not previous_degraded and next_degraded:
+        events.append(
+            RuntimeStateEvent(
+                watch_item_id=watch_item.id,
+                occurred_at=checked_at,
+                event_kind=RuntimeStateEventKind.ENTERED_DEGRADED,
+                from_state=previous_state,
+                to_state=current_state,
+            )
+        )
+    elif previous_degraded and not next_degraded:
+        events.append(
+            RuntimeStateEvent(
+                watch_item_id=watch_item.id,
+                occurred_at=checked_at,
+                event_kind=RuntimeStateEventKind.CLEARED_DEGRADED,
+                from_state=previous_state,
+                to_state=current_state,
+            )
+        )
+
+    if (
+        latest_snapshot is not None
+        and latest_snapshot.last_error_code == CheckErrorCode.FORBIDDEN_403.value
+        and error_code is None
+    ):
+        events.append(
+            RuntimeStateEvent(
+                watch_item_id=watch_item.id,
+                occurred_at=checked_at,
+                event_kind=RuntimeStateEventKind.RECOVERED_AFTER_SUCCESS,
+                from_state=previous_state,
+                to_state=current_state,
+            )
+        )
+
+    return tuple(events)

@@ -864,6 +864,7 @@ def test_render_watch_detail_page_shows_runtime_sections() -> None:
         latest_snapshot=_build_latest_snapshot(),
         check_events=(_build_check_event(),),
         notification_state=_build_notification_state(),
+        runtime_state_events=(),
         debug_artifacts=(
             _build_debug_artifact(),
             _build_discarded_debug_artifact(),
@@ -893,6 +894,7 @@ def test_render_watch_detail_page_includes_polling_script() -> None:
         latest_snapshot=_build_latest_snapshot(),
         check_events=(_build_check_event(),),
         notification_state=_build_notification_state(),
+        runtime_state_events=(),
         debug_artifacts=(_build_debug_artifact(),),
     )
 
@@ -1071,10 +1073,15 @@ def test_preview_guard_blocks_immediate_retry_after_blocked_page() -> None:
 class FakeWatchEditorService(WatchEditorService):
     """用固定資料模擬 watch editor 流程。"""
 
-    def __init__(self, watch_item_repository: SqliteWatchItemRepository) -> None:
+    def __init__(
+        self,
+        watch_item_repository: SqliteWatchItemRepository,
+        runtime_repository: SqliteRuntimeRepository,
+    ) -> None:
         super().__init__(
             site_registry=SiteRegistry(),
             watch_item_repository=watch_item_repository,
+            runtime_repository=runtime_repository,
         )
         self._watch_item_repository = watch_item_repository
 
@@ -1245,7 +1252,7 @@ def _build_test_container(tmp_path) -> AppContainer:
         site_registry=site_registry,
         app_settings_service=AppSettingsService(app_settings_repository),
         notification_channel_test_service=_FakeNotificationChannelTestService(),
-        watch_editor_service=FakeWatchEditorService(watch_repository),
+        watch_editor_service=FakeWatchEditorService(watch_repository, runtime_repository),
         chrome_tab_preview_service=FakeChromeTabPreviewService(),
         chrome_cdp_fetcher=ChromeCdpHtmlFetcher(),
         preview_attempt_guard=PreviewAttemptGuard(),

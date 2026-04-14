@@ -29,6 +29,8 @@
 - watch 詳細頁、歷史與 runtime 訊號摘要
 - debug captures 列表 / 詳細頁 / 清空
 - background runtime 已接線，能依排程刷新頁面、寫入歷史並發送通知
+- GUI 目前狀態已統一透過正式 `WatchRuntimeState` 解讀
+- blocked / paused / resumed / recovered transition 已寫入正式 `runtime_state_events`
 
 ## 2. 目前正式主線的行為
 
@@ -66,6 +68,7 @@
   - `check_events`
   - `price_history`
   - `notification_states`
+  - `runtime_state_events`
   - `debug_artifacts`
 - SQLite 已啟用：
   - `WAL`
@@ -81,6 +84,26 @@
 - dispatcher 在設定不變時會重用，不會每次重新建立
 - 通道節流狀態已持久化，可跨 runtime 重啟保留
 - 外部 HTTP notifier 已補顯式 timeout
+- 全域通知設定已補 server-side URL 驗證，只接受合法 `http/https`
+
+### 2.5 watch 狀態語意
+
+- `watch_item.enabled` 與 `paused_reason` 不再由各頁面自行拼湊解讀
+- GUI 與操作按鈕統一透過 `WatchRuntimeState` 判斷
+- `runtime_state_events` 會正式記錄 blocked / paused / resumed / recovered 等 transition
+- 目前正式狀態至少包含：
+  - `ACTIVE`
+  - `BACKOFF_ACTIVE`
+  - `DEGRADED_ACTIVE`
+  - `RECOVER_PENDING`
+  - `MANUALLY_PAUSED`
+  - `MANUALLY_DISABLED`
+  - `PAUSED_BLOCKED_403`
+  - `PAUSED_OTHER`
+- `RECOVER_PENDING` 目前表示：
+  - watch 已恢復執行
+  - 但最近一次錯誤仍是 `http_403`
+  - 尚未有新的成功檢查證明它真的恢復正常
 
 `恢復可訂` 的正式規則目前是：
 
@@ -104,6 +127,8 @@
 - 通知節流狀態持久化
 - dispatcher 在設定未變時重用
 - notifier HTTP timeout
+- `WatchItem` 的非法 `enabled/paused_reason` 組合已被拒絕
+- blocked / paused / resumed / recovered transition 已有正式事件模型與持久化
 - state-changing POST 的本機 `Origin/Referer` 驗證
 - 通知通道冷卻跨 runtime 重啟保留
 - 單一通知通道失敗不會中止整次 check
@@ -148,6 +173,19 @@
 
 - 不要把 runtime 欄位重新塞回 `watch_item`
 - 不要讓通知狀態、最新狀態、debug 摘要彼此重疊
+- 若之後補更完整的 blocked / recover transition history，應優先擴充事件模型，而不是再增加零散旗標
+
+### 4.5 schema 版本已升到 6
+
+目前 schema 已包含：
+
+- `notification_throttle_states`
+- `runtime_state_events`
+
+若接手時看到舊資料庫，需注意初始化流程會執行：
+
+- `5 -> 6` migration
+- 舊版 `enabled/paused_reason` 正規化
 
 ## 5. 下一步建議順序
 

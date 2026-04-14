@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from app.config.models import NotificationChannelSettings
 
@@ -47,8 +48,17 @@ class AppSettingsService:
         normalized_ntfy_topic = _normalize_optional_text(ntfy_topic)
         normalized_discord_webhook_url = _normalize_optional_text(discord_webhook_url)
 
+        _validate_http_url(
+            normalized_ntfy_server_url,
+            field_name="ntfy server URL",
+        )
         if ntfy_enabled and normalized_ntfy_topic is None:
             raise ValueError("啟用 ntfy 時，必須填寫 topic。")
+        if normalized_discord_webhook_url is not None:
+            _validate_http_url(
+                normalized_discord_webhook_url,
+                field_name="Discord webhook URL",
+            )
         if discord_enabled and normalized_discord_webhook_url is None:
             raise ValueError("啟用 Discord 時，必須填寫 webhook URL。")
 
@@ -69,3 +79,10 @@ def _normalize_optional_text(value: str | None) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
+
+
+def _validate_http_url(value: str, *, field_name: str) -> None:
+    """驗證通知相關 URL 必須是合法的 http/https 位址。"""
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"{field_name} 必須是合法的 http/https URL。")

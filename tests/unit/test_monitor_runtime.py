@@ -21,6 +21,7 @@ from app.domain.enums import (
     NotificationDeliveryStatus,
     NotificationEventKind,
     NotificationLeafKind,
+    RuntimeStateEventKind,
     SourceKind,
 )
 from app.domain.notification_rules import RuleLeaf
@@ -1112,7 +1113,7 @@ def test_runtime_pauses_watch_when_chrome_refresh_hits_403(tmp_path) -> None:
 
     updated_watch_item = watch_repository.get(watch_item.id)
     assert updated_watch_item is not None
-    assert updated_watch_item.enabled is False
+    assert updated_watch_item.enabled is True
     assert updated_watch_item.paused_reason == "http_403"
 
     latest_snapshot = runtime_repository.get_latest_check_snapshot(watch_item.id)
@@ -1123,6 +1124,10 @@ def test_runtime_pauses_watch_when_chrome_refresh_hits_403(tmp_path) -> None:
     debug_artifacts = runtime_repository.list_debug_artifacts(watch_item.id)
     assert len(debug_artifacts) == 1
     assert debug_artifacts[0].reason == "http_403"
+
+    runtime_state_events = runtime_repository.list_runtime_state_events(watch_item.id)
+    assert len(runtime_state_events) == 1
+    assert runtime_state_events[0].event_kind is RuntimeStateEventKind.PAUSE_DUE_TO_HTTP_403
 
     price_history = runtime_repository.list_price_history(watch_item.id)
     assert price_history == []
@@ -1195,7 +1200,7 @@ def test_runtime_recovers_cleanly_after_manual_resume_from_403_pause(tmp_path) -
 
     paused_watch = watch_repository.get(watch_item.id)
     assert paused_watch is not None
-    assert paused_watch.enabled is False
+    assert paused_watch.enabled is True
     assert paused_watch.paused_reason == "http_403"
 
     resumed_watch = replace(paused_watch, enabled=True, paused_reason=None)
@@ -1227,6 +1232,11 @@ def test_runtime_recovers_cleanly_after_manual_resume_from_403_pause(tmp_path) -
     assert check_events[0].error_code == "http_403"
     assert check_events[1].availability is Availability.AVAILABLE
     assert NotificationEventKind.BECAME_AVAILABLE.value not in check_events[1].event_kinds
+
+    runtime_state_events = runtime_repository.list_runtime_state_events(watch_item.id)
+    event_kinds = tuple(event.event_kind for event in runtime_state_events)
+    assert RuntimeStateEventKind.PAUSE_DUE_TO_HTTP_403 in event_kinds
+    assert RuntimeStateEventKind.RECOVERED_AFTER_SUCCESS in event_kinds
 
 
 def test_runtime_error_mapping_no_longer_depends_on_message_fragments() -> None:

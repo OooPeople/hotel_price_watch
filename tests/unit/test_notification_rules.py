@@ -19,6 +19,21 @@ def test_any_drop_rejects_target_price() -> None:
         )
 
 
+def test_target_price_must_be_greater_than_zero() -> None:
+    """低於目標價規則的門檻值必須是正數。"""
+    with pytest.raises(ValueError):
+        RuleLeaf(
+            kind=NotificationLeafKind.BELOW_TARGET_PRICE,
+            target_price=Decimal("0"),
+        )
+
+    with pytest.raises(ValueError):
+        RuleLeaf(
+            kind=NotificationLeafKind.BELOW_TARGET_PRICE,
+            target_price=Decimal("-1"),
+        )
+
+
 def test_composite_rule_requires_multiple_children() -> None:
     leaf = RuleLeaf(
         kind=NotificationLeafKind.BELOW_TARGET_PRICE,

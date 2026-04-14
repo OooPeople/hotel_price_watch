@@ -10,14 +10,20 @@ from typing import Iterable
 from app.application.debug_captures import DebugCaptureDetail, DebugCaptureSummary
 from app.application.watch_editor import WatchCreationPreview
 from app.config.models import NotificationChannelSettings
+from app.domain import derive_watch_runtime_state, describe_watch_runtime_state
 from app.domain.entities import (
     CheckEvent,
     DebugArtifact,
     LatestCheckSnapshot,
     NotificationState,
+    RuntimeStateEvent,
     WatchItem,
 )
-from app.domain.enums import NotificationLeafKind
+from app.domain.enums import (
+    NotificationLeafKind,
+    RuntimeStateEventKind,
+    WatchRuntimeState,
+)
 from app.domain.pricing import calculate_price_per_person_per_night
 from app.infrastructure.browser import ChromeTabSummary
 from app.monitor.runtime import MonitorRuntimeStatus
@@ -35,6 +41,7 @@ _BODY_STYLE = (
 def render_watch_list_page(
     *,
     watch_items: Iterable[WatchItem],
+    latest_snapshots_by_watch_id: dict[str, LatestCheckSnapshot | None] | None = None,
     flash_message: str | None = None,
     runtime_status: MonitorRuntimeStatus | None = None,
 ) -> str:
@@ -45,7 +52,10 @@ def render_watch_list_page(
         else ""
     )
     runtime_html = _render_runtime_status_section(runtime_status)
-    table_body = _render_watch_list_rows(watch_items)
+    table_body = _render_watch_list_rows(
+        watch_items,
+        latest_snapshots_by_watch_id=latest_snapshots_by_watch_id,
+    )
     return _page_layout(
         title="Watch Items",
         body=f"""
@@ -111,16 +121,27 @@ def render_runtime_status_fragment(runtime_status: MonitorRuntimeStatus | None) 
     return _render_runtime_status_section(runtime_status)
 
 
-def _render_watch_list_rows(watch_items: Iterable[WatchItem]) -> str:
+def _render_watch_list_rows(
+    watch_items: Iterable[WatchItem],
+    *,
+    latest_snapshots_by_watch_id: dict[str, LatestCheckSnapshot | None] | None = None,
+) -> str:
     """渲染首頁 watch 列表 tbody 內容，供首屏與局部更新共用。"""
     rows = []
+    latest_snapshots_by_watch_id = latest_snapshots_by_watch_id or {}
     for watch_item in watch_items:
+        latest_snapshot = latest_snapshots_by_watch_id.get(watch_item.id)
+        runtime_state = derive_watch_runtime_state(
+            watch_item=watch_item,
+            latest_snapshot=latest_snapshot,
+        )
         date_range = (
             f"{watch_item.target.check_in_date.isoformat()} - "
             f"{watch_item.target.check_out_date.isoformat()}"
         )
         actions_html = _render_watch_action_controls(
             watch_item=watch_item,
+            runtime_state=runtime_state,
             show_check_now=False,
         )
         rows.append(
@@ -135,7 +156,7 @@ def _render_watch_list_rows(watch_items: Iterable[WatchItem]) -> str:
               <td>{escape(watch_item.plan_name)}</td>
               <td>{date_range}</td>
               <td>{watch_item.scheduler_interval_seconds}</td>
-              <td>{escape(_describe_watch_status(watch_item))}</td>
+              <td>{escape(describe_watch_runtime_state(runtime_state))}</td>
               <td>{actions_html}</td>
             </tr>
             """
@@ -143,9 +164,16 @@ def _render_watch_list_rows(watch_items: Iterable[WatchItem]) -> str:
     return "\n".join(rows) or '<tr><td colspan="7">目前尚無 watch item。</td></tr>'
 
 
-def render_watch_list_rows_fragment(watch_items: Iterable[WatchItem]) -> str:
+def render_watch_list_rows_fragment(
+    watch_items: Iterable[WatchItem],
+    *,
+    latest_snapshots_by_watch_id: dict[str, LatestCheckSnapshot | None] | None = None,
+) -> str:
     """提供首頁 polling 使用的 watch 列表 tbody 片段。"""
-    return _render_watch_list_rows(watch_items)
+    return _render_watch_list_rows(
+        watch_items,
+        latest_snapshots_by_watch_id=latest_snapshots_by_watch_id,
+    )
 
 
 def render_new_watch_page(
@@ -309,6 +337,7 @@ def render_watch_detail_page(
     check_events: tuple[CheckEvent, ...],
     notification_state: NotificationState | None,
     debug_artifacts: tuple[DebugArtifact, ...],
+    runtime_state_events: tuple[RuntimeStateEvent, ...],
     flash_message: str | None = None,
 ) -> str:
     """渲染單一 watch item 的詳細頁與歷史摘要。"""
@@ -322,6 +351,7 @@ def render_watch_detail_page(
         notification_state=notification_state,
         debug_artifacts=debug_artifacts,
     )
+    runtime_state_events_html = _render_runtime_state_events_section(runtime_state_events)
     check_events_html = _render_check_events_section(check_events)
     debug_artifacts_html = _render_debug_artifacts_section(debug_artifacts)
     flash_html = (
@@ -331,6 +361,10 @@ def render_watch_detail_page(
     )
     action_controls_html = _render_watch_action_controls(
         watch_item=watch_item,
+        runtime_state=derive_watch_runtime_state(
+            watch_item=watch_item,
+            latest_snapshot=latest_snapshot,
+        ),
         show_check_now=True,
     )
 
@@ -349,7 +383,15 @@ def render_watch_detail_page(
               ，{watch_item.target.people_count} 人 / {watch_item.target.room_count} 房
             </p>
             <p>輪詢秒數：{watch_item.scheduler_interval_seconds}</p>
-            <p>目前狀態：{escape(_describe_watch_status(watch_item))}</p>
+            <p>
+              目前狀態：
+              {escape(describe_watch_runtime_state(
+                  derive_watch_runtime_state(
+                      watch_item=watch_item,
+                      latest_snapshot=latest_snapshot,
+                  )
+              ))}
+            </p>
             <p>Canonical URL：<code>{escape(watch_item.canonical_url)}</code></p>
             <p>
               <a
@@ -363,6 +405,7 @@ def render_watch_detail_page(
           </div>
           {flash_html}
           <div id="watch-detail-latest-section">{latest_snapshot_html}</div>
+          <div id="watch-detail-runtime-state-events-section">{runtime_state_events_html}</div>
           <div id="watch-detail-check-events-section">{check_events_html}</div>
           <div id="watch-detail-debug-artifacts-section">{debug_artifacts_html}</div>
         </section>
@@ -1090,6 +1133,60 @@ def _render_check_events_section(check_events: tuple[CheckEvent, ...]) -> str:
     """
 
 
+def _render_runtime_state_events_section(
+    runtime_state_events: tuple[RuntimeStateEvent, ...],
+) -> str:
+    """渲染 watch 狀態轉移事件摘要，避免只靠檢查事件推論狀態變化。"""
+    if not runtime_state_events:
+        return f"""
+        <section style="{_CARD_STYLE}">
+          <h2>狀態事件</h2>
+          <p>目前尚無 blocked / paused / resumed / recovered 相關狀態事件。</p>
+        </section>
+        """
+
+    rows = []
+    for event in runtime_state_events[:10]:
+        rows.append(
+            f"""
+            <tr>
+              <td style="{_cell_style(head=False)}">
+                {escape(_format_datetime_for_display(event.occurred_at))}
+              </td>
+              <td style="{_cell_style(head=False)}">
+                {escape(_describe_runtime_state_event_kind(event.event_kind))}
+              </td>
+              <td style="{_cell_style(head=False)}">
+                {escape(_describe_optional_runtime_state(event.from_state))}
+              </td>
+              <td style="{_cell_style(head=False)}">
+                {escape(_describe_optional_runtime_state(event.to_state))}
+              </td>
+              <td style="{_cell_style(head=False)}">
+                {escape(event.detail_text or "none")}
+              </td>
+            </tr>
+            """
+        )
+    return f"""
+    <section style="{_CARD_STYLE}">
+      <h2>狀態事件</h2>
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr>
+            <th style="{_cell_style(head=True)}">時間</th>
+            <th style="{_cell_style(head=True)}">事件</th>
+            <th style="{_cell_style(head=True)}">前狀態</th>
+            <th style="{_cell_style(head=True)}">後狀態</th>
+            <th style="{_cell_style(head=True)}">說明</th>
+          </tr>
+        </thead>
+        <tbody>{"".join(rows)}</tbody>
+      </table>
+    </section>
+    """
+
+
 def _render_debug_artifacts_section(debug_artifacts: tuple[DebugArtifact, ...]) -> str:
     """渲染與單一 watch item 關聯的 debug artifact 摘要。"""
     if not debug_artifacts:
@@ -1150,6 +1247,7 @@ def render_watch_detail_sections(
     check_events: tuple[CheckEvent, ...],
     notification_state: NotificationState | None,
     debug_artifacts: tuple[DebugArtifact, ...],
+    runtime_state_events: tuple[RuntimeStateEvent, ...],
 ) -> dict[str, str]:
     """提供 watch 詳細頁 polling 使用的三個主要 HTML 片段。"""
     return {
@@ -1158,6 +1256,9 @@ def render_watch_detail_sections(
             latest_snapshot=latest_snapshot,
             notification_state=notification_state,
             debug_artifacts=debug_artifacts,
+        ),
+        "runtime_state_events_section_html": _render_runtime_state_events_section(
+            runtime_state_events
         ),
         "check_events_section_html": _render_check_events_section(check_events),
         "debug_artifacts_section_html": _render_debug_artifacts_section(debug_artifacts),
@@ -1195,10 +1296,20 @@ def _render_runtime_signal_summary(debug_artifacts: tuple[DebugArtifact, ...]) -
     """
 
 
-def _render_watch_action_controls(*, watch_item: WatchItem, show_check_now: bool) -> str:
+def _render_watch_action_controls(
+    *,
+    watch_item: WatchItem,
+    runtime_state: WatchRuntimeState,
+    show_check_now: bool,
+) -> str:
     """依 watch 狀態渲染可用的啟用、暫停、停用與立即檢查操作。"""
     actions: list[str] = []
-    if watch_item.enabled and watch_item.paused_reason is None:
+    if runtime_state in {
+        WatchRuntimeState.ACTIVE,
+        WatchRuntimeState.BACKOFF_ACTIVE,
+        WatchRuntimeState.DEGRADED_ACTIVE,
+        WatchRuntimeState.RECOVER_PENDING,
+    }:
         if show_check_now:
             actions.append(
                 _render_watch_action_form(
@@ -1224,7 +1335,11 @@ def _render_watch_action_controls(*, watch_item: WatchItem, show_check_now: bool
                 button_style=_secondary_button_style(),
             )
         )
-    elif watch_item.enabled and watch_item.paused_reason is not None:
+    elif runtime_state in {
+        WatchRuntimeState.MANUALLY_PAUSED,
+        WatchRuntimeState.PAUSED_BLOCKED_403,
+        WatchRuntimeState.PAUSED_OTHER,
+    }:
         actions.append(
             _render_watch_action_form(
                 watch_item_id=watch_item.id,
@@ -1322,10 +1437,18 @@ def _render_watch_detail_polling_script(watch_item_id: str) -> str:
         const checkEventsSection = document.getElementById(
           "watch-detail-check-events-section"
         );
+        const runtimeStateEventsSection = document.getElementById(
+          "watch-detail-runtime-state-events-section"
+        );
         const debugArtifactsSection = document.getElementById(
           "watch-detail-debug-artifacts-section"
         );
-        if (!latestSection || !checkEventsSection || !debugArtifactsSection) {{
+        if (
+          !latestSection ||
+          !runtimeStateEventsSection ||
+          !checkEventsSection ||
+          !debugArtifactsSection
+        ) {{
           return;
         }}
 
@@ -1339,6 +1462,7 @@ def _render_watch_detail_polling_script(watch_item_id: str) -> str:
             }}
             const payload = await response.json();
             latestSection.innerHTML = payload.latest_section_html;
+            runtimeStateEventsSection.innerHTML = payload.runtime_state_events_section_html;
             checkEventsSection.innerHTML = payload.check_events_section_html;
             debugArtifactsSection.innerHTML = payload.debug_artifacts_section_html;
           }} catch {{
@@ -1350,15 +1474,6 @@ def _render_watch_detail_polling_script(watch_item_id: str) -> str:
       }})();
     </script>
     """
-
-
-def _describe_watch_status(watch_item: WatchItem) -> str:
-    """把 watch 的啟用與暫停狀態整理成較易讀的文字。"""
-    if not watch_item.enabled:
-        return "停用"
-    if watch_item.paused_reason is not None:
-        return "暫停"
-    return "啟用"
 
 
 def _page_layout(*, title: str, body: str) -> str:
@@ -1522,6 +1637,30 @@ def _describe_debug_reason(reason: str) -> str:
         "network_error": "網路錯誤",
     }
     return mapping.get(reason, reason)
+
+
+def _describe_runtime_state_event_kind(event_kind: RuntimeStateEventKind) -> str:
+    """把 runtime 狀態事件類型轉成較易讀的中文。"""
+    mapping = {
+        RuntimeStateEventKind.MANUAL_ENABLE: "人工啟用",
+        RuntimeStateEventKind.MANUAL_DISABLE: "人工停用",
+        RuntimeStateEventKind.MANUAL_PAUSE: "人工暫停",
+        RuntimeStateEventKind.MANUAL_RESUME: "人工恢復",
+        RuntimeStateEventKind.PAUSE_DUE_TO_HTTP_403: "因站方阻擋而暫停",
+        RuntimeStateEventKind.ENTERED_BACKOFF: "進入退避",
+        RuntimeStateEventKind.CLEARED_BACKOFF: "解除退避",
+        RuntimeStateEventKind.ENTERED_DEGRADED: "進入降級運作",
+        RuntimeStateEventKind.CLEARED_DEGRADED: "解除降級",
+        RuntimeStateEventKind.RECOVERED_AFTER_SUCCESS: "成功恢復",
+    }
+    return mapping[event_kind]
+
+
+def _describe_optional_runtime_state(state: WatchRuntimeState | None) -> str:
+    """把可選 runtime 狀態轉成顯示文字。"""
+    if state is None:
+        return "none"
+    return describe_watch_runtime_state(state)
 
 
 def _render_notification_target_price_hint(kind: NotificationLeafKind) -> str:
