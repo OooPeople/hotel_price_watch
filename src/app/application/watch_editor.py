@@ -9,7 +9,7 @@ from uuid import uuid4
 from app.domain.entities import WatchItem
 from app.domain.enums import NotificationLeafKind
 from app.domain.notification_rules import RuleLeaf
-from app.domain.value_objects import SearchDraft
+from app.domain.value_objects import SearchDraft, WatchTarget
 from app.infrastructure.db.repositories import SqliteWatchItemRepository
 from app.sites.base import CandidateBundle, CandidateSelection, LookupDiagnostic
 from app.sites.registry import SiteRegistry
@@ -28,6 +28,7 @@ class WatchCreationPreview:
     browser_tab_id: str | None = None
     browser_tab_title: str | None = None
     browser_page_url: str | None = None
+    existing_watch_id: str | None = None
 
 
 class WatchEditorService:
@@ -86,6 +87,9 @@ class WatchEditorService:
             draft=preview.draft,
             selection=CandidateSelection(room_id=room_id, plan_id=plan_id),
         )
+        existing_watch = self.find_existing_watch_by_target(target)
+        if existing_watch is not None:
+            raise ValueError("該房型方案已建立 watch")
         notification_rule = RuleLeaf(
             kind=notification_rule_kind,
             target_price=target_price,
@@ -180,6 +184,39 @@ class WatchEditorService:
         )
         self._watch_item_repository.save(updated_watch_item)
         return updated_watch_item
+
+    def mark_existing_watch_for_preview(
+        self,
+        preview: WatchCreationPreview,
+    ) -> WatchCreationPreview:
+        """標記目前預設候選是否已對應到既有 watch。"""
+        if (
+            preview.preselected_still_valid is False
+            or preview.preselected_room_id is None
+            or preview.preselected_plan_id is None
+        ):
+            return preview
+
+        adapter = self._site_registry.for_url(preview.draft.seed_url)
+        target = adapter.resolve_watch_target(
+            draft=preview.draft,
+            selection=CandidateSelection(
+                room_id=preview.preselected_room_id,
+                plan_id=preview.preselected_plan_id,
+            ),
+        )
+        existing_watch = self.find_existing_watch_by_target(target)
+        if existing_watch is None:
+            return preview
+        return replace(preview, existing_watch_id=existing_watch.id)
+
+    def find_existing_watch_by_target(self, target: WatchTarget) -> WatchItem | None:
+        """依 watch target identity 找出是否已有相同 watch。"""
+        target_identity = target.identity_key()
+        for watch_item in self._watch_item_repository.list_all():
+            if watch_item.target.identity_key() == target_identity:
+                return watch_item
+        return None
 
     def _get_watch_item_or_raise(self, watch_item_id: str) -> WatchItem:
         """讀取既有 watch item；若不存在則明確拋錯。"""

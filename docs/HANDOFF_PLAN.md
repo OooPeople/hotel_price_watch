@@ -1,6 +1,11 @@
 # Handoff Plan
 
-本文件用於交接目前實作現況、review finding 與下一階段的建議順序。
+本文件給新的對話窗快速接手使用，只回答四件事：
+
+- 專案目前已可實際使用到哪裡
+- 目前正式主線的行為是什麼
+- 還有哪些風險尚未收斂
+- 下一步應該先做什麼
 
 若切換到新的對話窗，建議閱讀順序：
 
@@ -9,226 +14,202 @@
 3. `docs/TASK_BREAKDOWN.md`
 4. `docs/HANDOFF_PLAN.md`
 
-## 1. 目前可用的功能
-
-目前已可實際操作：
+## 1. 目前可用能力
 
 - `uv run python -m app.tools.dev_start`
   - 單一啟動命令
   - 會先檢查可附著的專用 Chrome，必要時先喚醒 profile，再啟動 GUI
 - 專用 Chrome profile + CDP attach
-- 從專用 Chrome 分頁選擇 `ikyu` 頁面建立 watch
-- 顯示飯店、房型、價格與每人每晚衍生值
-- watch 列表、刪除、通知規則設定
-- watch 的啟用 / 停用 / 暫停 / 恢復 / 手動立即檢查
-- 全域通知通道設定頁
-- 全域通知設定頁的測試通知按鈕
+- 從目前專用 Chrome 分頁選擇 `ikyu` 頁面建立 watch
+- Chrome 分頁清單會在清單頁直接標示已建立的精確 watch
+- watch 列表、刪除、啟用 / 停用 / 暫停 / 恢復 / 手動立即檢查
+- 單一 watch 的通知規則設定
+- 全域通知通道設定頁與測試通知
+- 首頁與 watch 詳細頁的局部 polling 更新
+- watch 詳細頁、歷史與 runtime 訊號摘要
 - debug captures 列表 / 詳細頁 / 清空
-- watch 詳細頁、歷史與錯誤摘要
+- background runtime 已接線，能依排程刷新頁面、寫入歷史並發送通知
 
-## 2. 目前主要缺口
+## 2. 目前正式主線的行為
 
-### 2.1 background runtime 已接線，但仍需最後一段穩定化
+### 2.1 建立 watch
 
-目前 monitor 模組已能透過 app 啟動流程帶起，但仍屬初步版本：
+1. 專用 Chrome 開啟 `ikyu` 分頁
+2. GUI 列出可附著分頁
+3. 使用者選定分頁
+4. adapter 從 browser page 建立 preview
+5. 使用者確認候選與通知規則
+6. 建立 `watch_item`
 
-- `lifespan` 已會啟動 monitor runtime
-- scheduler 已可實際執行單次 background check
-- notifier / dispatcher 已可依全域設定參與通知發送
+補充：
 
-目前尚未正式完成：
+- 分頁清單的既有 watch 判斷不再由 `tab_id` 主導，而是以：
+  - `watch target identity`
+  - `browser_page_url`
+  - query-aware matching
+  為主
+- `tab_id` 只保留成當次 session 的短期操作鍵
 
-- 更完整的長時間運作、節流與重試行為驗證
+### 2.2 runtime 啟動與分頁恢復
 
-換句話說，現在已不是只有 GUI / preview / CRUD，但仍不能把它視為最終穩定版背景輪詢。
+- runtime 會在 app `lifespan` 啟動時接線
+- 啟動後會低速恢復 `enabled` 且未 `paused` 的 watch 分頁
+- 同一輪恢復內，已分配給前一個 watch 的分頁不會再被下一個 watch 重用
+- 若之後輪詢時發現缺頁，仍會按需補建
 
-### 2.2 `SiteAdapter` 契約已部分收斂，但 runtime 路徑仍未完全統一
+### 2.3 背景檢查
 
-目前已完成：
+- scheduler 只同步 `enabled` 且未 `paused` 的 watch
+- 背景排程與 `check-now` 共用 per-watch 互斥
+- 單次 check 以單一 transaction 寫入：
+  - `latest_check_snapshots`
+  - `check_events`
+  - `price_history`
+  - `notification_states`
+  - `debug_artifacts`
+- SQLite 已啟用：
+  - `WAL`
+  - `busy_timeout`
+  - 歷史查詢 index
 
-- `build_preview_from_browser_page()` 已進入正式 `SiteAdapter` 契約
-- `ChromeTabPreviewService` 不再依賴 `hasattr()`
-- `build_snapshot_from_browser_page()` 已進入正式 `SiteAdapter` 契約
-- `fetch_target_snapshot()` 舊契約已移除，程式與測試改為單一路徑的 browser-page snapshot 介面
+### 2.4 通知與事件判定
 
-目前仍需完成：
+- notifier 通道目前有：
+  - desktop
+  - `ntfy`
+  - Discord webhook
+- dispatcher 在設定不變時會重用，不會每次重新建立
+- 通道節流狀態已持久化，可跨 runtime 重啟保留
+- 外部 HTTP notifier 已補顯式 timeout
 
-- 避免 preview 與 runtime 後續再長出新特例
+`恢復可訂` 的正式規則目前是：
 
-### 2.3 舊的 `HTTP-first` / form-based 假設大多已清除，但 runtime 層仍需最後收斂
+- 會往前回溯最近一次明確的 availability
+- 忽略中間的：
+  - `unknown`
+  - `parse_error`
+  - `target_missing`
+- 只有 **`sold_out -> available`** 才算 `became_available`
 
-文件已改成 Chrome-driven monitor 主線。舊的 form-based create flow 已清掉，但 runtime 層仍要避免再長出回到舊模型的特例。
+這一點已修正，避免把中間的 network error / unknown 誤判成「恢復可訂」。
 
-目前仍需注意：
+## 3. 已驗證過的高風險路徑
 
-- runtime 後續新增能力時，不要再回頭引入 target -> URL -> HTML 的隱性雙軌
-- browser preview、browser snapshot、runtime refresh 需維持同一份正式契約
+以下路徑已有測試覆蓋，不再是主 blocker：
 
-目前已完成：
+- 同一 watch 的執行互斥
+- 單次 check 的 transaction 一致性
+- SQLite 的 `WAL` / `busy_timeout` / history index
+- 鏈式 migration
+- 通知節流狀態持久化
+- dispatcher 在設定未變時重用
+- notifier HTTP timeout
+- state-changing POST 的本機 `Origin/Referer` 驗證
+- 通知通道冷卻跨 runtime 重啟保留
+- 單一通知通道失敗不會中止整次 check
+- 連續 timeout 會遞增 backoff
+- backoff 後成功檢查會清掉 failure 狀態
+- 睡眠恢復後補掃會尊重 backoff 視窗
+- 403 暫停後手動恢復，成功檢查會清掉錯誤狀態
+- 啟動恢復時多個 watch 不會共用同一個分頁依序跳轉
 
-- `preview_from_form_inputs()` 已移除
-- create flow 不再處理已從 UI 移除的日期 / 人數 / 房數欄位
-- 建立 watch 會優先沿用目前 preview 來源，而不是再走舊的表單覆寫路徑
-- 舊的 target -> URL -> HTML snapshot 契約已從 `SiteAdapter` 正式介面移除
+## 4. 目前主要風險
 
-若這裡不守住，後續維護仍會再次被雙主線拖亂。
+### 4.1 runtime 已可用，但仍缺長時間穩定性驗證
 
-### 2.4 全域通知設定已可實際發送，但 runtime 行為仍需收斂
+目前仍需補強：
 
-目前已完成：
+- 更完整的多 tick / 長時間 / 重試路徑驗證
+- 長時間 blocked page / recover 的歷史與狀態呈現檢查
+- 長時間背景運作下，首頁與詳細頁的 runtime 摘要是否仍準確
 
-- GUI 頁面
-- DB 儲存
-- application service
+### 4.2 `main.py` 與 `web/views.py` 偏大
 
-目前尚未完成：
+- `main.py` 目前混合 route、來源驗證與部分 web orchestration
+- `web/views.py` 目前承載過多 HTML 組裝責任
 
-- 更完整的長時間運作、節流與重試行為驗證
-- 單次通知與單次 check 的 transaction / lifetime 邊界再收斂
+這不是第一層正確性風險，但已值得安排拆分。
 
-## 3. 建議執行順序
+### 4.3 `ChromeCdpHtmlFetcher` 偏大
 
-### Step 1: 收斂 Chrome-driven runtime 穩定性
+目前它同時處理：
 
-目前已完成：
+- Chrome attach
+- 分頁列舉
+- 分頁比對
+- capture 與節流訊號
+- profile 啟動 / 附著輔助
 
-- `lifespan` 已會啟動 monitor runtime
-- `run_watch_check_once()` 已能刷新 Chrome 頁面、解析 snapshot、寫入歷史
-- notifier / dispatcher 已能讀取全域設定參與發送
-- `dev_start` 已初步接上 port + lock file 的單實例檢查
-- Chrome 分頁選取已不再依賴 `context.pages` 的 index 順序，而改用 session 內較穩定的 page key
-- `ikyu` 分頁比對已補強為 query-aware，會優先比對 `rm/pln/cid/ppc/rc` 等條件
-- watch 建立後已會保存 `browser_tab_id` / `browser_page_url` 線索，runtime 輪詢時會優先沿用
-- 首頁與 `/health` 已會顯示 runtime 狀態摘要，可直接看到 monitor 是否運行、註冊幾筆 watch、Chrome session 是否可附著
-- 已補 runtime 啟停與 active watch 同步測試，確認只會註冊 enabled/unpaused watch，且停止後會清空 scheduler 狀態
-- 已補多 watch 與 runtime 啟動後新增 watch 的 loop 測試，確認後續 tick 會持續同步並執行檢查
-- blocked page / throttling / tab discard 已整理成 watch 詳細頁上方的 runtime 訊號摘要，不再只藏在 debug artifact 表格中
-- `dev_start` 在沿用既有實例前，已會先探測 `/health`，避免把失效的舊執行個體誤判成可沿用
-- `dev_start` 在沿用既有實例前，已會比對 lock file 與 `/health` 回報的 `instance_id`，避免誤連到另一個不一致的執行個體
-- runtime 錯誤映射已改為型別導向，不再依賴訊息字串
-- 已有最小單元測試驗證：
-  - 單次 runtime check 會寫入 `latest_check_snapshots` / `check_events` / `price_history`
-  - 命中通知規則時會經過 dispatcher 發送
-  - `possible_throttling` 訊號會寫入 runtime `debug_artifacts`
-  - `403/blocked page` 會暫停 watch 並寫入錯誤摘要
-  - 前次失敗 / degraded 狀態會在下次成功時正確清零
-  - `dev_start` 在既有實例、stale lock、正常啟動三種情境下的行為
-- runtime 與全域測試通知在設定未變時，已會重用 dispatcher，不再每次重建
-- 背景排程與「立即檢查」已共用同一套 per-watch inflight task，不會對同一個 watch 並行執行
-- runtime 已改成以單一 repository transaction 持久化 `latest_check_snapshot`、`check_event`、`price_history`、`notification_state` 與 `debug_artifact`
-- SQLite 連線已套用 `WAL`、`busy_timeout`，並補上 `check_events`、`price_history`、`debug_artifacts` 的歷史查詢 index
-- schema 升版已改成 `n -> n+1` 的明確鏈式 migration，並有 `2 -> 5`、`3 -> 5` 的整合測試
+功能上已可用，但後續再擴容易變成大型維護點。
 
-下一步目標：
+### 4.4 state ownership 仍需持續守住
 
-- 補更完整的長時間運作、節流與重試行為驗證
+目前 `watch_item`、`latest_check_snapshot`、`notification_state`、`debug_artifacts` 已分離，但仍需注意：
 
-建議切入點：
+- 不要把 runtime 欄位重新塞回 `watch_item`
+- 不要讓通知狀態、最新狀態、debug 摘要彼此重疊
 
-- `src/app/bootstrap/container.py`
+## 5. 下一步建議順序
+
+### Step 1: 補長時間運作、節流與重試驗證
+
+建議先補：
+
+- 多 tick、跨 sleep / resume、backoff 期間的 runtime 測試
+- 長時間 blocked page / recover 的歷史與狀態驗證
+- runtime 狀態摘要與 watch 詳細頁是否能準確反映問題
+
+建議切入：
+
+- `src/app/monitor/runtime.py`
+- `tests/unit/test_monitor_runtime.py`
+- `src/app/web/views.py`
+- `tests/unit/test_web_app.py`
+
+### Step 2: 拆 `main.py`
+
+建議方向：
+
+- 拆成數個 router 模組
+- 保留 `main.py` 只做 app 建立、lifespan、router 掛載
+
+建議切入：
+
 - `src/app/main.py`
-- `src/app/monitor/`
-- `src/app/infrastructure/db/`
+- `src/app/web/`
 
-### Step 2: 重整 `SiteAdapter` 正式契約
+### Step 3: 拆 `web/views.py`
 
-目標：
+建議方向：
 
-- 已完成 browser page preview 正式介面化
-- 已完成 browser page snapshot 正式介面化
-- 下一步重點是避免 runtime 路徑再長出 ad-hoc 特例
+- 依頁面類型拆分 render helper
+- 先拆 watch list / watch detail / settings / debug pages
 
-建議切入點：
+建議切入：
 
-- `src/app/sites/base.py`
-- `src/app/sites/ikyu/adapter.py`
-- `src/app/application/chrome_tab_preview.py`
+- `src/app/web/views.py`
 
-### Step 3: 清除舊假設
+### Step 4: 收斂 `ChromeCdpHtmlFetcher`
 
-目標：
+建議方向：
 
-- 已完成移除 `preview_from_form_inputs()`
-- 已完成移除 create flow 裡已失效的表單覆寫路徑
-- 決定 target snapshot 只保留 Chrome-driven 正式主線
+- 將 profile / attach / tab matching / capture 訊號分成較清楚的小模組
+- 保留目前已驗證過的 query-aware matching 與最低分門檻
 
-建議切入點：
-
-- `src/app/application/watch_editor.py`
-- `src/app/main.py`
-
-### Step 4: 補強 notifier runtime 驗證與生命週期
-
-目前已完成：
-
-- 全域通知通道設定已可影響 runtime notifier 建立
-- desktop / ntfy / Discord 已能由 runtime 決定是否發送
-- 全域通知設定頁已可送出一則真正走 dispatcher / notifier 路徑的測試通知
-- 通道節流狀態已持久化，app 重啟後不會重置通道冷卻
-
-下一步目標：
-
-- 補長時間運作與失敗路徑驗證
-- 補通知發送結果的歷史與可觀測性檢查
-
-建議切入點：
-
-- `src/app/bootstrap/container.py`
-- `src/app/notifiers/`
-- `src/app/monitor/`
-- `src/app/application/app_settings.py`
-
-### Step 5: 收斂背景節流與分頁識別策略
-
-目標：
-
-- 不再長期依賴 index 型 `tab_id`
-- 明確處理背景分頁節流 / tab discard / blocked page
-- 決定 preview captures 與 runtime `debug_artifacts` 的分工
-
-建議切入點：
+建議切入：
 
 - `src/app/infrastructure/browser/chrome_cdp_fetcher.py`
-- `src/app/application/chrome_tab_preview.py`
-- `src/app/monitor/`
-- `src/app/application/debug_captures.py`
 
-## 4. 文件維護方式
+### Step 5: 整理 state ownership
 
-若下一個對話要繼續做 runtime，建議同步維護：
+建議方向：
 
-- `docs/TASK_BREAKDOWN.md`
-  - 將 Milestone 6.5 的完成狀態持續更新
-- `docs/ARCHITECTURE_PLAN.md`
-  - 若 `SiteAdapter` 契約有變，優先更新
-- `docs/V1_SPEC.md`
-  - 若 watch 控制操作、睡眠補掃與 dispatcher 長存化完成，需同步更新
+- 再確認 `watch_item`、`latest_check_snapshot`、`notification_state`、`debug_artifact` 的責任邊界
+- 避免之後新功能直接跨層疊加欄位
 
-## 4.1 本次 review 的採納結果
+## 6. 交接注意事項
 
-本次 `review.md` 中，判定仍成立且應優先處理的是：
-
-- 同一個 watch 的執行互斥
-- 單次 check 的 transaction 一致性
-- SQLite 的長期背景運作準備（WAL / busy_timeout / history index）
-- migration 鏈式升版
-
-以下項目已由近期進度消化，不再列為當前主 blocker：
-
-- 通知節流狀態持久化
-- `NotificationDispatcher` 每次 dispatch 重建
-- 舊的 form-based create flow
-- 舊的 `fetch_target_snapshot()` 契約
-
-以下項目合理，但優先度次於上面四項：
-
-- 拆 `main.py`
-- 拆 `web/views.py`
-- 進一步拆分 `ChromeCdpHtmlFetcher`
-
-## 5. 交接時的注意事項
-
-- 驗證時建議只對本次修改檔案跑 `ruff`
-- `uv` 偶爾會撞到本機 cache 權限問題；必要時需在既有批准的前綴下重跑
-- 目前 schema 已升到 `5`
-- 若讀到舊 DB，現有程式已支援 `2 -> 3 -> 4 -> 5` 的最小 migration
+- V1 正式主線是 Chrome-driven，不再把 `HTTP-first` 當成正式路徑
+- 建立 watch 的正式入口是「從目前專用 Chrome 頁面抓取」
+- `TASK_BREAKDOWN.md` 只維持精簡進度，不再塞過細背景
+- 若下一個對話要再做 review，先以目前文件為準，不要把舊 review 全部當成仍未處理

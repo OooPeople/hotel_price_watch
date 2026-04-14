@@ -133,15 +133,20 @@ class ChromeCdpHtmlFetcher:
         expected_url: str,
         fallback_url: str | None = None,
         preferred_tab_id: str | None = None,
+        excluded_tab_ids: tuple[str, ...] = (),
     ) -> ChromeTabCapture:
         """找出最接近目標的頁面，刷新後抓回目前 HTML。"""
         browser, playwright = self._connect_playwright_browser()
         try:
             context = browser.contexts[0] if browser.contexts else browser.new_context()
             page = None
-            if preferred_tab_id is not None:
+            if preferred_tab_id is not None and preferred_tab_id not in excluded_tab_ids:
                 page = self._get_page_by_tab_id(context, preferred_tab_id)
-            page = page or self._find_best_page(context, expected_url=expected_url)
+            page = page or self._find_best_page(
+                context,
+                expected_url=expected_url,
+                excluded_tab_ids=excluded_tab_ids,
+            )
             if page is None:
                 page = context.new_page()
                 page.goto(
@@ -158,6 +163,43 @@ class ChromeCdpHtmlFetcher:
 
             page.reload(wait_until="domcontentloaded", timeout=30000)
             return self._capture_page(page=page)
+        finally:
+            playwright.stop()
+
+    def ensure_tab_for_url(
+        self,
+        *,
+        expected_url: str,
+        fallback_url: str | None = None,
+        preferred_tab_id: str | None = None,
+        excluded_tab_ids: tuple[str, ...] = (),
+    ) -> ChromeTabSummary:
+        """確保指定 watch 至少有一個可沿用的 Chrome 分頁，必要時才建立新分頁。"""
+        browser, playwright = self._connect_playwright_browser()
+        try:
+            context = browser.contexts[0] if browser.contexts else browser.new_context()
+            page = None
+            if preferred_tab_id is not None and preferred_tab_id not in excluded_tab_ids:
+                page = self._get_page_by_tab_id(context, preferred_tab_id)
+            page = page or self._find_best_page(
+                context,
+                expected_url=expected_url,
+                excluded_tab_ids=excluded_tab_ids,
+            )
+            if page is None:
+                page = context.new_page()
+                page.goto(
+                    fallback_url or expected_url,
+                    wait_until="domcontentloaded",
+                    timeout=30000,
+                )
+            else:
+                self._ensure_page_is_on_target(
+                    page=page,
+                    expected_url=expected_url,
+                    fallback_url=fallback_url,
+                )
+            return self._build_tab_summary(page=page)
         finally:
             playwright.stop()
 
@@ -296,14 +338,23 @@ class ChromeCdpHtmlFetcher:
             ) from last_error
         raise ValueError("手動 Chrome preview 已逾時。")
 
-    def _find_best_page(self, context, *, expected_url: str):
+    def _find_best_page(
+        self,
+        context,
+        *,
+        expected_url: str,
+        excluded_tab_ids: tuple[str, ...] = (),
+    ):
         """在目前所有分頁中挑出最接近目標 URL 的頁面。"""
         best_page = None
         best_score = -1
         best_signature = None
         expected_signature = _extract_ikyu_match_signature(expected_url)
+        excluded_ids = set(excluded_tab_ids)
         for page in context.pages:
             if page.is_closed():
+                continue
+            if excluded_ids and self._get_page_stable_id(page) in excluded_ids:
                 continue
             score = self._score_page(page.url, expected_url=expected_url)
             if score > best_score:

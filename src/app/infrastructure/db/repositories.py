@@ -241,6 +241,28 @@ class SqliteRuntimeRepository:
             last_error_code=row["last_error_code"],
         )
 
+    def get_last_effective_availability(self, watch_item_id: str) -> Availability | None:
+        """回溯最近一次明確可判定的 availability，只接受 available/sold_out。"""
+        with self._database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT availability
+                FROM check_events
+                WHERE watch_item_id = ?
+                  AND availability IN (?, ?)
+                ORDER BY checked_at_utc DESC, id DESC
+                LIMIT 1
+                """,
+                (
+                    watch_item_id,
+                    Availability.AVAILABLE.value,
+                    Availability.SOLD_OUT.value,
+                ),
+            ).fetchone()
+        if row is None:
+            return None
+        return Availability(row["availability"])
+
     def append_check_event(self, event: CheckEvent) -> None:
         """追加單次檢查事件，保留完整事件列表。"""
         with self._database.connect() as connection:

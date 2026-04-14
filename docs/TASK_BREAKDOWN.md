@@ -1,209 +1,127 @@
 # Task Breakdown
 
+本文件只保留三種資訊：
+- 已完成到哪個里程碑
+- 目前主線還缺什麼
+- 下一步應先做什麼
+
+細節設計與交接說明請看：
+- `docs/V1_SPEC.md`
+- `docs/ARCHITECTURE_PLAN.md`
+- `docs/HANDOFF_PLAN.md`
+
+## 目前總結
+
+- o V1 正式主線已改為「附著專用 Chrome profile + CDP attach」
+- o GUI、preview、watch CRUD、全域通知設定、debug captures 已可實際操作
+- o background runtime 已接線，且已完成第一輪高風險穩定化
+- 目前主線已從「功能缺失」轉進「長時間穩定性驗證 + 第二層結構整理」
+
 ## Milestone 1: 專案初始化（已完成）
 
-- o 建立專案目錄與基礎文件
-- o 確認 Python `3.12` 與 `uv` 工作流
-- o 定義資料夾結構
-- o 建立基礎 lint / test 流程
-- o 建立 `pytest` 設定與測試目錄骨架
-- o 建立 `SiteAdapter` 抽象介面與 registry 骨架
-- o 建立通知規則 domain model 骨架
+- o Python `3.12` + `uv` 工作流
+- o 專案目錄、lint、test 骨架
+- o `SiteAdapter` / registry / domain model 基礎
 
 ## Milestone 2: Parser Proof（已完成）
 
-- o 建立 `ikyu` URL normalizer
-- o 建立 HTML fixture 收集方式
-- o 定義 fixture 命名規則與期望值格式
-- o 完成 `seed_url -> search_draft` 解析
-- o 完成固定方案 URL 的預填驗證
-- o 完成固定 `room-plan` 價格解析器
-- o 完成 watch target canonicalization
-- o 完成條件改變後的候選項重查
-- o 完成 parser fixture tests
-- o 驗證總價解析與 UI 衍生的每人每晚價格計算
-- o 覆蓋正常可訂、無房、target missing、價格格式變化四類 fixture
+- o `ikyu` URL normalizer
+- o fixture 收集規則與 parser tests
+- o `seed_url -> search_draft`
+- o 精確 `room-plan` 價格解析
+- o watch target canonicalization
+- o 條件改變後的候選重查
+- o 每人每晚價格衍生顯示
 
-## Milestone 3: Monitor Engine 模組（已初步接線）
+## Milestone 3: Monitor Engine（已完成模組，已初步接線）
 
-- o 定義純設定用途的 watch item model
-- o 定義單次檢查結果 model
-- o 定義 `below_target_price` 的低價通知去重規則
-- o 實作輪詢 scheduler
-- o 實作價格比對規則
-- o 實作通知規則 evaluator
-- o 實作通知去重狀態
-- o 實作錯誤退避與補掃策略
-- o 實作 scheduler queue 與 worker state
-- o 實作單實例所需的 port / lock file / PID 驗證與 stale lock recovery
-- o 補齊 notification rule 與 compare engine 的單元測試
-
-### Milestone 3 現況校正
-
-- 上述項目目前代表 monitor domain / policy / scheduler 模組已存在
-- o 已以 `lifespan` 將 monitor runtime 初步接到 app 啟動流程
-- 目前仍缺單實例保護整合、穩定分頁識別策略與背景節流的完整策略反應
+- o scheduler / queue / worker state
+- o compare / notification evaluator / dedupe / backoff / wakeup rescan
+- o 單實例所需的 port / lock / PID 驗證骨架
+- o monitor runtime 已透過 app `lifespan` 初步接到啟動流程
 
 ## Milestone 4: Persistence（已完成）
 
-- o 建立 SQLite schema
-- o 實作 watch item CRUD
-- o 實作 `latest_check_snapshots` 分離儲存
-- o 實作 `check_events` 歷史模型
-- o 實作 price history persistence
-- o 實作 `notification_states` persistence
-- o 實作 debug artifact persistence 與每 watch item 保留上限
-- o 實作 UI draft 與 watch target 分離儲存策略
-- o 驗證 watch item 不混入 runtime 欄位
-- o 建立 schema migration/versioning 基礎
-- o 補齊 repository 與 migration 的整合測試
+- o SQLite schema
+- o watch item / draft / latest snapshot / check event / price history / notification state / debug artifact persistence
+- o watch 設定與 runtime state 分離
+- o schema versioning 與 migration 基礎
 
-## Milestone 5: Notifications 模組（已初步接線）
+## Milestone 5: Notifications（已完成模組，已初步接線）
 
-- o 實作 desktop notification
-- o 實作 `ntfy`
-- o 實作 Discord webhook
-- o 實作去重與通知節流
-- o 實作 `parse_failed` 連續 `3` 次後僅通知一次的 degraded 流程
+- o desktop / `ntfy` / Discord webhook notifier
+- o formatter / dispatcher / throttle
+- o degraded 通知流程
+- o 全域通知通道設定已接到 runtime
+- o 測試通知會走正式 dispatcher / notifier 路徑
 
-### Milestone 5 現況校正
+## Milestone 6: GUI（已完成第一版）
 
-- 目前 notifier、formatter、dispatcher、節流邏輯與全域通知通道設定頁都已存在
-- o 已把它們初步接到 background monitor runtime
-- 目前仍缺更完整的 runtime 驗證、失敗可觀測性與長時間運作穩定性確認
-
-## Milestone 6: GUI
-
-- o 做 watch item 列表頁
-- o 做 watch item 刪除操作
-- o 做新增 watch item 流程
-- o 做 URL 預填 watch editor
-- o 做 editor preview 的 browser fallback 補救路徑
-- o 強化 browser fallback 為更接近人工操作的流程
-- o 讓真實 `ikyu` URL 可穩定完成候選查詢
-- o 做 GUI debug capture 檢視頁
-- o 加入 preview 冷卻保護與 blocked-page stop
-- o 做從專用 Chrome 分頁抓取與重新抓取
-- o 做通知設定頁
-- o 做主頁層級的全域通知通道設定頁
-- o 做全域通知設定頁的測試通知按鈕，並走正式 dispatcher / notifier 路徑
-- o 做最近歷史與錯誤摘要
-- o 讓歷史頁顯示成功檢查、失敗檢查、availability 變化與通知結果
-- o 在 UI 顯示由總價推算出的每人每晚價格
-- o V1 editor 先只提供單一通知規則
-- o 將建立 watch 的主流程改為專用 Chrome 分頁選取
-- o 移除新增 Watch 主畫面的 Seed URL 手動輸入，改成只保留專用 Chrome 分頁抓取主入口
-- o 將 debug 區補成可檢視成功與失敗 preview 摘要
+- o watch 列表、新增、刪除
+- o 從專用 Chrome 分頁抓取建立 watch
+- o 候選方案、價格、每人每晚顯示
+- o watch 詳細頁、歷史與錯誤摘要
+- o 單一 watch 的通知規則設定
+- o 全域通知通道設定頁
+- o debug captures 列表、詳細頁、清空
+- o watch 的啟用 / 停用 / 暫停 / 恢復 / 手動立即檢查
+- o 首頁與 watch 詳細頁已支援局部 polling 更新，不需手動整頁刷新
+- o Chrome 分頁清單已改成以 target identity / `browser_page_url` / query-aware matching 判斷既有 watch，不再由 `tab_id` 主導
+- o runtime 啟動恢復時，已恢復給前一個 watch 的 tab 不會再被下一個 watch 重用
 
 ### Milestone 6 風險註記
 
-- `ikyu` 真站目前仍可能對同一出口 IP 做風控或短期封鎖
-- V1 主線已改為專用 Chrome profile + CDP attach，不再把 HTTP-first 當正式可用路徑
-- 後續背景輪詢需確認 Chrome 縮小至工作列時的刷新穩定性與節流訊號
-- watch item 的背景監看將依賴專用 Chrome session，而非使用者當前前景分頁
+- `ikyu` 真站仍可能對同一出口 IP 做風控
+- 背景監看依賴專用 Chrome session，不依賴使用者當前前景分頁
+- Chrome 縮小或背景運作時，仍需持續驗證節流 / discard / blocked page 行為
 
-## Milestone 6.5: Chrome-driven Runtime 收斂（交接優先）
+## Milestone 6.5: Chrome-driven Runtime 收斂（第一輪高風險項已完成）
 
-- o 正式接上 background monitor runtime，而不是只停在 GUI / preview / CRUD
-- o 以 `lifespan` 或同等 app-level runtime 方式啟動 scheduler / worker
-- o 將 `SiteAdapter` 契約先收斂成正式支援 Chrome-driven preview，不再依賴 `hasattr()` 特例
-- o 將 `SiteAdapter` 契約初步延伸到 Chrome-driven snapshot 介面
-- o 將 `SiteAdapter` 契約進一步收斂到 Chrome-driven runtime 單一路徑
-- o 清理舊的 `preview_from_form_inputs()` 與 create flow 殘留的 form-based 假設
-- o 讓 watch polling 初步採用「附著專用 Chrome -> 找或重建分頁 -> refresh -> parse」路徑
-- o 接上 notifier / dispatcher 與全域通知通道設定，讓設定不再是 write-only
-- o 將單實例保護初步接到啟動流程
-- o 初步改成使用 session 內較穩定的 Chrome page key，而非 index 型 `tab_id`
-- o 將 `ikyu` 分頁比對補強為 query-aware，納入 `rm/pln/cid/ppc/rc` 等訊號
-- o 初步落地 watch item 對應 Chrome 分頁的穩定識別策略
-- o 補背景節流、站方阻擋頁、tab discard 的初步 runtime 寫入與 UI 顯示
-- o 補首頁與 `/health` 的 runtime 狀態摘要，讓 background monitor 是否運行、註冊幾筆 watch、Chrome session 是否可附著可直接觀測
-- o 決定 preview captures 與 runtime `debug_artifacts` 是否整併或明確分工
-- o 補 background runtime 的 `403/blocked page` 暫停與成功恢復重置測試
-- o 補 runtime 啟停與 active watch 同步測試，確認只註冊 enabled/unpaused watch，且停止後會清空 scheduler 狀態
-- o 補多 watch 與 runtime 啟動後新增 watch 的 loop 測試，確認後續 tick 會持續同步並執行檢查
-- o 將 blocked page / throttling / tab discard 整理成 watch 詳細頁可直接判讀的 runtime 訊號摘要
-- o 深化單實例與既有實例導向整合，沿用既有實例前會先探測 `/health`
-- o 深化單實例與既有實例導向整合，沿用既有實例前會比對 lock file 與 `/health` 的 `instance_id`
-- o 將 runtime 錯誤映射改為型別導向，不再依賴字串比對
-- o 補 watch 的啟用 / 停用 / 暫停 / 手動立即檢查 GUI 與 route
-- o 接上睡眠恢復後的補掃邏輯
-- o 為 Chrome 分頁比對加入最低分門檻與保守 fallback
-- o 將通知節流狀態持久化，避免 app 重啟後通道冷卻歸零
-- o 收斂 `NotificationDispatcher` 生命週期，避免每次 dispatch 重新建立
-- o 讓背景排程與「立即檢查」共用同一套 per-watch 互斥，避免同一個 watch 並行執行
-- o 將單次 check 的多筆寫入整合為單一 transaction，避免部分成功、部分失敗
-- o 為 SQLite 補齊 WAL、busy timeout 與歷史查詢 index
-- o 將 migration 改成明確的鏈式升版，不再用條件式版本跳轉
+- o runtime 已正式接上 app 啟動流程
+- o `SiteAdapter` 已正式支援 browser preview 與 browser snapshot
+- o create flow 與 runtime 主線已收斂到 Chrome-driven 路徑
+- o watch 與 Chrome 分頁的穩定識別已初步落地
+- o runtime status、blocked page、throttling、tab discard 已可觀測
+- o 單實例沿用已加 `/health` 與 `instance_id` 驗證
+- o runtime 錯誤映射已改為型別導向
+- o 背景排程與 `check-now` 已共用 per-watch 互斥
+- o 單次 check 已改成單一 transaction 持久化
+- o SQLite 已補 `WAL`、`busy_timeout` 與歷史查詢 index
+- o migration 已改成明確鏈式升版
+- o state-changing POST route 已補本機 `Origin/Referer` 驗證
+- o notifier 外部 HTTP 請求已補顯式 timeout
+- o runtime 啟動時會低速恢復 enabled 且未 paused 的 watch 分頁，輪詢時仍保留缺頁補建
 
-### Milestone 6.5 驗收條件
+### Milestone 6.5 尚未完成
 
-- 啟動 app 後，monitor runtime 會正式啟動且可持續輪詢
-- 單一 watch item 能在不需手動重按 preview 的情況下，依排程刷新頁面並寫入歷史
-- 全域通知通道設定能真正影響通知發送
-- 不再存在 `HTTP-first` 與 Chrome-driven 雙重主線互相打架的情況
-- 文件、GUI 行為與實際 runtime 狀態一致
+- 補更完整的長時間運作、節流與重試行為驗證
+- 釐清 preview / runtime / notification 的更長時間失敗模式
 
-## Milestone 7: Packaging
+### Milestone 6.5 近期已補的驗證
+
+- o 已驗證通知通道冷卻會跨 runtime 重啟保留
+- o 已驗證單一通知通道失敗不會中止整次 check，且其他通道仍可成功送出
+- o 已驗證連續 timeout 會遞增 backoff，且 backoff 後成功檢查會清掉 failure 狀態
+
+## Milestone 7: Packaging（尚未開始）
 
 - 建立 PyInstaller spec
 - 建立 build 腳本
 - 驗證無 Python 環境啟動
 
-## 建議實作順序
+## 第二層整理（非第一線風險）
 
-1. 先完成 parser proof，不先做 GUI
-2. 先完成固定 `room-plan` 監看，再做候選列表重查
-3. 先完成本機通知，不先做所有遠端通知
-4. 先完成本機 web UI，不先做原生桌面 UI
-5. 先完成 `onedir` 打包，不先做 `onefile`
-6. 先完成可擴充的通知規則 evaluator，再讓 V1 UI 只接單規則
+- 拆 `main.py`
+- 拆 `web/views.py`
+- 收斂 `ChromeCdpHtmlFetcher`
+- 整理 state ownership
 
 ## 立即下一步
 
-- o 用 `uv` 建立專案與 Python `3.12` 執行環境
-- o 建立 `app/sites/base.py` 的抽象介面
-- o 建立通知規則 domain model
-- o 開始做 `ikyu` URL normalizer
-- o 存第一批 fixture
-- o 寫第一版 parser test
-- o 完成條件改變後的候選項重查
-- o 驗證總價解析與 UI 衍生的每人每晚價格計算
-- o 定義單次檢查結果 model
-- o 實作通知規則 evaluator
-- o 實作通知去重狀態
-- o 實作價格比對規則
-- o 實作錯誤退避與補掃策略
-- o 實作輪詢 scheduler
-- o 實作 scheduler queue 與 worker state
-- o 開始做 Persistence 所需的 SQLite schema 與 repository 骨架
-- o 開始做通知通道與通知節流骨架
-- o 開始做 GUI 的 watch item 列表頁與新增流程
-- o 做 watch item 刪除操作
-- o 強化 browser fallback 為更接近人工操作的流程
-- o 讓真實 `ikyu` URL 可穩定完成候選查詢
-- o 做 GUI debug capture 檢視頁
-- o 加入 preview 冷卻保護與 blocked-page stop
-- o 開始做 watch editor 的 Chrome 分頁抓取與重新抓取
-- o 做最近歷史與錯誤摘要
-- o 做通知設定頁
-- o 做主頁層級的全域通知通道設定頁
-- o 更新文件，將 V1 主線改為附著專用 Chrome profile
-- o 正式接上 background monitor runtime
-- o 先重整 `SiteAdapter` 契約，讓 Chrome-driven preview 成為正式介面
-- o 將 Chrome-driven snapshot 也收斂成正式介面
-- o 清理 `preview_from_form_inputs()` 與舊的 form-based create flow 假設
-- o 將 notifier / dispatcher 接到 runtime，讓全域通知設定真正生效
-- o 補 runtime 狀態摘要與 health/homepage 可觀測性
-- o 決定並整理 preview captures 與 runtime `debug_artifacts` 的分工
-- o 補 background runtime 的 `403/blocked page` 暫停與成功恢復重置測試
-- o 將 runtime 錯誤映射改為型別導向，不再依賴字串比對
-- o 補 watch 的啟用 / 停用 / 暫停 / 手動立即檢查 GUI 與 route
-- o 接上睡眠恢復後的補掃邏輯
-- o 為 Chrome 分頁比對加入最低分門檻與保守 fallback
-- o 將通知節流狀態持久化
-- o 收斂 `NotificationDispatcher` 生命週期，避免每次 dispatch 重新建立
-- o 讓背景排程與「立即檢查」共用同一套 per-watch 互斥
-- o 將單次 check 的多筆寫入整合為單一 transaction
-- o 為 SQLite 補齊 WAL、busy timeout 與歷史查詢 index
-- o 將 migration 改成明確的鏈式升版
+- 補更完整的長時間運作、節流與重試行為驗證
+- 視結果決定是否再做一輪整體 review
+- 若高風險項沒有新增，再進第二層結構整理：
+  - 拆 `main.py`
+  - 拆 `web/views.py`
+  - 收斂 `ChromeCdpHtmlFetcher`
+  - 整理 state ownership

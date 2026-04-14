@@ -20,11 +20,13 @@ def test_desktop_notifier_builds_powershell_command() -> None:
 
 
 def test_ntfy_notifier_posts_plain_text_payload() -> None:
-    requests: list[tuple[str, dict[str, str], bytes]] = []
+    requests: list[tuple[str, dict[str, str], bytes, float]] = []
     notifier = NtfyNotifier(
         server_url="https://ntfy.example.com",
         topic="hotel-watch",
-        http_poster=lambda url, headers, body: requests.append((url, headers, body)),
+        http_poster=lambda url, headers, body, timeout: requests.append(
+            (url, headers, body, timeout)
+        ),
     )
 
     notifier.send(_message())
@@ -44,27 +46,31 @@ def test_ntfy_notifier_posts_plain_text_payload() -> None:
                 },
                 ensure_ascii=False,
             ).encode("utf-8"),
+            10.0,
         )
     ]
 
 
 def test_discord_notifier_posts_json_payload() -> None:
-    requests: list[tuple[str, dict[str, str], bytes]] = []
+    requests: list[tuple[str, dict[str, str], bytes, float]] = []
     notifier = DiscordWebhookNotifier(
         webhook_url="https://discord.example.com/webhook",
-        http_poster=lambda url, headers, body: requests.append((url, headers, body)),
+        http_poster=lambda url, headers, body, timeout: requests.append(
+            (url, headers, body, timeout)
+        ),
     )
 
     notifier.send(_message())
 
     assert len(requests) == 1
-    url, headers, body = requests[0]
+    url, headers, body, timeout = requests[0]
     assert url == "https://discord.example.com/webhook"
     assert headers == {
         "Content-Type": "application/json; charset=utf-8",
         "Accept": "*/*",
         "User-Agent": "python-requests/2.32.3",
     }
+    assert timeout == 10.0
     assert json.loads(body.decode("utf-8")) == {
         "username": "hotel_price_watch",
         "content": "**價格下降：Ocean Hotel**\n價格：JPY 22000",
@@ -74,8 +80,13 @@ def test_discord_notifier_posts_json_payload() -> None:
 def test_discord_notifier_raises_readable_http_error() -> None:
     """Discord webhook 若回應 HTTPError，應附帶較可讀的錯誤內容。"""
 
-    def failing_poster(url: str, headers: dict[str, str], body: bytes) -> None:
-        del url, headers, body
+    def failing_poster(
+        url: str,
+        headers: dict[str, str],
+        body: bytes,
+        timeout: float,
+    ) -> None:
+        del url, headers, body, timeout
         raise urllib.error.HTTPError(
             url="https://discord.example.com/webhook",
             code=403,

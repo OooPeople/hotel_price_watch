@@ -26,10 +26,16 @@ def compare_snapshots(
     checked_at: datetime,
     current_snapshot: PriceSnapshot,
     previous_snapshot: PriceSnapshot | None,
+    previous_effective_availability: Availability | None = None,
 ) -> CheckResult:
     """比較前後兩次快照，整理出後續判定需要的變化資訊。"""
     current_price = current_snapshot.normalized_price_amount
     previous_price = previous_snapshot.normalized_price_amount if previous_snapshot else None
+    effective_previous_availability = (
+        previous_effective_availability
+        if previous_effective_availability is not None
+        else previous_snapshot.availability if previous_snapshot is not None else None
+    )
 
     return CheckResult(
         checked_at=checked_at,
@@ -46,8 +52,7 @@ def compare_snapshots(
             and current_price < previous_price
         ),
         became_available=(
-            previous_snapshot is not None
-            and previous_snapshot.availability is not Availability.AVAILABLE
+            effective_previous_availability is Availability.SOLD_OUT
             and current_snapshot.availability is Availability.AVAILABLE
         ),
         parse_failed=current_snapshot.availability is Availability.PARSE_ERROR,

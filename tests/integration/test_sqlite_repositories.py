@@ -348,6 +348,41 @@ def test_runtime_repository_persists_notification_throttle_state(tmp_path) -> No
     )
 
 
+def test_runtime_repository_returns_last_effective_availability(tmp_path) -> None:
+    """應忽略 unknown/parse_error，只回傳最近一次明確 availability。"""
+    database = SqliteDatabase(tmp_path / "watcher.db")
+    database.initialize()
+    SqliteWatchItemRepository(database).save(_build_watch_item())
+    repository = SqliteRuntimeRepository(database)
+
+    repository.append_check_event(
+        CheckEvent(
+            watch_item_id="watch-1",
+            checked_at=datetime(2026, 4, 14, 15, 30, 0),
+            availability=Availability.SOLD_OUT,
+            event_kinds=("checked",),
+        )
+    )
+    repository.append_check_event(
+        CheckEvent(
+            watch_item_id="watch-1",
+            checked_at=datetime(2026, 4, 14, 16, 12, 0),
+            availability=Availability.UNKNOWN,
+            event_kinds=("price_changed",),
+        )
+    )
+    repository.append_check_event(
+        CheckEvent(
+            watch_item_id="watch-1",
+            checked_at=datetime(2026, 4, 14, 16, 18, 0),
+            availability=Availability.PARSE_ERROR,
+            event_kinds=("parse_failed",),
+        )
+    )
+
+    assert repository.get_last_effective_availability("watch-1") is Availability.SOLD_OUT
+
+
 def test_persist_check_outcome_rolls_back_when_midway_write_fails(tmp_path) -> None:
     """驗證單次 check 寫入若中途失敗，不會留下部分成功的資料。"""
 

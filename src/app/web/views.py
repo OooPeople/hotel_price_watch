@@ -39,6 +39,80 @@ def render_watch_list_page(
     runtime_status: MonitorRuntimeStatus | None = None,
 ) -> str:
     """渲染 watch item 列表頁。"""
+    flash_html = (
+        f'<p style="{_SUCCESS_STYLE}">{escape(flash_message)}</p>'
+        if flash_message
+        else ""
+    )
+    runtime_html = _render_runtime_status_section(runtime_status)
+    table_body = _render_watch_list_rows(watch_items)
+    return _page_layout(
+        title="Watch Items",
+        body=f"""
+        <section>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;">
+            <div>
+              <h1>Watch Items</h1>
+              <p>目前可直接從專用 Chrome 頁面抓取候選並建立新的監看項。</p>
+            </div>
+            <div style="display:flex;gap:12px;align-items:center;">
+              <a href="/settings/notifications" style="{_secondary_button_style()}">全域通知設定</a>
+              <a href="/debug/captures" style="{_secondary_button_style()}">Debug 區</a>
+              <a href="/watches/new" style="{_primary_button_style()}">新增 Watch</a>
+            </div>
+          </div>
+          {flash_html}
+          <div id="runtime-status-section">{runtime_html}</div>
+          <table style="width:100%;border-collapse:collapse;margin-top:20px;">
+            <thead>
+              <tr>
+                <th style="{_cell_style(head=True)}">飯店</th>
+                <th style="{_cell_style(head=True)}">房型</th>
+                <th style="{_cell_style(head=True)}">方案</th>
+                <th style="{_cell_style(head=True)}">日期</th>
+                <th style="{_cell_style(head=True)}">輪詢秒數</th>
+                <th style="{_cell_style(head=True)}">狀態</th>
+                <th style="{_cell_style(head=True)}">操作</th>
+              </tr>
+            </thead>
+            <tbody id="watch-list-table-body">{table_body}</tbody>
+          </table>
+        </section>
+        {_render_watch_list_polling_script()}
+        """,
+    )
+
+
+def _render_runtime_status_section(runtime_status: MonitorRuntimeStatus | None) -> str:
+    """在首頁顯示 background monitor runtime 的狀態摘要。"""
+    if runtime_status is None:
+        return ""
+
+    running_text = "運行中" if runtime_status.is_running else "未啟動"
+    chrome_text = "可附著" if runtime_status.chrome_debuggable else "不可附著"
+    last_tick_text = _format_datetime_for_display(runtime_status.last_tick_at)
+    last_sync_text = _format_datetime_for_display(runtime_status.last_watch_sync_at)
+    return f"""
+    <section style="{_CARD_STYLE};margin-top:20px;">
+      <h2 style="margin:0;">Background Monitor</h2>
+      <p style="margin:0;">狀態：{escape(running_text)}</p>
+      <p style="margin:0;">Chrome session：{escape(chrome_text)}</p>
+      <p style="margin:0;">已啟用 watch：{runtime_status.enabled_watch_count}</p>
+      <p style="margin:0;">已註冊排程：{runtime_status.registered_watch_count}</p>
+      <p style="margin:0;">執行中 worker：{runtime_status.inflight_watch_count}</p>
+      <p style="margin:0;">最後 tick：{escape(last_tick_text)}</p>
+      <p style="margin:0;">最後同步 watch：{escape(last_sync_text)}</p>
+    </section>
+    """
+
+
+def render_runtime_status_fragment(runtime_status: MonitorRuntimeStatus | None) -> str:
+    """提供首頁 polling 使用的 runtime 摘要 HTML 片段。"""
+    return _render_runtime_status_section(runtime_status)
+
+
+def _render_watch_list_rows(watch_items: Iterable[WatchItem]) -> str:
+    """渲染首頁 watch 列表 tbody 內容，供首屏與局部更新共用。"""
     rows = []
     for watch_item in watch_items:
         date_range = (
@@ -66,71 +140,12 @@ def render_watch_list_page(
             </tr>
             """
         )
-
-    flash_html = (
-        f'<p style="{_SUCCESS_STYLE}">{escape(flash_message)}</p>'
-        if flash_message
-        else ""
-    )
-    runtime_html = _render_runtime_status_section(runtime_status)
-    table_body = "\n".join(rows) or '<tr><td colspan="7">目前尚無 watch item。</td></tr>'
-    return _page_layout(
-        title="Watch Items",
-        body=f"""
-        <section>
-          <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;">
-            <div>
-              <h1>Watch Items</h1>
-              <p>目前可透過 URL 預填與候選列表建立新的監看項。</p>
-            </div>
-            <div style="display:flex;gap:12px;align-items:center;">
-              <a href="/settings/notifications" style="{_secondary_button_style()}">全域通知設定</a>
-              <a href="/debug/captures" style="{_secondary_button_style()}">Debug 區</a>
-              <a href="/watches/new" style="{_primary_button_style()}">新增 Watch</a>
-            </div>
-          </div>
-          {flash_html}
-          {runtime_html}
-          <table style="width:100%;border-collapse:collapse;margin-top:20px;">
-            <thead>
-              <tr>
-                <th style="{_cell_style(head=True)}">飯店</th>
-                <th style="{_cell_style(head=True)}">房型</th>
-                <th style="{_cell_style(head=True)}">方案</th>
-                <th style="{_cell_style(head=True)}">日期</th>
-                <th style="{_cell_style(head=True)}">輪詢秒數</th>
-                <th style="{_cell_style(head=True)}">狀態</th>
-                <th style="{_cell_style(head=True)}">操作</th>
-              </tr>
-            </thead>
-            <tbody>{table_body}</tbody>
-          </table>
-        </section>
-        """,
-    )
+    return "\n".join(rows) or '<tr><td colspan="7">目前尚無 watch item。</td></tr>'
 
 
-def _render_runtime_status_section(runtime_status: MonitorRuntimeStatus | None) -> str:
-    """在首頁顯示 background monitor runtime 的狀態摘要。"""
-    if runtime_status is None:
-        return ""
-
-    running_text = "運行中" if runtime_status.is_running else "未啟動"
-    chrome_text = "可附著" if runtime_status.chrome_debuggable else "不可附著"
-    last_tick_text = _format_datetime_for_display(runtime_status.last_tick_at)
-    last_sync_text = _format_datetime_for_display(runtime_status.last_watch_sync_at)
-    return f"""
-    <section style="{_CARD_STYLE};margin-top:20px;">
-      <h2 style="margin:0;">Background Monitor</h2>
-      <p style="margin:0;">狀態：{escape(running_text)}</p>
-      <p style="margin:0;">Chrome session：{escape(chrome_text)}</p>
-      <p style="margin:0;">已啟用 watch：{runtime_status.enabled_watch_count}</p>
-      <p style="margin:0;">已註冊排程：{runtime_status.registered_watch_count}</p>
-      <p style="margin:0;">執行中 worker：{runtime_status.inflight_watch_count}</p>
-      <p style="margin:0;">最後 tick：{escape(last_tick_text)}</p>
-      <p style="margin:0;">最後同步 watch：{escape(last_sync_text)}</p>
-    </section>
-    """
+def render_watch_list_rows_fragment(watch_items: Iterable[WatchItem]) -> str:
+    """提供首頁 polling 使用的 watch 列表 tbody 片段。"""
+    return _render_watch_list_rows(watch_items)
 
 
 def render_new_watch_page(
@@ -162,7 +177,7 @@ def render_new_watch_page(
           <div>
             <a href="/" style="color:#0f766e;text-decoration:none;">← 回列表</a>
             <h1>新增 Watch</h1>
-            <p>先貼入 `ikyu` 一般飯店頁或已帶 `rm/pln` 的精確 URL。</p>
+            <p>請先在專用 Chrome 開好 `ikyu` 頁面，再從目前頁面抓取候選。</p>
             <p style="{_SUCCESS_STYLE}">
               建議直接執行
               <code>uv run python -m app.tools.dev_start</code>
@@ -200,8 +215,10 @@ def render_chrome_tab_selection_page(
     error_message: str | None = None,
     diagnostics: tuple[LookupDiagnostic, ...] = (),
     selected_tab_id: str | None = None,
+    existing_watch_ids_by_tab_id: dict[str, str] | None = None,
 ) -> str:
     """渲染專用 Chrome 分頁選擇頁。"""
+    existing_watch_ids_by_tab_id = existing_watch_ids_by_tab_id or {}
     error_html = (
         f'<p style="{_ERROR_STYLE}">{escape(error_message)}</p>'
         if error_message
@@ -215,6 +232,26 @@ def render_chrome_tab_selection_page(
             row_style += "border-color:#0f766e;"
         throttling_text = "可能節流" if tab.possible_throttling else "正常"
         discarded_text = "；曾被丟棄" if tab.was_discarded else ""
+        linked_watch_id = existing_watch_ids_by_tab_id.get(tab.tab_id)
+        action_html = (
+            f"""
+            <div style="display:grid;gap:8px;justify-items:start;">
+              <span style="color:#92400e;font-weight:600;">已建立 watch</span>
+              <a href="/watches/{escape(linked_watch_id)}" style="{_secondary_button_style()}">
+                查看既有 watch
+              </a>
+              <button
+                type="button"
+                style="{_disabled_button_style()}"
+                disabled
+              >
+                已建立 watch
+              </button>
+            </div>
+            """
+            if linked_watch_id is not None
+            else f'<button type="submit" style="{_primary_button_style()}">抓取此分頁</button>'
+        )
         rows.append(
             f"""
             <form action="/watches/chrome-tabs/preview" method="post" style="{row_style}">
@@ -228,7 +265,7 @@ def render_chrome_tab_selection_page(
                   訊號：{escape(throttling_text + discarded_text)}
                 </p>
               </div>
-              <button type="submit" style="{_primary_button_style()}">抓取此分頁</button>
+              {action_html}
             </form>
             """
         )
@@ -325,10 +362,11 @@ def render_watch_detail_page(
             <div style="display:flex;gap:8px;flex-wrap:wrap;">{action_controls_html}</div>
           </div>
           {flash_html}
-          {latest_snapshot_html}
-          {check_events_html}
-          {debug_artifacts_html}
+          <div id="watch-detail-latest-section">{latest_snapshot_html}</div>
+          <div id="watch-detail-check-events-section">{check_events_html}</div>
+          <div id="watch-detail-debug-artifacts-section">{debug_artifacts_html}</div>
         </section>
+        {_render_watch_detail_polling_script(watch_item.id)}
         """,
     )
 
@@ -591,6 +629,29 @@ def _render_preview_section(preview: WatchCreationPreview) -> str:
 
     prefill_status = "預填選項仍有效" if preview.preselected_still_valid else "需重新選擇有效候選"
     prefill_color = "#166534" if preview.preselected_still_valid else "#92400e"
+    existing_watch_html = ""
+    submit_html = (
+        f'<button type="submit" style="{_primary_button_style()}">'
+        "建立 Watch Item"
+        "</button>"
+    )
+    if preview.existing_watch_id is not None:
+        existing_watch_html = f"""
+        <p style="{_SUCCESS_STYLE}">
+          目前選定目標已建立 watch。
+          <a
+            href="/watches/{escape(preview.existing_watch_id)}"
+            style="color:#0f766e;"
+          >
+            查看既有 watch
+          </a>
+        </p>
+        """
+        submit_html = (
+            f'<button type="button" style="{_disabled_button_style()}" disabled>'
+            "已建立 watch"
+            "</button>"
+        )
     debug_capture_html = ""
     if preview.candidate_bundle.debug_artifact_paths:
         html_path, meta_path = preview.candidate_bundle.debug_artifact_paths
@@ -611,6 +672,7 @@ def _render_preview_section(preview: WatchCreationPreview) -> str:
         <p>人數 / 房數：{preview.draft.people_count} / {preview.draft.room_count}</p>
         {_render_preview_browser_source(preview)}
         <p style="color:{prefill_color};">{prefill_status}</p>
+        {existing_watch_html}
         {debug_capture_html}
       </div>
       {_render_preview_refresh_section(preview)}
@@ -648,7 +710,7 @@ def _render_preview_section(preview: WatchCreationPreview) -> str:
           <input type="text" name="target_price" placeholder="例如 20000" style="{_input_style()}">
           {_render_notification_target_price_hint(NotificationLeafKind.BELOW_TARGET_PRICE)}
         </div>
-        <button type="submit" style="{_primary_button_style()}">建立 Watch Item</button>
+        {submit_html}
       </form>
       {_render_notification_rule_toggle_script(
           select_id="create-watch-notification-rule-kind",
@@ -663,10 +725,7 @@ def _render_preview_browser_source(preview: WatchCreationPreview) -> str:
     if preview.browser_tab_id is None:
         return ""
     title = preview.browser_tab_title or "untitled tab"
-    return (
-        f"<p>來源分頁：{escape(title)} "
-        f"（tab id: {escape(preview.browser_tab_id)}）</p>"
-    )
+    return f"<p>來源分頁：{escape(title)}</p>"
 
 
 def _render_preview_browser_tab_hidden_input(preview: WatchCreationPreview) -> str:
@@ -1084,6 +1143,27 @@ def _render_debug_artifacts_section(debug_artifacts: tuple[DebugArtifact, ...]) 
     """
 
 
+def render_watch_detail_sections(
+    *,
+    watch_item: WatchItem,
+    latest_snapshot: LatestCheckSnapshot | None,
+    check_events: tuple[CheckEvent, ...],
+    notification_state: NotificationState | None,
+    debug_artifacts: tuple[DebugArtifact, ...],
+) -> dict[str, str]:
+    """提供 watch 詳細頁 polling 使用的三個主要 HTML 片段。"""
+    return {
+        "latest_section_html": _render_latest_snapshot_section(
+            watch_item=watch_item,
+            latest_snapshot=latest_snapshot,
+            notification_state=notification_state,
+            debug_artifacts=debug_artifacts,
+        ),
+        "check_events_section_html": _render_check_events_section(check_events),
+        "debug_artifacts_section_html": _render_debug_artifacts_section(debug_artifacts),
+    }
+
+
 def _render_runtime_signal_summary(debug_artifacts: tuple[DebugArtifact, ...]) -> str:
     """整理最近的 runtime 訊號，讓 watch 詳細頁可快速判讀背景狀態。"""
     if not debug_artifacts:
@@ -1200,6 +1280,78 @@ def _render_watch_action_form(
     """
 
 
+def _render_watch_list_polling_script() -> str:
+    """在首頁啟用輕量 polling，只更新 runtime 摘要與 watch 列表。"""
+    return """
+    <script>
+      (() => {
+        const runtimeContainer = document.getElementById("runtime-status-section");
+        const tableBody = document.getElementById("watch-list-table-body");
+        if (!runtimeContainer || !tableBody) {
+          return;
+        }
+
+        const refresh = async () => {
+          try {
+            const response = await fetch("/fragments/watch-list", {
+              headers: { "X-Requested-With": "fetch" },
+            });
+            if (!response.ok) {
+              return;
+            }
+            const payload = await response.json();
+            runtimeContainer.innerHTML = payload.runtime_html;
+            tableBody.innerHTML = payload.table_body_html;
+          } catch {
+            // 保持靜默，避免本機 GUI 因暫時失敗反覆噴錯。
+          }
+        };
+
+        window.setInterval(refresh, 15000);
+      })();
+    </script>
+    """
+
+
+def _render_watch_detail_polling_script(watch_item_id: str) -> str:
+    """在 watch 詳細頁啟用輕量 polling，只更新摘要、歷史與 debug 區塊。"""
+    return f"""
+    <script>
+      (() => {{
+        const latestSection = document.getElementById("watch-detail-latest-section");
+        const checkEventsSection = document.getElementById(
+          "watch-detail-check-events-section"
+        );
+        const debugArtifactsSection = document.getElementById(
+          "watch-detail-debug-artifacts-section"
+        );
+        if (!latestSection || !checkEventsSection || !debugArtifactsSection) {{
+          return;
+        }}
+
+        const refresh = async () => {{
+          try {{
+            const response = await fetch("/watches/{escape(watch_item_id)}/fragments", {{
+              headers: {{ "X-Requested-With": "fetch" }},
+            }});
+            if (!response.ok) {{
+              return;
+            }}
+            const payload = await response.json();
+            latestSection.innerHTML = payload.latest_section_html;
+            checkEventsSection.innerHTML = payload.check_events_section_html;
+            debugArtifactsSection.innerHTML = payload.debug_artifacts_section_html;
+          }} catch {{
+            // 保持靜默，避免本機 GUI 因暫時失敗反覆噴錯。
+          }}
+        }};
+
+        window.setInterval(refresh, 10000);
+      }})();
+    </script>
+    """
+
+
 def _describe_watch_status(watch_item: WatchItem) -> str:
     """把 watch 的啟用與暫停狀態整理成較易讀的文字。"""
     if not watch_item.enabled:
@@ -1249,6 +1401,15 @@ def _danger_button_style() -> str:
     return (
         "display:inline-block;padding:8px 12px;background:#fff3f3;color:#9f1239;"
         "border:1px solid #f1aeb5;border-radius:8px;cursor:pointer;"
+    )
+
+
+def _disabled_button_style() -> str:
+    """回傳不可操作按鈕的 inline style。"""
+    return (
+        "display:inline-block;padding:12px 18px;background:#e5e7eb;color:#6b7280;"
+        "text-decoration:none;border:1px solid #d1d5db;border-radius:8px;cursor:not-allowed;"
+        "opacity:0.85;"
     )
 
 

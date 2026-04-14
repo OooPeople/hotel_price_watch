@@ -342,3 +342,47 @@ def test_find_best_page_rejects_low_confidence_hotel_root_page() -> None:
     best_page = fetcher._find_best_page(_Context(), expected_url=expected_url)
 
     assert best_page is None
+
+
+def test_find_best_page_skips_excluded_tab_ids(monkeypatch) -> None:
+    """恢復多個 watch 分頁時，已被前一個 watch 佔用的 tab 不應再次被沿用。"""
+    fetcher = ChromeCdpHtmlFetcher()
+    expected_url = (
+        "https://www.ikyu.com/zh-tw/00082173/"
+        "?adc=1&cid=20260918&pln=11035620&ppc=2&rc=1&rm=10191605&si=1&st=1"
+    )
+
+    class _Page:
+        def __init__(self, url: str, stable_id: str) -> None:
+            self.url = url
+            self.stable_id = stable_id
+
+        def is_closed(self) -> bool:
+            return False
+
+    class _Context:
+        def __init__(self) -> None:
+            self.pages = [
+                _Page(expected_url, "tab-1"),
+                _Page(
+                    "https://www.ikyu.com/zh-tw/00082173/"
+                    "?adc=1&cid=20260918&pln=11035620&ppc=2&rc=1&rm=10191605&si=1&st=1"
+                    "&extra=1",
+                    "tab-2",
+                ),
+            ]
+
+    monkeypatch.setattr(
+        ChromeCdpHtmlFetcher,
+        "_get_page_stable_id",
+        lambda self, page: page.stable_id,
+    )
+
+    best_page = fetcher._find_best_page(
+        _Context(),
+        expected_url=expected_url,
+        excluded_tab_ids=("tab-1",),
+    )
+
+    assert best_page is not None
+    assert best_page.stable_id == "tab-2"

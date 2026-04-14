@@ -99,6 +99,40 @@ def test_became_available_is_notified_independently() -> None:
     assert decision.event_kinds == (NotificationEventKind.BECAME_AVAILABLE,)
 
 
+def test_became_available_ignores_immediate_unknown_when_last_effective_is_available() -> None:
+    result = compare_snapshots(
+        checked_at=datetime(2026, 4, 12, 10, 0, 0),
+        previous_snapshot=_snapshot(amount=None, availability=Availability.UNKNOWN),
+        current_snapshot=_snapshot(amount="24000", availability=Availability.AVAILABLE),
+        previous_effective_availability=Availability.AVAILABLE,
+    )
+
+    decision = evaluate_notification_rule(
+        rule=RuleLeaf(kind=NotificationLeafKind.ANY_DROP),
+        check_result=result,
+        notification_state=NotificationState(watch_item_id="watch-1"),
+    )
+
+    assert decision.event_kinds == ()
+
+
+def test_became_available_looks_back_to_last_effective_sold_out() -> None:
+    result = compare_snapshots(
+        checked_at=datetime(2026, 4, 12, 10, 0, 0),
+        previous_snapshot=_snapshot(amount=None, availability=Availability.UNKNOWN),
+        current_snapshot=_snapshot(amount="24000", availability=Availability.AVAILABLE),
+        previous_effective_availability=Availability.SOLD_OUT,
+    )
+
+    decision = evaluate_notification_rule(
+        rule=RuleLeaf(kind=NotificationLeafKind.ANY_DROP),
+        check_result=result,
+        notification_state=NotificationState(watch_item_id="watch-1"),
+    )
+
+    assert decision.event_kinds == (NotificationEventKind.BECAME_AVAILABLE,)
+
+
 def test_first_successful_snapshot_is_not_treated_as_became_available() -> None:
     result = compare_snapshots(
         checked_at=datetime(2026, 4, 12, 10, 0, 0),

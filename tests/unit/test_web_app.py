@@ -78,6 +78,14 @@ class _FakeMonitorRuntime:
         self.check_now_calls.append(watch_item_id)
 
 
+def _local_request_headers() -> dict[str, str]:
+    """建立通過本機管理介面來源驗證所需的測試 header。"""
+    return {
+        "origin": "http://127.0.0.1",
+        "referer": "http://127.0.0.1/",
+    }
+
+
 def test_create_app_registers_gui_routes(tmp_path) -> None:
     container = _build_test_container(tmp_path)
 
@@ -139,6 +147,45 @@ def test_health_includes_runtime_status(tmp_path) -> None:
     assert payload["runtime"]["chrome_debuggable"] is True
 
 
+def test_watch_list_fragments_endpoint_returns_runtime_and_rows(tmp_path) -> None:
+    """首頁 fragments endpoint 應回傳局部更新所需的 HTML 片段。"""
+    container = _build_test_container(tmp_path)
+    container.watch_item_repository.save(_build_watch_item())
+    fake_runtime = _FakeMonitorRuntime()
+    container.monitor_runtime = fake_runtime
+
+    with TestClient(create_app(container)) as client:
+        response = client.get("/fragments/watch-list")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "Background Monitor" in payload["runtime_html"]
+    assert "Ocean Hotel" in payload["table_body_html"]
+
+
+def test_watch_detail_fragments_endpoint_returns_partial_sections(tmp_path) -> None:
+    """watch 詳細頁 fragments endpoint 應回傳三個主要局部區塊。"""
+    container = _build_test_container(tmp_path)
+    watch_item = _build_watch_item()
+    container.watch_item_repository.save(watch_item)
+    container.runtime_repository.save_latest_check_snapshot(_build_latest_snapshot())
+    container.runtime_repository.append_check_event(_build_check_event())
+    container.runtime_repository.save_notification_state(_build_notification_state())
+    container.runtime_repository.append_debug_artifact(
+        _build_debug_artifact(),
+        retention_limit=10,
+    )
+
+    with TestClient(create_app(container)) as client:
+        response = client.get(f"/watches/{watch_item.id}/fragments")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "最近摘要" in payload["latest_section_html"]
+    assert "檢查歷史" in payload["check_events_section_html"]
+    assert "Debug Artifacts" in payload["debug_artifacts_section_html"]
+
+
 def test_render_watch_list_page_shows_existing_watch_items() -> None:
     html = render_watch_list_page(
         watch_items=(_build_watch_item(),),
@@ -182,12 +229,32 @@ def test_render_new_watch_page_shows_candidate_preview() -> None:
     assert "每人每晚：約 JPY 12000" in html
     assert "從同一個 Chrome 分頁重新抓取" in html
     assert "Dormy Tab" in html
+    assert "tab id:" not in html
     assert "從專用 Chrome 建立 Watch" in html
     assert (
         f'value="{NotificationLeafKind.BELOW_TARGET_PRICE.value}"'
         in html
     )
     assert "selected" in html
+
+
+def test_render_new_watch_page_disables_create_when_target_already_exists() -> None:
+    """若 preview 對應的 target 已有 watch，應顯示既有 watch 並禁用建立。"""
+    html = render_new_watch_page(
+        preview=replace(
+            _build_preview(
+                "https://www.ikyu.com/zh-tw/00082173/?top=rooms",
+                browser_tab_id="0",
+                browser_tab_title="Dormy Tab",
+            ),
+            existing_watch_id="watch-list-1",
+        )
+    )
+
+    assert "目前選定目標已建立 watch" in html
+    assert "/watches/watch-list-1" in html
+    assert "已建立 watch" in html
+    assert "建立 Watch Item" not in html
 
 
 def test_render_new_watch_page_shows_debug_capture_paths() -> None:
@@ -293,6 +360,111 @@ def test_render_chrome_tab_selection_page_shows_tabs_and_throttling_signal() -> 
     assert "抓取此分頁" in html
 
 
+def test_render_chrome_tab_selection_page_marks_existing_watch_tabs() -> None:
+    """若某個 Chrome 分頁已綁定既有 watch，應改顯示既有 watch 狀態。"""
+    html = render_chrome_tab_selection_page(
+        tabs=(
+            ChromeTabSummary(
+                tab_id="0",
+                title="Dormy Inn",
+                url="https://www.ikyu.com/zh-tw/00082173/?rm=1&pln=2",
+                visibility_state="visible",
+                has_focus=True,
+            ),
+        ),
+        existing_watch_ids_by_tab_id={"0": "watch-list-1"},
+    )
+
+    assert "已建立 watch" in html
+    assert "/watches/watch-list-1" in html
+    assert "抓取此分頁" not in html
+
+
+def test_chrome_tab_list_page_marks_existing_watch_tabs_by_target_identity(tmp_path) -> None:
+    """Chrome 分頁清單頁應在進入 preview 前就標示已建立的精確 watch。"""
+    container = _build_test_container(tmp_path)
+    container.chrome_tab_preview_service = _StaticChromeTabPreviewService(
+        tabs=(
+            ChromeTabSummary(
+                tab_id="tab-a",
+                title="Dormy Inn A",
+                url=(
+                    "https://www.ikyu.com/zh-tw/00082173/"
+                    "?pln=11035620&rm=10191605&cid=20260918"
+                ),
+                visibility_state="visible",
+                has_focus=True,
+            ),
+            ChromeTabSummary(
+                tab_id="tab-b",
+                title="Dormy Inn B",
+                url=(
+                    "https://www.ikyu.com/zh-tw/00082173/"
+                    "?adc=1&cid=20260918&discsort=1&lc=1&pln=11035621"
+                    "&ppc=2&rc=1&rm=10191606&si=1&st=1"
+                ),
+                visibility_state="visible",
+                has_focus=True,
+            ),
+        )
+    )
+    first_watch = _build_watch_item()
+    second_watch = replace(
+        _build_watch_item(),
+        id="watch-list-2",
+        target=WatchTarget(
+            site="ikyu",
+            hotel_id="00082173",
+            room_id="10191606",
+            plan_id="11035621",
+            check_in_date=date(2026, 9, 18),
+            check_out_date=date(2026, 9, 19),
+            people_count=2,
+            room_count=1,
+        ),
+        canonical_url=(
+            "https://www.ikyu.com/zh-tw/00082173/"
+            "?adc=1&cid=20260918&discsort=1&lc=1&pln=11035621"
+            "&ppc=2&rc=1&rm=10191606&si=1&st=1"
+        ),
+    )
+    for watch_item, browser_page_url, browser_tab_id in (
+        (
+            first_watch,
+            "https://www.ikyu.com/zh-tw/00082173/?rm=10191605&pln=11035620&cid=20260918",
+            "stale-tab-a",
+        ),
+        (
+            second_watch,
+            second_watch.canonical_url,
+            "stale-tab-b",
+        ),
+    ):
+        container.watch_item_repository.save(watch_item)
+        container.watch_item_repository.save_draft(
+            watch_item.id,
+            SearchDraft(
+                seed_url=watch_item.canonical_url,
+                hotel_id=watch_item.target.hotel_id,
+                room_id=watch_item.target.room_id,
+                plan_id=watch_item.target.plan_id,
+                check_in_date=watch_item.target.check_in_date,
+                check_out_date=watch_item.target.check_out_date,
+                people_count=watch_item.target.people_count,
+                room_count=watch_item.target.room_count,
+                browser_page_url=browser_page_url,
+                browser_tab_id=browser_tab_id,
+            ),
+        )
+
+    with TestClient(create_app(container)) as client:
+        response = client.get("/watches/chrome-tabs")
+
+    assert response.status_code == 200
+    assert response.text.count("已建立 watch") >= 2
+    assert "抓取此分頁" not in response.text
+
+
 def test_render_notification_settings_page_shows_current_rule() -> None:
     """通知設定頁應顯示目前已保存的通知條件。"""
     html = render_notification_settings_page(
@@ -375,7 +547,11 @@ def test_post_debug_capture_clear_redirects_partial_failure_message(tmp_path, mo
 
     monkeypatch.setattr(main_module, "clear_debug_captures", fake_clear_debug_captures)
 
-    response = client.post("/debug/captures/clear", follow_redirects=False)
+    response = client.post(
+        "/debug/captures/clear",
+        headers=_local_request_headers(),
+        follow_redirects=False,
+    )
 
     assert response.status_code == 303
     message = parse_qs(urlparse(response.headers["location"]).query)["message"][0]
@@ -404,6 +580,7 @@ def test_post_notification_settings_allows_any_drop_with_target_price_input(tmp_
             "notification_rule_kind": NotificationLeafKind.ANY_DROP.value,
             "target_price": "20000",
         },
+        headers=_local_request_headers(),
         follow_redirects=False,
     )
 
@@ -438,6 +615,7 @@ def test_post_notification_settings_preserves_invalid_form_value(tmp_path) -> No
             "notification_rule_kind": NotificationLeafKind.BELOW_TARGET_PRICE.value,
             "target_price": "abc",
         },
+        headers=_local_request_headers(),
     )
 
     assert response.status_code == 400
@@ -460,6 +638,7 @@ def test_post_global_notification_settings_updates_channels(tmp_path) -> None:
             "discord_enabled": "on",
             "discord_webhook_url": "https://discord.example.com/webhook",
         },
+        headers=_local_request_headers(),
         follow_redirects=False,
     )
 
@@ -480,7 +659,11 @@ def test_post_global_notification_test_uses_saved_dispatch_path(tmp_path) -> Non
     container = _build_test_container(tmp_path)
     client = TestClient(create_app(container))
 
-    response = client.post("/settings/notifications/test", follow_redirects=False)
+    response = client.post(
+        "/settings/notifications/test",
+        headers=_local_request_headers(),
+        follow_redirects=False,
+    )
 
     assert response.status_code == 303
     location = response.headers["location"]
@@ -495,7 +678,10 @@ def test_post_global_notification_test_requires_enabled_channel(tmp_path) -> Non
     container.notification_channel_test_service.enabled = False
     client = TestClient(create_app(container))
 
-    response = client.post("/settings/notifications/test")
+    response = client.post(
+        "/settings/notifications/test",
+        headers=_local_request_headers(),
+    )
 
     assert response.status_code == 400
     assert "目前沒有任何已啟用的通知通道可供測試" in response.text
@@ -507,7 +693,11 @@ def test_post_watch_disable_updates_status(tmp_path) -> None:
     container.watch_item_repository.save(_build_watch_item())
     client = TestClient(create_app(container))
 
-    response = client.post("/watches/watch-list-1/disable", follow_redirects=False)
+    response = client.post(
+        "/watches/watch-list-1/disable",
+        headers=_local_request_headers(),
+        follow_redirects=False,
+    )
 
     assert response.status_code == 303
     updated_watch = container.watch_item_repository.get("watch-list-1")
@@ -522,14 +712,22 @@ def test_post_watch_pause_and_resume_updates_status(tmp_path) -> None:
     container.watch_item_repository.save(_build_watch_item())
     client = TestClient(create_app(container))
 
-    pause_response = client.post("/watches/watch-list-1/pause", follow_redirects=False)
+    pause_response = client.post(
+        "/watches/watch-list-1/pause",
+        headers=_local_request_headers(),
+        follow_redirects=False,
+    )
     assert pause_response.status_code == 303
     paused_watch = container.watch_item_repository.get("watch-list-1")
     assert paused_watch is not None
     assert paused_watch.enabled is True
     assert paused_watch.paused_reason == "manually_paused"
 
-    resume_response = client.post("/watches/watch-list-1/resume", follow_redirects=False)
+    resume_response = client.post(
+        "/watches/watch-list-1/resume",
+        headers=_local_request_headers(),
+        follow_redirects=False,
+    )
     assert resume_response.status_code == 303
     resumed_watch = container.watch_item_repository.get("watch-list-1")
     assert resumed_watch is not None
@@ -552,7 +750,11 @@ def test_post_watch_enable_reactivates_disabled_watch(tmp_path) -> None:
     )
     client = TestClient(create_app(container))
 
-    response = client.post("/watches/watch-list-1/enable", follow_redirects=False)
+    response = client.post(
+        "/watches/watch-list-1/enable",
+        headers=_local_request_headers(),
+        follow_redirects=False,
+    )
 
     assert response.status_code == 303
     enabled_watch = container.watch_item_repository.get("watch-list-1")
@@ -569,10 +771,45 @@ def test_post_watch_check_now_calls_monitor_runtime(tmp_path) -> None:
     container.monitor_runtime = fake_runtime
     client = TestClient(create_app(container))
 
-    response = client.post("/watches/watch-list-1/check-now", follow_redirects=False)
+    response = client.post(
+        "/watches/watch-list-1/check-now",
+        headers=_local_request_headers(),
+        follow_redirects=False,
+    )
 
     assert response.status_code == 303
     assert fake_runtime.check_now_calls == ["watch-list-1"]
+
+
+def test_state_changing_post_rejects_missing_origin_headers(tmp_path) -> None:
+    """缺少 Origin 與 Referer 時，state-changing POST 應被拒絕。"""
+    container = _build_test_container(tmp_path)
+    container.watch_item_repository.save(_build_watch_item())
+    client = TestClient(create_app(container))
+
+    response = client.post("/watches/watch-list-1/disable", follow_redirects=False)
+
+    assert response.status_code == 403
+    assert "missing request origin" in response.text
+
+
+def test_state_changing_post_rejects_non_local_origin(tmp_path) -> None:
+    """來自非本機來源的 POST 應被拒絕。"""
+    container = _build_test_container(tmp_path)
+    container.watch_item_repository.save(_build_watch_item())
+    client = TestClient(create_app(container))
+
+    response = client.post(
+        "/watches/watch-list-1/disable",
+        headers={
+            "origin": "https://evil.example.com",
+            "referer": "https://evil.example.com/pwn",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 403
+    assert "invalid request origin" in response.text
 
 
 def test_post_global_notification_settings_preserves_invalid_form_value(tmp_path) -> None:
@@ -590,6 +827,7 @@ def test_post_global_notification_settings_preserves_invalid_form_value(tmp_path
             "discord_enabled": "on",
             "discord_webhook_url": "https://discord.example.com/webhook",
         },
+        headers=_local_request_headers(),
     )
 
     assert response.status_code == 400
@@ -607,6 +845,16 @@ def test_render_watch_list_page_shows_debug_link() -> None:
 
     assert "/debug/captures" in html
     assert "Debug 區" in html
+
+
+def test_render_watch_list_page_includes_polling_script() -> None:
+    """首頁應帶局部更新 polling script，而不是依賴整頁刷新。"""
+    html = render_watch_list_page(watch_items=(_build_watch_item(),))
+
+    assert "/fragments/watch-list" in html
+    assert "watch-list-table-body" in html
+    assert "runtime-status-section" in html
+    assert "setInterval(refresh, 15000)" in html
 
 
 def test_render_watch_detail_page_shows_runtime_sections() -> None:
@@ -636,6 +884,23 @@ def test_render_watch_detail_page_shows_runtime_sections() -> None:
     assert "分頁曾被瀏覽器丟棄 1 次" in html
     assert "立即檢查" in html
     assert "已觸發 立即檢查" in html
+
+
+def test_render_watch_detail_page_includes_polling_script() -> None:
+    """watch 詳細頁應帶局部更新 polling script，而不是依賴整頁刷新。"""
+    html = render_watch_detail_page(
+        watch_item=_build_watch_item(),
+        latest_snapshot=_build_latest_snapshot(),
+        check_events=(_build_check_event(),),
+        notification_state=_build_notification_state(),
+        debug_artifacts=(_build_debug_artifact(),),
+    )
+
+    assert "/watches/watch-list-1/fragments" in html
+    assert "watch-detail-latest-section" in html
+    assert "watch-detail-check-events-section" in html
+    assert "watch-detail-debug-artifacts-section" in html
+    assert "setInterval(refresh, 10000)" in html
 
 
 def test_render_debug_capture_pages_show_capture_content(tmp_path) -> None:
@@ -817,6 +1082,13 @@ class FakeWatchEditorService(WatchEditorService):
         """回傳固定的預覽結果，避免在 web 測試中依賴真站抓取。"""
         return _build_preview(seed_url)
 
+    def mark_existing_watch_for_preview(
+        self,
+        preview: WatchCreationPreview,
+    ) -> WatchCreationPreview:
+        """web route 測試不依賴真實 target 比對，直接回傳原 preview。"""
+        return preview
+
     def create_watch_item_from_preview(
         self,
         *,
@@ -876,6 +1148,27 @@ class FakeChromeTabPreviewService:
             "https://www.ikyu.com/zh-tw/00082173/?pln=11035620&rm=10191605",
             browser_tab_id="0",
             browser_tab_title="Dormy Inn",
+        )
+
+
+class _StaticChromeTabPreviewService:
+    """提供固定分頁清單的假 Chrome preview service。"""
+
+    def __init__(self, *, tabs: tuple[ChromeTabSummary, ...]) -> None:
+        """保存測試用固定分頁，讓 route-level 測試可精準控制輸入。"""
+        self._tabs = tabs
+
+    def list_tabs(self) -> tuple[ChromeTabSummary, ...]:
+        """回傳預先配置的 Chrome 分頁清單。"""
+        return self._tabs
+
+    def preview_from_tab_id(self, tab_id: str) -> WatchCreationPreview:
+        """依 tab id 回傳對應分頁的最小 preview。"""
+        tab = next(tab for tab in self._tabs if tab.tab_id == tab_id)
+        return _build_preview(
+            tab.url,
+            browser_tab_id=tab.tab_id,
+            browser_tab_title=tab.title,
         )
 
 

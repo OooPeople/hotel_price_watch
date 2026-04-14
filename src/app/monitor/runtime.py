@@ -79,6 +79,8 @@ class ChromeDrivenMonitorRuntime:
         max_workers: int = 2,
         debug_retention_limit: int = 20,
         wakeup_rescan_threshold_seconds: float = 120.0,
+        startup_restore_tabs: bool = True,
+        restore_delay_seconds: float = 2.5,
     ) -> None:
         """建立 background monitor runtime 所需的主要依賴。"""
         self._watch_item_repository = watch_item_repository
@@ -97,6 +99,8 @@ class ChromeDrivenMonitorRuntime:
         self._wakeup_rescan_threshold = timedelta(
             seconds=wakeup_rescan_threshold_seconds
         )
+        self._startup_restore_tabs = startup_restore_tabs
+        self._restore_delay_seconds = restore_delay_seconds
         self._loop_task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
         self._inflight_tasks: dict[str, asyncio.Task[None]] = {}
@@ -112,7 +116,9 @@ class ChromeDrivenMonitorRuntime:
         if self._loop_task is not None and not self._loop_task.done():
             return
         self._stop_event.clear()
-        await self._sync_watch_definitions(now=_utcnow())
+        active_watch_items = await self._sync_watch_definitions(now=_utcnow())
+        if self._startup_restore_tabs:
+            await self._restore_active_watch_tabs(active_watch_items)
         self._loop_task = asyncio.create_task(self._run_loop())
 
     async def stop(self) -> None:
@@ -171,6 +177,9 @@ class ChromeDrivenMonitorRuntime:
 
         latest_snapshot = self._runtime_repository.get_latest_check_snapshot(watch_item_id)
         previous_snapshot = _previous_snapshot_from_latest(latest_snapshot)
+        previous_effective_availability = (
+            self._runtime_repository.get_last_effective_availability(watch_item_id)
+        )
         notification_state = (
             self._runtime_repository.get_notification_state(watch_item_id)
             or NotificationState(watch_item_id=watch_item_id)
@@ -239,6 +248,7 @@ class ChromeDrivenMonitorRuntime:
             checked_at=checked_at,
             current_snapshot=current_snapshot,
             previous_snapshot=previous_snapshot,
+            previous_effective_availability=previous_effective_availability,
         )
         notification_decision = evaluate_notification_rule(
             rule=watch_item.notification_rule,
@@ -383,7 +393,7 @@ class ChromeDrivenMonitorRuntime:
         *,
         now: datetime,
         resumed_after_sleep: bool = False,
-    ) -> None:
+    ) -> dict[str, WatchItem]:
         """把 DB 內 watch item 的實際狀態同步到 scheduler。"""
         watch_items = await asyncio.to_thread(self._watch_item_repository.list_all)
         self._last_watch_sync_at = now
@@ -432,6 +442,42 @@ class ChromeDrivenMonitorRuntime:
                 watch_item_id=watch_item.id,
                 interval_seconds=watch_item.scheduler_interval_seconds,
             )
+        return active_watch_items
+
+    async def _restore_active_watch_tabs(
+        self,
+        active_watch_items: dict[str, WatchItem],
+    ) -> None:
+        """在 runtime 啟動時低速恢復 enabled watch 對應的 Chrome 分頁。"""
+        claimed_tab_ids: set[str] = set()
+        for watch_item in active_watch_items.values():
+            if self._stop_event.is_set():
+                break
+            draft = await asyncio.to_thread(
+                self._watch_item_repository.get_draft,
+                watch_item.id,
+            )
+            try:
+                summary = await asyncio.to_thread(
+                    self._chrome_fetcher.ensure_tab_for_url,
+                    expected_url=watch_item.canonical_url,
+                    fallback_url=(
+                        draft.browser_page_url
+                        if draft is not None and draft.browser_page_url is not None
+                        else draft.seed_url if draft is not None else watch_item.canonical_url
+                    ),
+                    preferred_tab_id=(
+                        draft.browser_tab_id
+                        if draft is not None and draft.browser_tab_id is not None
+                        else None
+                    ),
+                    excluded_tab_ids=tuple(claimed_tab_ids),
+                )
+                claimed_tab_ids.add(summary.tab_id)
+            except Exception:
+                continue
+            if self._restore_delay_seconds > 0 and not self._stop_event.is_set():
+                await asyncio.sleep(self._restore_delay_seconds)
 
     def _dispatch_notification(
         self,
