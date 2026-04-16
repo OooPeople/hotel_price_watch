@@ -11,11 +11,13 @@ from app.application.app_settings import AppSettingsService
 from app.application.debug_captures import (
     DebugCaptureClearResult,
     clear_debug_captures,
+    list_debug_captures,
     load_debug_capture,
     load_latest_debug_capture,
 )
 from app.application.preview_guard import PreviewAttemptGuard
 from app.application.watch_editor import WatchCreationPreview, WatchEditorService
+from app.application.watch_lifecycle import WatchLifecycleCoordinator
 from app.bootstrap.container import AppContainer
 from app.config.models import NotificationChannelSettings
 from app.domain.entities import NotificationDispatchResult, WatchItem
@@ -769,6 +771,12 @@ def test_post_watch_check_now_calls_monitor_runtime(tmp_path) -> None:
     container.watch_item_repository.save(_build_watch_item())
     fake_runtime = _FakeMonitorRuntime()
     container.monitor_runtime = fake_runtime
+    container.watch_lifecycle_coordinator = WatchLifecycleCoordinator(
+        watch_editor_service=container.watch_editor_service,
+        watch_item_repository=container.watch_item_repository,
+        runtime_repository=container.runtime_repository,
+        monitor_runtime=fake_runtime,
+    )
     client = TestClient(create_app(container))
 
     response = client.post(
@@ -779,6 +787,32 @@ def test_post_watch_check_now_calls_monitor_runtime(tmp_path) -> None:
 
     assert response.status_code == 303
     assert fake_runtime.check_now_calls == ["watch-list-1"]
+
+
+def test_post_watch_check_now_rejects_paused_watch(tmp_path) -> None:
+    """立即檢查 route 應拒絕已暫停的 watch，避免繞過 lifecycle gate。"""
+    container = _build_test_container(tmp_path)
+    container.watch_item_repository.save(
+        replace(_build_watch_item(), paused_reason="manually_paused")
+    )
+    fake_runtime = _FakeMonitorRuntime()
+    container.monitor_runtime = fake_runtime
+    container.watch_lifecycle_coordinator = WatchLifecycleCoordinator(
+        watch_editor_service=container.watch_editor_service,
+        watch_item_repository=container.watch_item_repository,
+        runtime_repository=container.runtime_repository,
+        monitor_runtime=fake_runtime,
+    )
+    client = TestClient(create_app(container))
+
+    response = client.post(
+        "/watches/watch-list-1/check-now",
+        headers=_local_request_headers(),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 409
+    assert fake_runtime.check_now_calls == []
 
 
 def test_state_changing_post_rejects_missing_origin_headers(tmp_path) -> None:
@@ -960,6 +994,26 @@ def test_load_latest_debug_capture_reads_latest_timestamped_capture(tmp_path) ->
     assert latest_capture.summary.capture_id != first_capture["capture_id"]
 
 
+def test_list_debug_captures_can_filter_by_site(tmp_path) -> None:
+    """debug capture reader 應能用 site name 過濾不同站點的紀錄。"""
+    _write_debug_capture(
+        tmp_path,
+        capture_id="ikyu_preview_20260412T020000Z",
+        site_name="ikyu",
+    )
+    _write_debug_capture(
+        tmp_path,
+        capture_id="second_site_preview_20260412T030000Z",
+        site_name="second_site",
+    )
+
+    captures = list_debug_captures(tmp_path / "debug", site_name="ikyu")
+
+    assert len(captures) == 1
+    assert captures[0].site_name == "ikyu"
+    assert captures[0].capture_id == "ikyu_preview_20260412T020000Z"
+
+
 def test_clear_debug_captures_removes_saved_files(tmp_path) -> None:
     """debug capture 清空功能應刪除既有的 capture 檔案。"""
     _write_debug_capture(tmp_path)
@@ -1068,6 +1122,32 @@ def test_preview_guard_blocks_immediate_retry_after_blocked_page() -> None:
         assert exc.diagnostics[0].stage == "preview_rate_guard"
     else:
         raise AssertionError("expected preview guard to block immediate retry")
+
+
+def test_preview_guard_cooldown_is_scoped_by_site() -> None:
+    """不同站點的 preview 冷卻不應互相阻擋。"""
+    guard = PreviewAttemptGuard(
+        min_interval_seconds=20.0,
+        blocked_page_cooldown_seconds=1800.0,
+    )
+
+    guard.register_result(
+        site_name="ikyu",
+        diagnostics=(
+            LookupDiagnostic(
+                stage="browser_fallback_direct",
+                status="failed",
+                detail="ikyu 已回傳阻擋頁面；目前連 browser fallback 都被站方防護攔下。",
+            ),
+        ),
+    )
+
+    guard.ensure_allowed(site_name="second_site")
+    try:
+        guard.ensure_allowed(site_name="ikyu")
+    except ValueError:
+        return
+    raise AssertionError("expected ikyu cooldown to remain active")
 
 
 class FakeWatchEditorService(WatchEditorService):
@@ -1243,6 +1323,7 @@ def _build_test_container(tmp_path) -> AppContainer:
     watch_repository = SqliteWatchItemRepository(database)
     runtime_repository = SqliteRuntimeRepository(database)
     site_registry = SiteRegistry()
+    watch_editor_service = FakeWatchEditorService(watch_repository, runtime_repository)
     return AppContainer(
         instance_id="test-instance",
         database=database,
@@ -1252,7 +1333,13 @@ def _build_test_container(tmp_path) -> AppContainer:
         site_registry=site_registry,
         app_settings_service=AppSettingsService(app_settings_repository),
         notification_channel_test_service=_FakeNotificationChannelTestService(),
-        watch_editor_service=FakeWatchEditorService(watch_repository, runtime_repository),
+        watch_editor_service=watch_editor_service,
+        watch_lifecycle_coordinator=WatchLifecycleCoordinator(
+            watch_editor_service=watch_editor_service,
+            watch_item_repository=watch_repository,
+            runtime_repository=runtime_repository,
+            monitor_runtime=None,
+        ),
         chrome_tab_preview_service=FakeChromeTabPreviewService(),
         chrome_cdp_fetcher=ChromeCdpHtmlFetcher(),
         preview_attempt_guard=PreviewAttemptGuard(),
@@ -1282,6 +1369,7 @@ def _write_debug_capture(
     tmp_path,
     *,
     capture_id: str = "ikyu_preview_20260412T022211Z",
+    site_name: str = "ikyu",
     captured_at: datetime | None = None,
     include_html: bool = True,
 ) -> dict[str, str]:
@@ -1295,6 +1383,7 @@ def _write_debug_capture(
         html_path.write_text("<html><body>candidate page</body></html>", encoding="utf-8")
 
     payload = {
+        "site_name": site_name,
         "captured_at_utc": (
             captured_at or datetime(2026, 4, 12, 2, 22, 11, tzinfo=timezone.utc)
         ).isoformat(),

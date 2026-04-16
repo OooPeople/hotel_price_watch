@@ -18,10 +18,11 @@ from app.application.debug_captures import (
 )
 from app.application.preview_guard import PreviewCooldownError
 from app.application.watch_editor import WatchCreationPreview
+from app.application.watch_lifecycle import WatchLifecycleError
+from app.application.watch_tab_matching import find_existing_watch_ids_by_tab_id
 from app.bootstrap.container import AppContainer, build_app_container
-from app.domain.entities import LatestCheckSnapshot, WatchItem
+from app.domain.entities import LatestCheckSnapshot
 from app.domain.enums import NotificationLeafKind
-from app.domain.value_objects import SearchDraft
 from app.monitor.runtime import MonitorRuntimeStatus
 from app.web.views import (
     render_chrome_tab_selection_page,
@@ -236,7 +237,7 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         form = await _read_form_data(request)
         seed_url = form.get("seed_url", "")
         try:
-            container.preview_attempt_guard.ensure_allowed()
+            container.preview_attempt_guard.ensure_allowed(site_name="ikyu")
         except PreviewCooldownError as exc:
             return HTMLResponse(
                 render_new_watch_page(
@@ -253,7 +254,10 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
             )
         except Exception as exc:
             diagnostics = getattr(exc, "diagnostics", ())
-            container.preview_attempt_guard.register_result(diagnostics=diagnostics)
+            container.preview_attempt_guard.register_result(
+                diagnostics=diagnostics,
+                site_name="ikyu",
+            )
             return HTMLResponse(
                 render_new_watch_page(
                     seed_url=seed_url,
@@ -263,7 +267,10 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
                 status_code=400,
             )
         preview = container.watch_editor_service.mark_existing_watch_for_preview(preview)
-        container.preview_attempt_guard.register_result(diagnostics=preview.diagnostics)
+        container.preview_attempt_guard.register_result(
+            diagnostics=preview.diagnostics,
+            site_name="ikyu",
+        )
         return HTMLResponse(render_new_watch_page(seed_url=seed_url, preview=preview))
 
     @app.post("/watches/chrome-tabs/preview", response_class=HTMLResponse, tags=["web"])
@@ -287,7 +294,7 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
                 status_code=400,
             )
         try:
-            container.preview_attempt_guard.ensure_allowed()
+            container.preview_attempt_guard.ensure_allowed(site_name="ikyu")
         except PreviewCooldownError as exc:
             return HTMLResponse(
                 render_chrome_tab_selection_page(
@@ -309,7 +316,10 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
             )
         except Exception as exc:
             diagnostics = getattr(exc, "diagnostics", ())
-            container.preview_attempt_guard.register_result(diagnostics=diagnostics)
+            container.preview_attempt_guard.register_result(
+                diagnostics=diagnostics,
+                site_name="ikyu",
+            )
             return HTMLResponse(
                 render_chrome_tab_selection_page(
                     tabs=tabs,
@@ -324,7 +334,10 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
                 status_code=400,
             )
         preview = container.watch_editor_service.mark_existing_watch_for_preview(preview)
-        container.preview_attempt_guard.register_result(diagnostics=preview.diagnostics)
+        container.preview_attempt_guard.register_result(
+            diagnostics=preview.diagnostics,
+            site_name="ikyu",
+        )
         return HTMLResponse(
             render_new_watch_page(
                 seed_url=preview.draft.seed_url,
@@ -548,7 +561,7 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         """啟用指定 watch item。"""
         _ensure_local_request_origin(request)
         watch_item = await run_in_threadpool(
-            container.watch_editor_service.enable_watch_item,
+            container.watch_lifecycle_coordinator.enable_watch,
             watch_item_id,
         )
         return RedirectResponse(
@@ -561,7 +574,7 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         """停用指定 watch item。"""
         _ensure_local_request_origin(request)
         watch_item = await run_in_threadpool(
-            container.watch_editor_service.disable_watch_item,
+            container.watch_lifecycle_coordinator.disable_watch,
             watch_item_id,
         )
         return RedirectResponse(
@@ -574,7 +587,7 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         """暫停指定 watch item。"""
         _ensure_local_request_origin(request)
         watch_item = await run_in_threadpool(
-            container.watch_editor_service.pause_watch_item,
+            container.watch_lifecycle_coordinator.pause_watch,
             watch_item_id,
         )
         return RedirectResponse(
@@ -587,7 +600,7 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         """恢復指定 watch item。"""
         _ensure_local_request_origin(request)
         watch_item = await run_in_threadpool(
-            container.watch_editor_service.resume_watch_item,
+            container.watch_lifecycle_coordinator.resume_watch,
             watch_item_id,
         )
         return RedirectResponse(
@@ -599,10 +612,10 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
     async def check_watch_now(watch_item_id: str, request: Request) -> Response:
         """立即執行單一 watch item 的檢查。"""
         _ensure_local_request_origin(request)
-        runtime = container.monitor_runtime
-        if runtime is None:
-            return HTMLResponse("background monitor runtime is not available", status_code=503)
-        await runtime.request_check_now(watch_item_id)
+        try:
+            await container.watch_lifecycle_coordinator.request_check_now(watch_item_id)
+        except WatchLifecycleError as exc:
+            return HTMLResponse(str(exc), status_code=409)
         return RedirectResponse(
             url=f"/watches/{watch_item_id}?message=已觸發%20立即檢查",
             status_code=303,
@@ -723,159 +736,17 @@ def _existing_watch_ids_by_tab_id(
     chrome_tabs: tuple | None = None,
 ) -> dict[str, str]:
     """依既有 watch target 與已保存頁面資訊，標記哪些分頁已對應 watch。"""
-    linked: dict[str, str] = {}
     chrome_tabs = chrome_tabs or container.chrome_tab_preview_service.list_tabs()
     watch_items = tuple(container.watch_item_repository.list_all())
     drafts_by_watch_id = {
         watch_item.id: container.watch_item_repository.get_draft(watch_item.id)
         for watch_item in watch_items
     }
-
-    for tab in chrome_tabs:
-        matched_watch = _find_existing_watch_for_tab(
-            tab_url=tab.url,
-            watch_items=watch_items,
-            drafts_by_watch_id=drafts_by_watch_id,
-        )
-        if matched_watch is not None:
-            linked[tab.tab_id] = matched_watch.id
-    return linked
-
-
-def _find_existing_watch_for_tab(
-    *,
-    tab_url: str,
-    watch_items: tuple[WatchItem, ...],
-    drafts_by_watch_id: dict[str, SearchDraft | None],
-) -> WatchItem | None:
-    """依頁面 URL 與 watch target identity 判斷某個分頁是否已對應既有 watch。"""
-    tab_signature = _extract_watch_match_signature(tab_url)
-    for watch_item in watch_items:
-        draft = drafts_by_watch_id.get(watch_item.id)
-        if draft is not None and draft.browser_page_url is not None and (
-            draft.browser_page_url == tab_url
-            or _signatures_match_confidently(
-                left=_extract_watch_match_signature(draft.browser_page_url),
-                right=tab_signature,
-            )
-        ):
-            return watch_item
-        if _signatures_match_confidently(
-            left=_extract_watch_match_signature(watch_item.canonical_url),
-            right=tab_signature,
-        ):
-            return watch_item
-        if _watch_target_matches_signature(watch_item=watch_item, signature=tab_signature):
-            return watch_item
-    return None
-
-
-def _watch_target_matches_signature(
-    *,
-    watch_item: WatchItem,
-    signature: tuple[str | None, ...],
-) -> bool:
-    """以 target identity 判斷目前分頁 URL 是否已對應到指定 watch。"""
-    (
-        hotel_id,
-        room_id,
-        plan_id,
-        check_in,
-        people_count,
-        room_count,
-    ) = signature
-    expected_check_in = watch_item.target.check_in_date.isoformat().replace("-", "")
-    expected_people_count = str(watch_item.target.people_count)
-    expected_room_count = str(watch_item.target.room_count)
-    return (
-        hotel_id == watch_item.target.hotel_id
-        and room_id == watch_item.target.room_id
-        and plan_id == watch_item.target.plan_id
-        and (check_in is None or check_in == expected_check_in)
-        and (people_count is None or people_count == expected_people_count)
-        and (room_count is None or room_count == expected_room_count)
+    return find_existing_watch_ids_by_tab_id(
+        chrome_tabs=chrome_tabs,
+        watch_items=watch_items,
+        drafts_by_watch_id=drafts_by_watch_id,
     )
-
-
-def _signatures_match_confidently(
-    *,
-    left: tuple[str | None, str | None, str | None, str | None, str | None, str | None],
-    right: tuple[str | None, str | None, str | None, str | None, str | None, str | None],
-) -> bool:
-    """僅在精確 target 足夠一致時，才把兩個 URL 視為同一個 watch 目標。"""
-    (
-        left_hotel_id,
-        left_room_id,
-        left_plan_id,
-        left_check_in,
-        left_people_count,
-        left_room_count,
-    ) = left
-    (
-        right_hotel_id,
-        right_room_id,
-        right_plan_id,
-        right_check_in,
-        right_people_count,
-        right_room_count,
-    ) = right
-
-    if not all(
-        (
-            left_hotel_id,
-            left_room_id,
-            left_plan_id,
-            right_hotel_id,
-            right_room_id,
-            right_plan_id,
-        )
-    ):
-        return False
-
-    return (
-        left_hotel_id == right_hotel_id
-        and left_room_id == right_room_id
-        and left_plan_id == right_plan_id
-        and _optional_signature_field_matches(left_check_in, right_check_in)
-        and _optional_signature_field_matches(left_people_count, right_people_count)
-        and _optional_signature_field_matches(left_room_count, right_room_count)
-    )
-
-
-def _optional_signature_field_matches(left: str | None, right: str | None) -> bool:
-    """兩邊都存在時需一致；任一方缺省時，視為可接受的非衝突狀態。"""
-    if left is None or right is None:
-        return True
-    return left == right
-
-
-def _extract_watch_match_signature(
-    url: str,
-) -> tuple[str | None, str | None, str | None, str | None, str | None, str | None]:
-    """從 ikyu URL 萃取 watch target 對應所需的最小比對訊號。"""
-    parsed = urlparse(url)
-    query = parse_qs(parsed.query)
-    path_segments = [segment for segment in parsed.path.split("/") if segment]
-    hotel_id = path_segments[-1] if path_segments else None
-    if hotel_id is not None and not hotel_id.isdigit():
-        hotel_id = None
-    return (
-        hotel_id,
-        _first_query_value(query, "rm"),
-        _first_query_value(query, "pln"),
-        _first_query_value(query, "cid"),
-        _first_query_value(query, "ppc"),
-        _first_query_value(query, "rc"),
-    )
-
-
-def _first_query_value(query: dict[str, list[str]], key: str) -> str | None:
-    """安全取出 query string 第一個值，避免空值與缺值混淆。"""
-    values = query.get(key)
-    if not values:
-        return None
-    value = values[0].strip()
-    return value or None
 
 
 async def _resolve_watch_creation_preview(

@@ -214,11 +214,11 @@ def _capture_preview_debug_summary(
     """保存本次 preview 的 debug 摘要，必要時再附帶完整 HTML。"""
     DEBUG_CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    capture_stem = f"ikyu_preview_{timestamp}"
+    capture_stem = f"{IkyuAdapter.site_name}_preview_{timestamp}"
     captured_html_path = DEBUG_CAPTURE_DIR / f"{capture_stem}.html"
     captured_meta_path = DEBUG_CAPTURE_DIR / f"{capture_stem}_meta.json"
-    html_path = DEBUG_CAPTURE_DIR / "ikyu_preview_last.html"
-    meta_path = DEBUG_CAPTURE_DIR / "ikyu_preview_last_meta.json"
+    html_path = DEBUG_CAPTURE_DIR / f"{IkyuAdapter.site_name}_preview_last.html"
+    meta_path = DEBUG_CAPTURE_DIR / f"{IkyuAdapter.site_name}_preview_last_meta.json"
 
     stored_html_path: str | None = None
     latest_html_path: str | None = None
@@ -229,6 +229,7 @@ def _capture_preview_debug_summary(
         latest_html_path = str(html_path)
 
     metadata = {
+        "site_name": IkyuAdapter.site_name,
         "capture_scope": "preview",
         "captured_at_utc": datetime.now(timezone.utc).isoformat(),
         "seed_url": draft.seed_url,

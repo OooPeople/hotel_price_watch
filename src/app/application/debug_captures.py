@@ -9,8 +9,8 @@ from pathlib import Path
 
 from app.sites.base import LookupDiagnostic
 
-DEBUG_CAPTURE_PREFIX = "ikyu_preview_"
 DEBUG_CAPTURE_META_SUFFIX = "_meta.json"
+DEBUG_CAPTURE_KIND = "_preview_"
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +18,7 @@ class DebugCaptureSummary:
     """表示單筆 preview debug capture 的摘要資訊。"""
 
     capture_id: str
+    site_name: str
     capture_scope: str
     captured_at_utc: datetime | None
     seed_url: str
@@ -45,19 +46,23 @@ class DebugCaptureClearResult:
     failed_paths: tuple[str, ...]
 
 
-def list_debug_captures(debug_dir: str | Path = Path("debug")) -> tuple[DebugCaptureSummary, ...]:
+def list_debug_captures(
+    debug_dir: str | Path = Path("debug"),
+    *,
+    site_name: str | None = None,
+) -> tuple[DebugCaptureSummary, ...]:
     """列出目前 debug 目錄內所有可辨識的 preview capture。"""
     debug_path = Path(debug_dir)
     if not debug_path.exists():
         return ()
 
     summaries: list[DebugCaptureSummary] = []
-    for meta_path in sorted(debug_path.glob(f"{DEBUG_CAPTURE_PREFIX}*{DEBUG_CAPTURE_META_SUFFIX}")):
+    for meta_path in sorted(debug_path.glob(f"*{DEBUG_CAPTURE_META_SUFFIX}")):
         capture_id = _capture_id_from_meta_path(meta_path)
-        if capture_id is None or capture_id == "last":
+        if capture_id is None or _is_latest_capture_id(capture_id):
             continue
         summary = _load_capture_summary(meta_path)
-        if summary is not None:
+        if summary is not None and (site_name is None or summary.site_name == site_name):
             summaries.append(summary)
 
     summaries.sort(
@@ -72,9 +77,11 @@ def list_debug_captures(debug_dir: str | Path = Path("debug")) -> tuple[DebugCap
 
 def load_latest_debug_capture(
     debug_dir: str | Path = Path("debug"),
+    *,
+    site_name: str | None = None,
 ) -> DebugCaptureDetail | None:
     """讀取最新一筆 preview debug capture。"""
-    captures = list_debug_captures(debug_dir)
+    captures = list_debug_captures(debug_dir, site_name=site_name)
     if not captures:
         return None
     return load_debug_capture(captures[0].capture_id, debug_dir)
@@ -109,6 +116,8 @@ def load_debug_capture(
 
 def clear_debug_captures(
     debug_dir: str | Path = Path("debug"),
+    *,
+    site_name: str | None = None,
 ) -> DebugCaptureClearResult:
     """清空目前 debug 目錄內所有 preview capture 檔案。"""
     debug_path = Path(debug_dir)
@@ -117,12 +126,7 @@ def clear_debug_captures(
 
     removed_count = 0
     failed_paths: list[str] = []
-    patterns = (
-        f"{DEBUG_CAPTURE_PREFIX}*.html",
-        f"{DEBUG_CAPTURE_PREFIX}*{DEBUG_CAPTURE_META_SUFFIX}",
-        f"{DEBUG_CAPTURE_PREFIX}last.html",
-        f"{DEBUG_CAPTURE_PREFIX}last_meta.json",
-    )
+    patterns = _debug_capture_clear_patterns(site_name)
     for pattern in patterns:
         for file_path in debug_path.glob(pattern):
             try:
@@ -156,9 +160,13 @@ def _load_capture_summary(meta_path: Path) -> DebugCaptureSummary | None:
     capture_id = _capture_id_from_meta_path(meta_path)
     if capture_id is None:
         return None
+    site_name = _site_name_from_capture_id(capture_id)
+    if site_name is None:
+        return None
 
     return DebugCaptureSummary(
         capture_id=capture_id,
+        site_name=str(raw_metadata.get("site_name") or site_name),
         capture_scope=str(raw_metadata.get("capture_scope", "preview")),
         captured_at_utc=_parse_optional_datetime(raw_metadata.get("captured_at_utc")),
         seed_url=seed_url,
@@ -179,7 +187,32 @@ def _capture_id_from_meta_path(meta_path: Path) -> str | None:
     file_name = meta_path.name
     if not file_name.endswith(DEBUG_CAPTURE_META_SUFFIX):
         return None
-    return file_name[: -len(DEBUG_CAPTURE_META_SUFFIX)]
+    capture_id = file_name[: -len(DEBUG_CAPTURE_META_SUFFIX)]
+    if _site_name_from_capture_id(capture_id) is None:
+        return None
+    return capture_id
+
+
+def _site_name_from_capture_id(capture_id: str) -> str | None:
+    """從 site-scoped capture id 解析站點名稱。"""
+    site_name, separator, _suffix = capture_id.partition(DEBUG_CAPTURE_KIND)
+    if separator != DEBUG_CAPTURE_KIND or not site_name:
+        return None
+    return site_name
+
+
+def _is_latest_capture_id(capture_id: str) -> bool:
+    """判斷 capture id 是否為某站點的 latest 指標檔。"""
+    return capture_id.endswith(f"{DEBUG_CAPTURE_KIND}last")
+
+
+def _debug_capture_clear_patterns(site_name: str | None) -> tuple[str, ...]:
+    """依 site filter 建立清空 preview capture 時使用的檔名模式。"""
+    site_prefix = f"{site_name}{DEBUG_CAPTURE_KIND}" if site_name else f"*{DEBUG_CAPTURE_KIND}"
+    return (
+        f"{site_prefix}*.html",
+        f"{site_prefix}*{DEBUG_CAPTURE_META_SUFFIX}",
+    )
 
 
 def _parse_optional_datetime(raw_value: object) -> datetime | None:

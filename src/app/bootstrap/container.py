@@ -11,6 +11,7 @@ from app.application.chrome_tab_preview import ChromeTabPreviewService
 from app.application.notification_channel_test import NotificationChannelTestService
 from app.application.preview_guard import PreviewAttemptGuard
 from app.application.watch_editor import WatchEditorService
+from app.application.watch_lifecycle import WatchLifecycleCoordinator
 from app.infrastructure.browser import ChromeCdpHtmlFetcher
 from app.infrastructure.db import (
     SqliteAppSettingsRepository,
@@ -38,6 +39,7 @@ class AppContainer:
     app_settings_service: AppSettingsService
     notification_channel_test_service: NotificationChannelTestService
     watch_editor_service: WatchEditorService
+    watch_lifecycle_coordinator: WatchLifecycleCoordinator
     chrome_tab_preview_service: ChromeTabPreviewService
     chrome_cdp_fetcher: ChromeCdpHtmlFetcher
     preview_attempt_guard: PreviewAttemptGuard
@@ -89,6 +91,12 @@ def build_app_container(db_path: str | Path | None = None) -> AppContainer:
         chrome_fetcher=chrome_cdp_fetcher,
         app_settings_service=app_settings_service,
     )
+    watch_lifecycle_coordinator = WatchLifecycleCoordinator(
+        watch_editor_service=watch_editor_service,
+        watch_item_repository=watch_item_repository,
+        runtime_repository=runtime_repository,
+        monitor_runtime=monitor_runtime,
+    )
 
     return AppContainer(
         instance_id=instance_id,
@@ -100,6 +108,7 @@ def build_app_container(db_path: str | Path | None = None) -> AppContainer:
         app_settings_service=app_settings_service,
         notification_channel_test_service=notification_channel_test_service,
         watch_editor_service=watch_editor_service,
+        watch_lifecycle_coordinator=watch_lifecycle_coordinator,
         chrome_tab_preview_service=chrome_tab_preview_service,
         chrome_cdp_fetcher=chrome_cdp_fetcher,
         preview_attempt_guard=PreviewAttemptGuard(),

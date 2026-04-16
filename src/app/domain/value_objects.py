@@ -40,6 +40,20 @@ class SearchDraft:
 
 
 @dataclass(frozen=True, slots=True)
+class WatchTargetIdentity:
+    """表示判斷 watch 是否重複時使用的穩定目標身分。"""
+
+    site: str
+    hotel_id: str
+    room_id: str
+    plan_id: str
+    check_in_date: date
+    check_out_date: date
+    people_count: int
+    room_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class WatchTarget:
     """表示已 canonicalize、可交給 monitor 使用的正式目標。"""
 
@@ -75,15 +89,15 @@ class WatchTarget:
         """回傳 watch target 的住宿晚數。"""
         return (self.check_out_date - self.check_in_date).days
 
-    def identity_key(self) -> tuple[str, str, str, str, date, date, int, int]:
+    def identity_key(self) -> WatchTargetIdentity:
         """回傳不含顯示語境欄位的穩定 identity key。"""
-        return (
-            self.site,
-            self.hotel_id,
-            self.room_id,
-            self.plan_id,
-            self.check_in_date,
-            self.check_out_date,
-            self.people_count,
-            self.room_count,
+        return WatchTargetIdentity(
+            site=self.site,
+            hotel_id=self.hotel_id,
+            room_id=self.room_id,
+            plan_id=self.plan_id,
+            check_in_date=self.check_in_date,
+            check_out_date=self.check_out_date,
+            people_count=self.people_count,
+            room_count=self.room_count,
         )

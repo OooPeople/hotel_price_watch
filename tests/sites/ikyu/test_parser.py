@@ -5,7 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from app.domain.enums import SourceKind
-from app.domain.value_objects import SearchDraft, WatchTarget
+from app.domain.value_objects import SearchDraft, WatchTarget, WatchTargetIdentity
 from app.sites.base import CandidateSelection
 from app.sites.ikyu import IkyuAdapter
 from app.sites.ikyu.client import HtmlFetchResult, IkyuHtmlClient
@@ -286,15 +286,15 @@ def test_adapter_resolve_watch_target_builds_canonical_target() -> None:
         selection=CandidateSelection(room_id=" room-1 ", plan_id=" plan-1 "),
     )
 
-    assert target.identity_key() == (
-        "ikyu",
-        "hotel-123",
-        "room-1",
-        "plan-1",
-        date(2026, 5, 1),
-        date(2026, 5, 3),
-        2,
-        1,
+    assert target.identity_key() == WatchTargetIdentity(
+        site="ikyu",
+        hotel_id="hotel-123",
+        room_id="room-1",
+        plan_id="plan-1",
+        check_in_date=date(2026, 5, 1),
+        check_out_date=date(2026, 5, 3),
+        people_count=2,
+        room_count=1,
     )
 
 
@@ -376,6 +376,7 @@ def test_adapter_saves_debug_capture_when_candidate_parse_is_empty(
     metadata = json.loads(
         (tmp_path / "debug" / "ikyu_preview_last_meta.json").read_text(encoding="utf-8")
     )
+    assert metadata["site_name"] == "ikyu"
     assert metadata["seed_url"] == "https://www.ikyu.com/zh-tw/00082173/?cid=20260918&si=1&ppc=2&rc=1"
     assert any(diagnostic.stage == "debug_capture" for diagnostic in bundle.diagnostics)
 

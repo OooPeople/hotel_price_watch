@@ -250,6 +250,16 @@ class ChromeDrivenMonitorRuntime:
             error_code=error_code,
             consecutive_failures=consecutive_failures,
         )
+        current_control_watch = await asyncio.to_thread(
+            self._watch_item_repository.get,
+            watch_item_id,
+        )
+        if (
+            current_control_watch is None
+            or not current_control_watch.enabled
+            or current_control_watch.paused_reason is not None
+        ):
+            return
 
         check_result = compare_snapshots(
             checked_at=checked_at,

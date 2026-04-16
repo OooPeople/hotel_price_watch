@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
-
-from datetime import UTC, datetime
 
 from app.domain import derive_watch_runtime_state
 from app.domain.entities import RuntimeStateEvent, WatchItem
@@ -152,10 +151,6 @@ class WatchEditorService:
     def enable_watch_item(self, watch_item_id: str) -> WatchItem:
         """啟用既有 watch item，並清除人工停用或暫停狀態。"""
         watch_item = self._get_watch_item_or_raise(watch_item_id)
-        previous_state = derive_watch_runtime_state(
-            watch_item=watch_item,
-            latest_snapshot=None,
-        )
         updated_watch_item = replace(
             watch_item,
             enabled=True,

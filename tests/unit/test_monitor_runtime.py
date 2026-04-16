@@ -230,6 +230,39 @@ class _BlockingChromeFetcher(_FakeChromeFetcher):
         )
 
 
+class _PausingChromeFetcher(_FakeChromeFetcher):
+    """在刷新途中暫停 watch，模擬使用者於 in-flight check 期間操作控制面。"""
+
+    def __init__(
+        self,
+        *,
+        watch_repository: SqliteWatchItemRepository,
+        watch_item_id: str,
+    ) -> None:
+        super().__init__()
+        self._watch_repository = watch_repository
+        self._watch_item_id = watch_item_id
+
+    def refresh_capture_for_url(
+        self,
+        *,
+        expected_url: str,
+        fallback_url: str | None = None,
+        preferred_tab_id: str | None = None,
+    ) -> ChromeTabCapture:
+        """先暫停 watch，再回傳正常 capture，驗證 runtime 會丟棄結果。"""
+        watch_item = self._watch_repository.get(self._watch_item_id)
+        assert watch_item is not None
+        self._watch_repository.save(
+            replace(watch_item, enabled=True, paused_reason="manually_paused")
+        )
+        return super().refresh_capture_for_url(
+            expected_url=expected_url,
+            fallback_url=fallback_url,
+            preferred_tab_id=preferred_tab_id,
+        )
+
+
 class _FailingRestoreChromeFetcher(_FakeChromeFetcher):
     """模擬啟動恢復階段某個分頁建立失敗。"""
 
@@ -558,6 +591,84 @@ def test_runtime_dispatches_notification_and_records_sent_status(tmp_path) -> No
     assert len(check_events) == 1
     assert check_events[0].notification_status.value == "sent"
     assert check_events[0].sent_channels == ("desktop",)
+
+
+def test_runtime_discards_result_when_watch_is_paused_midflight(tmp_path) -> None:
+    """in-flight 檢查期間若 watch 被暫停，不應寫入新結果或發送通知。"""
+    database = SqliteDatabase(tmp_path / "watcher.db")
+    database.initialize()
+    watch_repository = SqliteWatchItemRepository(database)
+    runtime_repository = SqliteRuntimeRepository(database)
+    settings_repository = SqliteAppSettingsRepository(database)
+    app_settings_service = AppSettingsService(settings_repository)
+
+    watch_item = WatchItem(
+        id="watch-runtime-midflight-pause",
+        target=WatchTarget(
+            site="ikyu",
+            hotel_id="00082173",
+            room_id="10191605",
+            plan_id="11035620",
+            check_in_date=date(2026, 9, 18),
+            check_out_date=date(2026, 9, 19),
+            people_count=2,
+            room_count=1,
+        ),
+        hotel_name="Dormy Inn",
+        room_name="standard room",
+        plan_name="room only; 2 adults",
+        canonical_url=(
+            "https://www.ikyu.com/zh-tw/00082173/"
+            "?adc=1&cid=20260918&discsort=1&lc=1&pln=11035620"
+            "&ppc=2&rc=1&rm=10191605&si=1&st=1"
+        ),
+        notification_rule=RuleLeaf(
+            kind=NotificationLeafKind.BELOW_TARGET_PRICE,
+            target_price=Decimal("23000"),
+        ),
+        scheduler_interval_seconds=600,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    watch_repository.save(watch_item)
+    watch_repository.save_draft(
+        watch_item.id,
+        _build_runtime_draft(watch_item.canonical_url),
+    )
+    runtime_repository.save_latest_check_snapshot(
+        _build_latest_snapshot(
+            watch_item_id=watch_item.id,
+            amount=Decimal("25000"),
+        )
+    )
+
+    site_registry = SiteRegistry()
+    site_registry.register(_FakeRuntimeAdapter())
+    notifier = _RecordingNotifier()
+    runtime = ChromeDrivenMonitorRuntime(
+        watch_item_repository=watch_repository,
+        runtime_repository=runtime_repository,
+        site_registry=site_registry,
+        chrome_fetcher=_PausingChromeFetcher(
+            watch_repository=watch_repository,
+            watch_item_id=watch_item.id,
+        ),
+        app_settings_service=app_settings_service,
+        notifier_factory=lambda settings: _build_notifiers_for_test(settings, notifier),
+    )
+
+    import asyncio
+
+    asyncio.run(runtime.run_watch_check_once(watch_item.id))
+
+    assert notifier.messages == []
+    assert runtime_repository.list_check_events(watch_item.id) == []
+    latest_snapshot = runtime_repository.get_latest_check_snapshot(watch_item.id)
+    assert latest_snapshot is not None
+    assert latest_snapshot.normalized_price_amount == Decimal("25000")
+    paused_watch = watch_repository.get(watch_item.id)
+    assert paused_watch is not None
+    assert paused_watch.paused_reason == "manually_paused"
 
 
 def test_runtime_notification_throttle_persists_across_runtime_restart(tmp_path) -> None:
@@ -1633,7 +1744,13 @@ def test_runtime_loop_processes_multiple_active_watches(tmp_path) -> None:
         """啟動 background loop，等待多筆 watch 都被處理。"""
         await runtime.start()
         try:
-            await asyncio.sleep(0.08)
+            for _ in range(50):
+                if (
+                    runtime_repository.get_latest_check_snapshot(watch_a.id) is not None
+                    and runtime_repository.get_latest_check_snapshot(watch_b.id) is not None
+                ):
+                    break
+                await asyncio.sleep(0.01)
         finally:
             await runtime.stop()
 

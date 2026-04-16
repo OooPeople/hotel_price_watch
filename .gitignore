@@ -1,4 +1,5 @@
 __pycache__/
+.codex/
 .pytest_cache/
 .pytest_tmp*/
 .pytest_run*/
@@ -32,4 +33,4 @@ data/browser-profile-debug/
 data/browser-profile-stealth-debug/
 data/app_instance.lock
 
-review.md
+review*

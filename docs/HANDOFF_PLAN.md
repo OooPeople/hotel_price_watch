@@ -23,6 +23,7 @@
 - 從目前專用 Chrome 分頁選擇 `ikyu` 頁面建立 watch
 - Chrome 分頁清單會在清單頁直接標示已建立的精確 watch
 - watch 列表、刪除、啟用 / 停用 / 暫停 / 恢復 / 手動立即檢查
+- 手動控制與立即檢查已透過 watch lifecycle coordinator 收斂到單一入口
 - 單一 watch 的通知規則設定
 - 全域通知通道設定頁與測試通知
 - 首頁與 watch 詳細頁的局部 polling 更新
@@ -63,6 +64,7 @@
 
 - scheduler 只同步 `enabled` 且未 `paused` 的 watch
 - 背景排程與 `check-now` 共用 per-watch 互斥
+- in-flight check 在送通知與寫入結果前會重新確認控制狀態；若中途被 pause / disable，該次結果會被丟棄
 - 單次 check 以單一 transaction 寫入：
   - `latest_check_snapshots`
   - `check_events`
@@ -137,6 +139,12 @@
 - 睡眠恢復後補掃會尊重 backoff 視窗
 - 403 暫停後手動恢復，成功檢查會清掉錯誤狀態
 - 啟動恢復時多個 watch 不會共用同一個分頁依序跳轉
+- 手動控制與 `check-now` 已走 lifecycle coordinator
+- in-flight check 中途被 pause / disable 時不會繼續寫入新結果或發通知
+- preview cooldown 已改成 site-scoped，未來新增第二站時不會因單站被阻擋而冷卻所有站點 preview
+- preview debug capture 已補 `site_name` metadata 與 site filter，reader 不再只能辨識 `ikyu_preview_*`
+- `ikyu` browser page matching 已集中到 `sites/ikyu/browser_matching.py`
+- watch target identity 已改為具名 `WatchTargetIdentity` value object
 
 ## 4. 目前主要風險
 
@@ -148,14 +156,28 @@
 - 長時間 blocked page / recover 的歷史與狀態呈現檢查
 - 長時間背景運作下，首頁與詳細頁的 runtime 摘要是否仍準確
 
-### 4.2 `main.py` 與 `web/views.py` 偏大
+### 4.2 第二站前仍需收斂 site-boundary
+
+目前 `ikyu` 專屬邏輯仍存在於部分 generic 層：
+
+- web 層 existing-watch match helper
+
+補充：
+
+- preview cooldown 已先改成 site-scoped
+- preview debug capture reader 已支援 site filter，但 browser strategy 仍需在第二站前收斂
+- browser page matching 規則已集中到站點模組，但 `ChromeCdpHtmlFetcher` 仍以 `ikyu` 為單站假設
+
+第二站前應先把這些行為移往 site capability / browser strategy，而不是直接拆 `main.py` 或 `views.py`。
+
+### 4.3 `main.py` 與 `web/views.py` 偏大
 
 - `main.py` 目前混合 route、來源驗證與部分 web orchestration
 - `web/views.py` 目前承載過多 HTML 組裝責任
 
 這不是第一層正確性風險，但已值得安排拆分。
 
-### 4.3 `ChromeCdpHtmlFetcher` 偏大
+### 4.4 `ChromeCdpHtmlFetcher` 偏大
 
 目前它同時處理：
 
@@ -167,7 +189,7 @@
 
 功能上已可用，但後續再擴容易變成大型維護點。
 
-### 4.4 state ownership 仍需持續守住
+### 4.5 state ownership 仍需持續守住
 
 目前 `watch_item`、`latest_check_snapshot`、`notification_state`、`debug_artifacts` 已分離，但仍需注意：
 
@@ -175,7 +197,7 @@
 - 不要讓通知狀態、最新狀態、debug 摘要彼此重疊
 - 若之後補更完整的 blocked / recover transition history，應優先擴充事件模型，而不是再增加零散旗標
 
-### 4.5 schema 版本已升到 6
+### 4.6 schema 版本已升到 6
 
 目前 schema 已包含：
 
@@ -210,6 +232,7 @@
 
 - 拆成數個 router 模組
 - 保留 `main.py` 只做 app 建立、lifespan、router 掛載
+- browser matching 與 target identity 已先收斂，可避免拆 router 時混入站點比對規則重構
 
 建議切入：
 

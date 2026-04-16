@@ -10,7 +10,13 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+
+from app.sites.ikyu.browser_matching import (
+    extract_ikyu_browser_page_signature,
+    is_confident_ikyu_page_match,
+    is_ikyu_page_url,
+    score_ikyu_browser_page,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +115,7 @@ class ChromeCdpHtmlFetcher:
                 if page.is_closed():
                     continue
                 summary = self._build_tab_summary(page=page)
-                if _is_ikyu_page_url(summary.url):
+                if is_ikyu_page_url(summary.url):
                     tabs.append(summary)
             return tuple(tabs)
         finally:
@@ -349,7 +355,7 @@ class ChromeCdpHtmlFetcher:
         best_page = None
         best_score = -1
         best_signature = None
-        expected_signature = _extract_ikyu_match_signature(expected_url)
+        expected_signature = extract_ikyu_browser_page_signature(expected_url)
         excluded_ids = set(excluded_tab_ids)
         for page in context.pages:
             if page.is_closed():
@@ -360,7 +366,7 @@ class ChromeCdpHtmlFetcher:
             if score > best_score:
                 best_page = page
                 best_score = score
-                best_signature = _extract_ikyu_match_signature(page.url)
+                best_signature = extract_ikyu_browser_page_signature(page.url)
         if (
             best_score <= 0
             or best_signature is None
@@ -473,94 +479,26 @@ class ChromeCdpHtmlFetcher:
 
     def _score_page(self, current_url: str, *, expected_url: str) -> int:
         """依 URL 相似度為目前分頁評分，優先使用更接近目標飯店頁的分頁。"""
-        current = urlparse(current_url)
-        expected = urlparse(expected_url)
-        profile_start = urlparse(self.profile_start_url)
-        current_signature = _extract_ikyu_match_signature(current_url)
-        expected_signature = _extract_ikyu_match_signature(expected_url)
-
-        if current_url in {"about:blank", ""}:
-            return 1
-        if not current.scheme or not current.netloc:
-            return 0
-        if current.netloc != expected.netloc:
-            return 0
-        if current.path.rstrip("/") == profile_start.path.rstrip("/"):
-            return 1
-        if current_url == expected_url:
-            return 100
-
-        score = 0
-        if current.path.rstrip("/") == expected.path.rstrip("/"):
-            score += 20
-        elif current.path.rstrip("/").startswith(expected.path.rstrip("/")):
-            score += 10
-
-        if (
-            current_signature.hotel_id is not None
-            and current_signature.hotel_id == expected_signature.hotel_id
-        ):
-            score += 10
-        if (
-            current_signature.room_id is not None
-            and current_signature.room_id == expected_signature.room_id
-        ):
-            score += 25
-        if (
-            current_signature.plan_id is not None
-            and current_signature.plan_id == expected_signature.plan_id
-        ):
-            score += 25
-        if (
-            current_signature.check_in is not None
-            and current_signature.check_in == expected_signature.check_in
-        ):
-            score += 8
-        if (
-            current_signature.people_count is not None
-            and current_signature.people_count == expected_signature.people_count
-        ):
-            score += 5
-        if (
-            current_signature.room_count is not None
-            and current_signature.room_count == expected_signature.room_count
-        ):
-            score += 5
-
-        if score > 0:
-            return score
-        if current.path.rstrip("/") == expected.path.rstrip("/"):
-            return 3
-        if current.path.rstrip("/").startswith(expected.path.rstrip("/")):
-            return 2
-        return 1
+        return score_ikyu_browser_page(
+            current_url,
+            expected_url=expected_url,
+            profile_start_url=self.profile_start_url,
+        )
 
     def _is_confident_page_match(
         self,
         *,
-        current_signature: _IkyuMatchSignature,
-        expected_signature: _IkyuMatchSignature,
+        current_signature,
+        expected_signature,
         score: int,
     ) -> bool:
         """判斷目前分頁是否足夠接近目標條件，值得沿用而不是保守 fallback。"""
-        expected_has_precise_target = (
-            expected_signature.room_id is not None or expected_signature.plan_id is not None
+        return is_confident_ikyu_page_match(
+            current_signature=current_signature,
+            expected_signature=expected_signature,
+            score=score,
+            minimum_score=self.minimum_confident_match_score,
         )
-        if not expected_has_precise_target:
-            return score > 0
-
-        if score < self.minimum_confident_match_score:
-            return False
-
-        room_matches = (
-            current_signature.room_id is not None
-            and current_signature.room_id == expected_signature.room_id
-        )
-        plan_matches = (
-            current_signature.plan_id is not None
-            and current_signature.plan_id == expected_signature.plan_id
-        )
-        return room_matches or plan_matches
 
     def _looks_like_ready_ikyu_page(self, *, current_url: str, expected_url: str) -> bool:
         """判斷目前頁面是否已離開首頁並進到與目標飯店相符的 `ikyu` 頁面。"""
@@ -663,49 +601,3 @@ def _prepare_chrome_profile(user_data_dir: Path) -> None:
             json.dumps(local_state),
             encoding="utf-8",
         )
-
-
-def _is_ikyu_page_url(url: str) -> bool:
-    """判斷目前分頁是否為 `ikyu` 網站頁面。"""
-    parsed = urlparse(url)
-    return parsed.scheme in {"http", "https"} and parsed.netloc.endswith("ikyu.com")
-
-
-@dataclass(frozen=True, slots=True)
-class _IkyuMatchSignature:
-    """整理 ikyu URL 中可用於分頁比對的關鍵識別訊號。"""
-
-    hotel_id: str | None
-    room_id: str | None
-    plan_id: str | None
-    check_in: str | None
-    people_count: str | None
-    room_count: str | None
-
-
-def _extract_ikyu_match_signature(url: str) -> _IkyuMatchSignature:
-    """從 ikyu URL 萃取房型、方案與查詢條件，供分頁穩定比對使用。"""
-    parsed = urlparse(url)
-    query = parse_qs(parsed.query)
-    path_segments = [segment for segment in parsed.path.split("/") if segment]
-    hotel_id = path_segments[-1] if path_segments else None
-    if hotel_id is not None and not hotel_id.isdigit():
-        hotel_id = None
-
-    return _IkyuMatchSignature(
-        hotel_id=hotel_id,
-        room_id=_first_query_value(query, "rm"),
-        plan_id=_first_query_value(query, "pln"),
-        check_in=_first_query_value(query, "cid"),
-        people_count=_first_query_value(query, "ppc"),
-        room_count=_first_query_value(query, "rc"),
-    )
-
-
-def _first_query_value(query: dict[str, list[str]], key: str) -> str | None:
-    """安全取出 query string 第一個值，避免空字串與缺值混淆。"""
-    values = query.get(key)
-    if not values:
-        return None
-    value = values[0].strip()
-    return value or None

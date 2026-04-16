@@ -198,6 +198,8 @@ V1 正式主線下，`SiteAdapter` 只需要支援 browser-driven 路徑。
 4. 刷新頁面並建立 snapshot
 5. 單一 transaction 寫入最新狀態、歷史、通知狀態與 debug 摘要
 6. 依通知規則與通道設定發送通知
+7. 手動控制與 `check-now` 由 watch lifecycle coordinator 統一協調
+8. in-flight check 提交前會重新確認控制狀態；中途被 pause / disable 的結果不再寫入或通知
 
 ## 8. 測試策略
 
@@ -233,15 +235,36 @@ V1 正式主線下，`SiteAdapter` 只需要支援 browser-driven 路徑。
 - 通知通道冷卻跨 runtime 重啟保留
 - 單一通知通道失敗不會中止整次 check
 - 連續 timeout 會遞增 backoff，且 backoff 後成功會清掉 failure 狀態
+- watch lifecycle coordinator 已接上手動控制與 `check-now`
+- in-flight check 中途被 pause / disable 時會丟棄本次結果
+- preview cooldown 已改成 site-scoped，避免未來多站共用同一個冷卻狀態
+- preview debug capture reader 已支援 site metadata 與 site filter
+- `ikyu` browser page matching 已集中到站點模組
+- watch target identity 已改為具名 `WatchTargetIdentity` value object
 
-### 9.2 `main.py` 與 `web/views.py` 偏大
+### 9.2 第二站前需先收斂 site-boundary
+
+目前仍有 `ikyu` 專屬邏輯留在 generic 層，例如：
+
+- web 層 existing-watch URL signature helper
+- `ChromeCdpHtmlFetcher` 仍以 `ikyu` 分頁列舉與 blocked page 判定為單站假設
+
+已先完成：
+
+- preview cooldown site-scoping
+- preview debug capture site metadata 與 site filter
+- `ikyu` URL signature、page scoring 與 watch target matching 集中到 `sites/ikyu/browser_matching.py`
+
+第二站前應先抽出 site capability / browser strategy，再進行大規模拆檔。
+
+### 9.3 `main.py` 與 `web/views.py` 偏大
 
 目前功能可用，但應逐步拆分：
 
 - `main.py` -> app 建立 + router 模組
 - `web/views.py` -> 依頁面類型拆 render helper
 
-### 9.3 `ChromeCdpHtmlFetcher` 偏大
+### 9.4 `ChromeCdpHtmlFetcher` 偏大
 
 應逐步把：
 
@@ -252,7 +275,7 @@ V1 正式主線下，`SiteAdapter` 只需要支援 browser-driven 路徑。
 
 拆成較清楚的責任區塊。
 
-### 9.4 state ownership 仍需持續守住
+### 9.5 state ownership 仍需持續守住
 
 後續若新增功能，需避免：
 
@@ -260,7 +283,7 @@ V1 正式主線下，`SiteAdapter` 只需要支援 browser-driven 路徑。
 - 讓最新狀態、通知狀態、debug 摘要互相重疊
 - 讓頁面自行用多個 primitive 欄位重新解讀 blocked / paused / recover 狀態
 
-### 9.5 schema 已進入第 6 版
+### 9.6 schema 已進入第 6 版
 
 目前 schema 已包含：
 

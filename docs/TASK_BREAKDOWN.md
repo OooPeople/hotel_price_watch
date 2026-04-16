@@ -93,6 +93,12 @@
 - o runtime 啟動時會低速恢復 enabled 且未 paused 的 watch 分頁，輪詢時仍保留缺頁補建
 - o 已引入正式 `WatchRuntimeState`，GUI 不再靠零散欄位拼湊目前狀態語意
 - o 已補 server-side invariant：輪詢秒數下限、正數目標價、通知 URL 必須為合法 `http/https`
+- o 已建立 watch lifecycle coordinator，讓 pause / disable / resume / check-now 走單一協調入口
+- o 已補 in-flight check 提交前控制狀態驗證，watch 中途被 pause / disable 時不寫入新結果或發通知
+- o preview cooldown 已改成 site-scoped，避免未來多站互相冷卻
+- o preview debug capture 已補 site metadata 與 site filter，避免第二站後 debug reader 只認 `ikyu`
+- o `ikyu` browser page matching 已集中到站點模組，`main.py` 與 CDP fetcher 不再各自維護一份 URL signature 規則
+- o `WatchTargetIdentity` 已改為具名 value object，不再用裸 tuple 表示 watch target identity
 
 ### Milestone 6.5 尚未完成
 
@@ -114,6 +120,7 @@
 
 ## 第二層整理（非第一線風險）
 
+- 在第二站前，補更正式的 site capability / browser strategy 契約；目前 `ikyu` browser matching 已先集中，但 CDP fetcher 仍是單站假設
 - 拆 `main.py`
 - 拆 `web/views.py`
 - 收斂 `ChromeCdpHtmlFetcher`
@@ -122,9 +129,6 @@
 ## 立即下一步
 
 - 補更完整的長時間運作、節流與重試行為驗證
+- 開始拆 `main.py`：先拆 router / web orchestration，保留 app 建立與 lifespan 在 entrypoint
 - 視結果決定是否再做一輪整體 review
-- 若高風險項沒有新增，再進第二層結構整理：
-  - 拆 `main.py`
-  - 拆 `web/views.py`
-  - 收斂 `ChromeCdpHtmlFetcher`
-  - 整理 state ownership
+- 若拆 `main.py` 後沒有新增高風險項，再拆 `web/views.py`、收斂 `ChromeCdpHtmlFetcher`、整理 state ownership
