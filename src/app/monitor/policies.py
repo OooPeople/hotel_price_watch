@@ -18,14 +18,28 @@ from app.domain.entities import (
     WatchItem,
 )
 from app.domain.enums import CheckErrorCode, NotificationDeliveryStatus
+from app.domain.watch_lifecycle_state_machine import (
+    LifecycleSchedulerAction,
+    WatchLifecycleCommand,
+    WatchLifecycleContext,
+    WatchLifecycleDecision,
+    decide_watch_lifecycle,
+)
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimeControlRecommendation:
     """描述 runtime 本次檢查後建議套用的 control state 變更。"""
 
-    watch_item: WatchItem | None = None
+    lifecycle_decision: WatchLifecycleDecision | None = None
     remove_from_scheduler: bool = False
+
+    @property
+    def watch_item(self) -> WatchItem | None:
+        """回傳 state machine 建議套用的 watch control state。"""
+        if self.lifecycle_decision is None:
+            return None
+        return self.lifecycle_decision.watch_item
 
 
 def decide_error_handling(
@@ -82,25 +96,36 @@ def should_trigger_wakeup_rescan(
 def build_runtime_control_recommendation(
     *,
     watch_item: WatchItem,
+    latest_snapshot: LatestCheckSnapshot | None,
+    next_snapshot: LatestCheckSnapshot,
     error_handling: ErrorHandlingDecision,
     error_code: CheckErrorCode | None,
+    occurred_at: datetime,
+    detail_text: str | None = None,
 ) -> RuntimeControlRecommendation:
     """依錯誤處理決策建立 runtime control state 建議。"""
     if not error_handling.should_pause:
         return RuntimeControlRecommendation()
 
-    paused_reason = (
-        error_handling.paused_reason.value
-        if error_handling.paused_reason is not None
-        else error_code.value if error_code is not None else "paused"
+    if (
+        error_handling.paused_reason is not CheckErrorCode.FORBIDDEN_403
+        and error_code is not CheckErrorCode.FORBIDDEN_403
+    ):
+        return RuntimeControlRecommendation()
+
+    decision = decide_watch_lifecycle(
+        context=WatchLifecycleContext(
+            watch_item=watch_item,
+            latest_snapshot=latest_snapshot,
+            next_snapshot=next_snapshot,
+        ),
+        command=WatchLifecycleCommand.RUNTIME_PAUSE_BLOCKED,
+        occurred_at=occurred_at,
+        detail_text=detail_text,
     )
     return RuntimeControlRecommendation(
-        watch_item=replace(
-            watch_item,
-            enabled=True,
-            paused_reason=paused_reason,
-        ),
-        remove_from_scheduler=True,
+        lifecycle_decision=decision,
+        remove_from_scheduler=decision.scheduler_action is LifecycleSchedulerAction.REMOVE,
     )
 
 

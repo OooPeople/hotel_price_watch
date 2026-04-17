@@ -2,36 +2,25 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
-from app.domain.entities import RuntimeStateEvent, WatchItem
-from app.domain.enums import RuntimeStateEventKind, WatchRuntimeState
-from app.domain.watch_runtime_state import (
-    derive_watch_runtime_state,
+from app.domain.watch_lifecycle_state_machine import (
+    LifecycleSchedulerAction,
+    WatchLifecycleCommand,
+    WatchLifecycleContext,
+    WatchLifecycleDecision,
+    WatchLifecycleTransitionResult,
+    decide_watch_lifecycle,
 )
-from app.infrastructure.db.repositories import SqliteRuntimeRepository, SqliteWatchItemRepository
+from app.infrastructure.db.repositories import (
+    SqliteRuntimeRepository,
+    SqliteWatchItemRepository,
+)
 from app.monitor.runtime import ChromeDrivenMonitorRuntime
 
 
 class WatchLifecycleError(RuntimeError):
     """表示 watch lifecycle 命令目前不可執行。"""
-
-
-@dataclass(frozen=True, slots=True)
-class WatchLifecycleTransitionResult:
-    """描述單次 watch lifecycle transition 的輸出結果。"""
-
-    watch_item: WatchItem
-    event: RuntimeStateEvent
-
-
-@dataclass(frozen=True, slots=True)
-class WatchControlSnapshot:
-    """保存判斷 control command 時需要的 watch 與目前 runtime state。"""
-
-    watch_item: WatchItem
-    runtime_state: WatchRuntimeState
 
 
 class WatchLifecycleCoordinator:
@@ -50,107 +39,96 @@ class WatchLifecycleCoordinator:
 
     def enable_watch(self, watch_item_id: str):
         """啟用 watch，並由 lifecycle owner 記錄正式 transition event。"""
-        return self._apply_manual_transition(
+        return self._apply_transition_command(
             watch_item_id=watch_item_id,
-            enabled=True,
-            paused_reason=None,
-            event_kind=RuntimeStateEventKind.MANUAL_ENABLE,
+            command=WatchLifecycleCommand.MANUAL_ENABLE,
         ).watch_item
 
     def disable_watch(self, watch_item_id: str):
         """停用 watch，阻止後續排程與手動立即檢查。"""
-        return self._apply_manual_transition(
+        return self._apply_transition_command(
             watch_item_id=watch_item_id,
-            enabled=False,
-            paused_reason="manually_disabled",
-            event_kind=RuntimeStateEventKind.MANUAL_DISABLE,
+            command=WatchLifecycleCommand.MANUAL_DISABLE,
         ).watch_item
 
     def pause_watch(self, watch_item_id: str):
         """暫停 watch，阻止後續排程與手動立即檢查。"""
-        return self._apply_manual_transition(
+        return self._apply_transition_command(
             watch_item_id=watch_item_id,
-            enabled=True,
-            paused_reason="manually_paused",
-            event_kind=RuntimeStateEventKind.MANUAL_PAUSE,
+            command=WatchLifecycleCommand.MANUAL_PAUSE,
         ).watch_item
 
     def resume_watch(self, watch_item_id: str):
         """恢復 watch，使其重新進入 runtime 可檢查狀態。"""
-        return self._apply_manual_transition(
+        return self._apply_transition_command(
             watch_item_id=watch_item_id,
-            enabled=True,
-            paused_reason=None,
-            event_kind=RuntimeStateEventKind.MANUAL_RESUME,
+            command=WatchLifecycleCommand.MANUAL_RESUME,
         ).watch_item
 
     async def request_check_now(self, watch_item_id: str) -> None:
         """檢查 watch 是否可執行後，才轉交 runtime 立即檢查。"""
-        control_snapshot = self._get_control_snapshot(watch_item_id)
-        self._ensure_check_now_allowed(control_snapshot)
+        context = self._get_lifecycle_context(watch_item_id)
+        decision = decide_watch_lifecycle(
+            context=context,
+            command=WatchLifecycleCommand.CHECK_NOW,
+            occurred_at=datetime.now(UTC),
+        )
+        if not decision.allowed:
+            raise WatchLifecycleError(decision.rejection_reason or "watch is not checkable")
         if self._monitor_runtime is None:
             raise WatchLifecycleError("background monitor runtime is not available")
         await self._monitor_runtime.request_check_now(watch_item_id)
 
-    def _apply_manual_transition(
+    def _apply_transition_command(
         self,
         *,
         watch_item_id: str,
-        enabled: bool,
-        paused_reason: str | None,
-        event_kind: RuntimeStateEventKind,
+        command: WatchLifecycleCommand,
     ) -> WatchLifecycleTransitionResult:
         """套用人工 control transition，並由同一權威入口保存事件。"""
-        watch_item = self._watch_item_repository.get(watch_item_id)
-        if watch_item is None:
-            raise WatchLifecycleError("watch item not found")
-        latest_snapshot = self._runtime_repository.get_latest_check_snapshot(watch_item_id)
-        updated_watch_item = replace(
-            watch_item,
-            enabled=enabled,
-            paused_reason=paused_reason,
-        )
-        self._watch_item_repository.save(updated_watch_item)
-        event = RuntimeStateEvent(
-            watch_item_id=watch_item_id,
+        context = self._get_lifecycle_context(watch_item_id)
+        decision = decide_watch_lifecycle(
+            context=context,
+            command=command,
             occurred_at=datetime.now(UTC),
-            event_kind=event_kind,
-            from_state=derive_watch_runtime_state(
-                watch_item=watch_item,
-                latest_snapshot=latest_snapshot,
-            ),
-            to_state=derive_watch_runtime_state(
-                watch_item=updated_watch_item,
-                latest_snapshot=latest_snapshot,
-            ),
         )
-        self._runtime_repository.append_runtime_state_event(event)
-        return WatchLifecycleTransitionResult(
-            watch_item=updated_watch_item,
-            event=event,
-        )
+        if not decision.allowed or decision.watch_item is None:
+            raise WatchLifecycleError(
+                decision.rejection_reason or f"lifecycle command rejected: {command}"
+            )
+        return self._persist_transition_decision(decision)
 
-    def _get_control_snapshot(self, watch_item_id: str) -> WatchControlSnapshot:
-        """讀取 watch 與目前 runtime state，作為 control command 判斷依據。"""
+    def _get_lifecycle_context(self, watch_item_id: str) -> WatchLifecycleContext:
+        """讀取 state machine 判斷 transition 所需的目前狀態。"""
         watch_item = self._watch_item_repository.get(watch_item_id)
         if watch_item is None:
             raise WatchLifecycleError("watch item not found")
         latest_snapshot = self._runtime_repository.get_latest_check_snapshot(watch_item_id)
-        return WatchControlSnapshot(
+        return WatchLifecycleContext(
             watch_item=watch_item,
-            runtime_state=derive_watch_runtime_state(
-                watch_item=watch_item,
-                latest_snapshot=latest_snapshot,
-            ),
+            latest_snapshot=latest_snapshot,
         )
 
-    def _ensure_check_now_allowed(
+    def _persist_transition_decision(
         self,
-        control_snapshot: WatchControlSnapshot,
-    ) -> None:
-        """確認目前 watch control state 允許立即檢查。"""
-        watch_item = control_snapshot.watch_item
-        if not watch_item.enabled or watch_item.paused_reason is not None:
-            raise WatchLifecycleError(
-                f"watch is not checkable in state {control_snapshot.runtime_state.value}"
-            )
+        decision: WatchLifecycleDecision,
+    ) -> WatchLifecycleTransitionResult:
+        """保存 state machine decision 的 watch 更新與 runtime state event。"""
+        assert decision.watch_item is not None
+        assert decision.runtime_state_event is not None
+        self._watch_item_repository.save(decision.watch_item)
+        self._runtime_repository.append_runtime_state_event(
+            decision.runtime_state_event
+        )
+        if decision.scheduler_action is LifecycleSchedulerAction.REMOVE:
+            self._remove_from_runtime_scheduler(decision.watch_item.id)
+        return WatchLifecycleTransitionResult(
+            watch_item=decision.watch_item,
+            event=decision.runtime_state_event,
+        )
+
+    def _remove_from_runtime_scheduler(self, watch_item_id: str) -> None:
+        """依 lifecycle decision 盡量立即移除 runtime scheduler active set。"""
+        if self._monitor_runtime is None:
+            return
+        self._monitor_runtime.remove_watch_from_schedule(watch_item_id)

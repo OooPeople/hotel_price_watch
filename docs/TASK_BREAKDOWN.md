@@ -7,7 +7,7 @@
 - o V1 正式主線已收斂為「附著專用 Chrome profile + CDP attach」
 - o GUI、preview、watch CRUD、通知設定、debug captures、background runtime 已可實際操作
 - o 拆 `main.py` / `web/views.py` 前的第一輪高風險收斂已完成
-- 目前主線進入 V1.5 架構地基：先補 lifecycle late gate，再收斂多站前的 site / browser strategy 邊界，最後才拆 `main.py`
+- 目前主線進入 V1.5 架構地基：lifecycle state machine 已先落地，下一步才拆 `main.py` / `web/views.py`
 
 ## Milestone 1: 專案初始化（已完成）
 
@@ -88,11 +88,12 @@
 ## Milestone 6.7: Lifecycle Owner / Control State 深化（拆 `main.py` 前決策）
 
 - o 將 `WatchLifecycleCoordinator` 從 façade 演進成 lifecycle transition owner，人工 control transition 不再由 `WatchEditorService` 執行
-- o 抽出 control command decision / transition result，明確描述 enable / disable / pause / resume / check-now 的允許條件與副作用
-- o 抽出 runtime auto-pause control recommendation，讓 runtime 不再直接拼接暫停 watch state
+- o 抽出 `watch_lifecycle_state_machine.py`，集中定義 control command decision / transition result / scheduler side effect / in-flight policy
+- o 明確描述 enable / disable / pause / resume / check-now / runtime blocked pause 的允許條件與副作用
+- o runtime auto-pause 已改走同一套 lifecycle state machine，runtime 不再直接拼接暫停 watch state 或 runtime state event
 - o 明確定義 in-flight task lifecycle：維持不硬取消、以 late gate 丟棄結果；目前不引入硬取消策略
 - 評估是否新增 `watch_control_states` table；若沒有第二站或更複雜控制需求，先只完成設計，不做 migration
-- o 已完成拆 `main.py` 前的 lifecycle/control 決策：不做 migration，先以 coordinator + recommendation 收斂控制權
+- o 已完成拆 `main.py` 前的 lifecycle/control 決策：不做 migration，先以 state machine + coordinator + recommendation 收斂控制權
 
 ## Milestone 7: Packaging（尚未開始）
 

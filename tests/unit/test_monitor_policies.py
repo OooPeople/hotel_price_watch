@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 from app.domain.entities import (
+    LatestCheckSnapshot,
     NotificationDecision,
     NotificationDispatchResult,
     NotificationState,
@@ -76,14 +77,18 @@ def test_parse_failed_backoff_matches_short_retry_strategy() -> None:
 def test_runtime_control_recommendation_pauses_for_forbidden() -> None:
     """runtime control recommendation 應把 forbidden 決策轉成暫停 watch。"""
     watch_item = _watch_item()
+    checked_at = datetime(2026, 4, 12, 10, 0, 0)
     recommendation = build_runtime_control_recommendation(
         watch_item=watch_item,
+        latest_snapshot=None,
+        next_snapshot=_latest_snapshot(checked_at=checked_at),
         error_handling=decide_error_handling(
-            checked_at=datetime(2026, 4, 12, 10, 0, 0),
+            checked_at=checked_at,
             error_code=CheckErrorCode.FORBIDDEN_403,
             consecutive_failures=1,
         ),
         error_code=CheckErrorCode.FORBIDDEN_403,
+        occurred_at=checked_at,
     )
 
     assert recommendation.watch_item is not None
@@ -282,6 +287,19 @@ def _snapshot(
         currency=None if amount is None else "JPY",
         availability=availability,
         source_kind=SourceKind.HTTP,
+    )
+
+
+def _latest_snapshot(*, checked_at: datetime) -> LatestCheckSnapshot:
+    """建立 runtime control recommendation 測試使用的最新檢查摘要。"""
+    return LatestCheckSnapshot(
+        watch_item_id="watch-1",
+        checked_at=checked_at,
+        availability=Availability.UNKNOWN,
+        normalized_price_amount=None,
+        currency=None,
+        consecutive_failures=1,
+        last_error_code=CheckErrorCode.FORBIDDEN_403.value,
     )
 
 

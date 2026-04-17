@@ -25,14 +25,19 @@ from app.infrastructure.db import (
 
 
 class _RecordingRuntime:
-    """記錄 check-now 呼叫的 runtime 測試替身。"""
+    """記錄 check-now 與 scheduler 移除呼叫的 runtime 測試替身。"""
 
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.removed_ids: list[str] = []
 
     async def request_check_now(self, watch_item_id: str) -> None:
         """記錄被要求立即檢查的 watch id。"""
         self.calls.append(watch_item_id)
+
+    def remove_watch_from_schedule(self, watch_item_id: str) -> None:
+        """記錄 lifecycle transition 要求移除的 scheduler id。"""
+        self.removed_ids.append(watch_item_id)
 
 
 def test_lifecycle_coordinator_owns_manual_disable_transition(tmp_path) -> None:
@@ -106,6 +111,22 @@ def test_lifecycle_coordinator_gates_check_now_by_control_state(tmp_path) -> Non
         asyncio.run(coordinator.request_check_now("watch-1"))
 
     assert runtime.calls == []
+
+
+def test_lifecycle_coordinator_applies_scheduler_side_effect(tmp_path) -> None:
+    """pause transition 應由 coordinator 套用 state machine 的 scheduler side effect。"""
+    watch_repository, runtime_repository = _build_repositories(tmp_path)
+    watch_repository.save(_build_watch_item())
+    runtime = _RecordingRuntime()
+    coordinator = WatchLifecycleCoordinator(
+        watch_item_repository=watch_repository,
+        runtime_repository=runtime_repository,
+        monitor_runtime=runtime,
+    )
+
+    coordinator.pause_watch("watch-1")
+
+    assert runtime.removed_ids == ["watch-1"]
 
 
 def _build_repositories(tmp_path):

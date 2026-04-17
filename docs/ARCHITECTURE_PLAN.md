@@ -169,7 +169,9 @@ V1 採保守策略：
 
 目前 control command policy 已明確，且 runtime 已在 notification dispatch 前與 persist 前補 late gate，讓 pause / disable 在後段也能阻止通知或結果提交。
 
-`WatchLifecycleCoordinator` 已接管人工 enable / disable / pause / resume transition，不再轉呼叫 `WatchEditorService`。check-now gate 也由 coordinator 依 control state 判斷。runtime auto-pause 已改成先產生 `RuntimeControlRecommendation`，再交給 persistence 套用控制狀態。
+`src/app/domain/watch_lifecycle_state_machine.py` 是 lifecycle transition 的正式決策中心。它統一處理人工 enable / disable / pause / resume / check-now，以及 runtime blocked pause，並輸出 watch 更新、runtime state event、scheduler side effect 與 in-flight policy。
+
+`WatchLifecycleCoordinator` 負責讀取目前 watch / latest snapshot、呼叫 state machine、保存人工 transition，並依 decision 移除 scheduler active set；它不再轉呼叫 `WatchEditorService`。runtime auto-pause 也透過 `RuntimeControlRecommendation` 承載 state machine decision，`runtime.py` 不再自行拼接 paused watch 或保留獨立 lifecycle event builder。
 
 目前決策：
 
