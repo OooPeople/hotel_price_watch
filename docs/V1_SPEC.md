@@ -18,7 +18,7 @@
 目前仍待收斂：
 
 - background runtime 的長時間穩定性驗證
-- 結構整理，例如 `main.py`、`web/views.py`、`ChromeCdpHtmlFetcher`
+- 結構整理，例如拆 `main.py`、拆 `web/views.py`、收斂 `ChromeCdpHtmlFetcher`
 
 ## 1. 目標
 
@@ -50,14 +50,15 @@ V1 只追求：
 
 ## 3. 核心使用流程
 
-1. 使用者啟動專用 Chrome profile。
-2. 在專用 Chrome 中打開 `ikyu` 飯店頁或方案頁。
-3. GUI 列出目前可附著的 `ikyu` 分頁。
-4. 使用者選擇分頁，系統建立 preview。
-5. 使用者確認候選方案、通知規則與輪詢秒數。
-6. 系統建立 watch item。
-7. background runtime 定期刷新對應頁面並重新解析價格。
-8. 價格變化或狀態變化時發出通知。
+1. 使用者執行 `uv run python -m app.tools.dev_start`。
+2. 系統確認或喚醒可附著的專用 Chrome profile。
+3. 使用者在專用 Chrome 中打開 `ikyu` 飯店頁或方案頁。
+4. GUI 列出目前可附著的 `ikyu` 分頁。
+5. 使用者選擇分頁，系統建立 preview。
+6. 使用者確認候選方案、通知規則與輪詢秒數。
+7. 系統建立 watch item。
+8. background runtime 定期刷新對應頁面並重新解析價格。
+9. 價格變化或狀態變化時發出通知。
 
 ## 4. 核心資料模型
 
@@ -113,6 +114,7 @@ V1 需明確區分：
 - `price_history`
 - `notification_states`
 - `notification_throttle_states`
+- `runtime_state_events`
 - `debug_artifacts`
 
 ## 5. 價格與 availability 語意

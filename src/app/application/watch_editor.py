@@ -272,6 +272,7 @@ class WatchEditorService:
         to_watch_item: WatchItem,
     ) -> None:
         """在人工操作後補記正式狀態轉移事件。"""
+        latest_snapshot = self._runtime_repository.get_latest_check_snapshot(watch_item_id)
         self._runtime_repository.append_runtime_state_event(
             RuntimeStateEvent(
                 watch_item_id=watch_item_id,
@@ -279,11 +280,11 @@ class WatchEditorService:
                 event_kind=event_kind,
                 from_state=derive_watch_runtime_state(
                     watch_item=from_watch_item,
-                    latest_snapshot=None,
+                    latest_snapshot=latest_snapshot,
                 ),
                 to_state=derive_watch_runtime_state(
                     watch_item=to_watch_item,
-                    latest_snapshot=None,
+                    latest_snapshot=latest_snapshot,
                 ),
             )
         )

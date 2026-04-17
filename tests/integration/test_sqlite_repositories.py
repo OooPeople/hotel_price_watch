@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -514,7 +515,8 @@ def test_persist_check_outcome_rolls_back_when_midway_write_fails(tmp_path) -> N
 
     database = _FailOnCheckEventDatabase(tmp_path / "watcher.db")
     database.initialize()
-    SqliteWatchItemRepository(database).save(_build_watch_item())
+    watch_repository = SqliteWatchItemRepository(database)
+    watch_repository.save(_build_watch_item())
     repository = SqliteRuntimeRepository(database)
 
     try:
@@ -537,6 +539,10 @@ def test_persist_check_outcome_rolls_back_when_midway_write_fails(tmp_path) -> N
                 consecutive_failures=1,
                 consecutive_parse_failures=0,
             ),
+            control_watch_item=replace(
+                _build_watch_item(),
+                paused_reason="http_403",
+            ),
             price_history_entry=PriceHistoryEntry(
                 watch_item_id="watch-1",
                 captured_at=datetime(2026, 4, 11, 12, 0, 0),
@@ -555,6 +561,9 @@ def test_persist_check_outcome_rolls_back_when_midway_write_fails(tmp_path) -> N
     assert repository.list_check_events("watch-1") == []
     assert repository.list_price_history("watch-1") == []
     assert repository.get_notification_state("watch-1") is None
+    watch_item = watch_repository.get("watch-1")
+    assert watch_item is not None
+    assert watch_item.paused_reason is None
 
 
 def test_debug_artifact_retention_keeps_only_latest_items(tmp_path) -> None:

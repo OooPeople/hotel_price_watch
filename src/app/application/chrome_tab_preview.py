@@ -26,12 +26,20 @@ class ChromeTabPreviewService:
 
     def list_tabs(self) -> tuple[ChromeTabSummary, ...]:
         """列出目前可附著且屬於支援站點的瀏覽器分頁。"""
-        return self._chrome_fetcher.list_ikyu_tabs()
+        tabs = self._chrome_fetcher.list_tabs()
+        return tuple(
+            tab
+            for tab in tabs
+            if any(
+                adapter.is_browser_page_url(tab.url)
+                for adapter in self._site_registry.adapters()
+            )
+        )
 
     def preview_from_tab_id(self, tab_id: str) -> WatchCreationPreview:
         """從指定的 Chrome 分頁內容建立 watch editor preview。"""
         capture = self._chrome_fetcher.fetch_tab_capture(tab_id)
-        adapter = self._site_registry.for_url(capture.tab.url)
+        adapter = self._site_registry.for_browser_page_url(capture.tab.url)
         diagnostics = _build_tab_diagnostics(capture)
         draft, candidate_bundle = adapter.build_preview_from_browser_page(
             page_url=capture.tab.url,

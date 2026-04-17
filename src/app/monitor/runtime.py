@@ -29,7 +29,10 @@ from app.domain.enums import (
 from app.domain.notification_engine import compare_snapshots, evaluate_notification_rule
 from app.domain.watch_runtime_state import derive_watch_runtime_state
 from app.infrastructure.browser import ChromeCdpHtmlFetcher
-from app.infrastructure.browser.ikyu_page_guards import IkyuBlockedPageError
+from app.infrastructure.browser.page_strategy import (
+    BrowserBlockedPageError,
+    BrowserBlockingOutcome,
+)
 from app.infrastructure.db.repositories import (
     SqliteRuntimeRepository,
     SqliteWatchItemRepository,
@@ -195,6 +198,7 @@ class ChromeDrivenMonitorRuntime:
         capture = None
         error_code: CheckErrorCode | None = None
         debug_artifact: DebugArtifact | None = None
+        browser_blocking_outcome: BrowserBlockingOutcome | None = None
 
         try:
             capture = await asyncio.to_thread(
@@ -227,6 +231,8 @@ class ChromeDrivenMonitorRuntime:
                 checked_at=checked_at,
             )
         except Exception as exc:
+            if isinstance(exc, BrowserBlockedPageError):
+                browser_blocking_outcome = exc.outcome
             error_code = _map_runtime_exception_to_error_code_typed(exc)
             current_snapshot = PriceSnapshot(
                 display_price_text=None,
@@ -302,25 +308,7 @@ class ChromeDrivenMonitorRuntime:
             error_handling=error_handling,
             dispatch_result=dispatch_result,
         )
-
-        await asyncio.to_thread(
-            self._runtime_repository.persist_check_outcome,
-            latest_snapshot=artifacts.latest_check_snapshot,
-            check_event=artifacts.check_event,
-            notification_state=next_notification_state,
-            price_history_entry=artifacts.price_history_entry,
-            debug_artifact=debug_artifact,
-            runtime_state_events=_build_runtime_state_events(
-                watch_item=watch_item,
-                latest_snapshot=latest_snapshot,
-                next_snapshot=artifacts.latest_check_snapshot,
-                error_handling=error_handling,
-                error_code=error_code,
-                checked_at=checked_at,
-            ),
-            debug_retention_limit=self._debug_retention_limit,
-        )
-
+        paused_watch = None
         if error_handling.should_pause:
             paused_watch = replace(
                 watch_item,
@@ -331,7 +319,28 @@ class ChromeDrivenMonitorRuntime:
                     else error_code.value if error_code is not None else "paused"
                 ),
             )
-            await asyncio.to_thread(self._watch_item_repository.save, paused_watch)
+
+        await asyncio.to_thread(
+            self._runtime_repository.persist_check_outcome,
+            latest_snapshot=artifacts.latest_check_snapshot,
+            check_event=artifacts.check_event,
+            notification_state=next_notification_state,
+            control_watch_item=paused_watch,
+            price_history_entry=artifacts.price_history_entry,
+            debug_artifact=debug_artifact,
+            runtime_state_events=_build_runtime_state_events(
+                watch_item=watch_item,
+                latest_snapshot=latest_snapshot,
+                next_snapshot=artifacts.latest_check_snapshot,
+                error_handling=error_handling,
+                error_code=error_code,
+                browser_blocking_outcome=browser_blocking_outcome,
+                checked_at=checked_at,
+            ),
+            debug_retention_limit=self._debug_retention_limit,
+        )
+
+        if error_handling.should_pause:
             self._scheduler.remove_watch(watch_item_id)
 
     async def request_check_now(self, watch_item_id: str) -> None:
@@ -591,25 +600,24 @@ def _map_snapshot_error(snapshot: PriceSnapshot) -> CheckErrorCode | None:
     return None
 
 
-def _map_runtime_exception_to_error_code(exc: Exception) -> CheckErrorCode:
-    """把 runtime 例外粗略映射成目前可用的錯誤代碼。"""
-    message = str(exc)
-    if "阻擋頁面" in message or "403" in message:
-        return CheckErrorCode.FORBIDDEN_403
-    if "timeout" in message.lower() or "逾時" in message:
-        return CheckErrorCode.NETWORK_TIMEOUT
-    return CheckErrorCode.NETWORK_ERROR
-
-
 def _map_runtime_exception_to_error_code_typed(exc: Exception) -> CheckErrorCode:
     """將 runtime 例外映射為監看錯誤代碼。"""
-    if isinstance(exc, IkyuBlockedPageError):
-        return CheckErrorCode.FORBIDDEN_403
+    if isinstance(exc, BrowserBlockedPageError):
+        return _map_browser_blocking_outcome_to_error_code(exc.outcome)
     if isinstance(exc, (TimeoutError, PlaywrightTimeoutError)):
         return CheckErrorCode.NETWORK_TIMEOUT
     if isinstance(exc, PlaywrightError):
         return CheckErrorCode.NETWORK_ERROR
     return CheckErrorCode.NETWORK_ERROR
+
+
+def _map_browser_blocking_outcome_to_error_code(
+    outcome: BrowserBlockingOutcome,
+) -> CheckErrorCode:
+    """把站點阻擋 outcome 映射成目前 monitor policy 可理解的錯誤代碼。"""
+    if outcome.kind == "rate_limited":
+        return CheckErrorCode.RATE_LIMITED_429
+    return CheckErrorCode.FORBIDDEN_403
 
 
 def _build_optional_debug_artifact(
@@ -678,6 +686,7 @@ def _build_runtime_state_events(
     next_snapshot,
     error_handling,
     error_code: CheckErrorCode | None,
+    browser_blocking_outcome: BrowserBlockingOutcome | None,
     checked_at: datetime,
 ) -> tuple[RuntimeStateEvent, ...]:
     """依前後狀態差異整理正式 runtime 狀態轉移事件。"""
@@ -711,9 +720,10 @@ def _build_runtime_state_events(
             RuntimeStateEvent(
                 watch_item_id=watch_item.id,
                 occurred_at=checked_at,
-                event_kind=RuntimeStateEventKind.PAUSE_DUE_TO_HTTP_403,
+                event_kind=RuntimeStateEventKind.PAUSE_DUE_TO_BLOCKING,
                 from_state=previous_state,
                 to_state=current_state,
+                detail_text=_format_browser_blocking_detail(browser_blocking_outcome),
             )
         )
 
@@ -779,3 +789,12 @@ def _build_runtime_state_events(
         )
 
     return tuple(events)
+
+
+def _format_browser_blocking_detail(
+    outcome: BrowserBlockingOutcome | None,
+) -> str | None:
+    """把 browser blocking outcome 整理成 runtime event 的簡短細節。"""
+    if outcome is None:
+        return None
+    return f"kind={outcome.kind}; reason={outcome.reason}; message={outcome.message}"

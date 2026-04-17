@@ -63,6 +63,7 @@ class WatchRuntimeState(StrEnum):
     RECOVER_PENDING = "recover_pending"
     MANUALLY_PAUSED = "manually_paused"
     MANUALLY_DISABLED = "manually_disabled"
+    PAUSED_BLOCKED = "paused_blocked"
     PAUSED_BLOCKED_403 = "paused_blocked_403"
     PAUSED_OTHER = "paused_other"
 
@@ -74,6 +75,7 @@ class RuntimeStateEventKind(StrEnum):
     MANUAL_DISABLE = "manual_disable"
     MANUAL_PAUSE = "manual_pause"
     MANUAL_RESUME = "manual_resume"
+    PAUSE_DUE_TO_BLOCKING = "pause_due_to_blocking"
     PAUSE_DUE_TO_HTTP_403 = "pause_due_to_http_403"
     ENTERED_BACKOFF = "entered_backoff"
     CLEARED_BACKOFF = "cleared_backoff"

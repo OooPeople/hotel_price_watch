@@ -11,11 +11,17 @@ from app.infrastructure.browser.chrome_cdp_fetcher import (
     _build_chrome_launch_command,
     _prepare_chrome_profile,
 )
+from app.sites.ikyu.browser_strategy import IkyuBrowserPageStrategy
+
+
+def _build_ikyu_fetcher(**kwargs) -> ChromeCdpHtmlFetcher:
+    """建立使用 `ikyu` browser strategy 的 fetcher 測試實例。"""
+    return ChromeCdpHtmlFetcher(page_strategy=IkyuBrowserPageStrategy(), **kwargs)
 
 
 def test_fetch_html_attaches_to_existing_cdp_session(monkeypatch) -> None:
     """若 CDP 端點可用，應附著既有 Chrome session 並等待人工導頁結果。"""
-    fetcher = ChromeCdpHtmlFetcher()
+    fetcher = _build_ikyu_fetcher()
 
     class _Page:
         url = "about:blank"
@@ -146,7 +152,7 @@ def test_prepare_chrome_profile_preserves_existing_preferences(tmp_path) -> None
 
 def test_open_profile_window_uses_bootstrap_homepage(monkeypatch, tmp_path) -> None:
     """手動建立 session 時，應先從 `ikyu` 首頁啟動專用 Chrome。"""
-    fetcher = ChromeCdpHtmlFetcher(
+    fetcher = _build_ikyu_fetcher(
         user_data_dir=tmp_path / "profile",
         launch_timeout_seconds=0.0,
     )
@@ -176,7 +182,7 @@ def test_open_profile_window_uses_bootstrap_homepage(monkeypatch, tmp_path) -> N
 
 def test_get_or_create_page_prefers_existing_target_like_page() -> None:
     """附著既有 session 時，應優先使用最接近目標頁的分頁。"""
-    fetcher = ChromeCdpHtmlFetcher()
+    fetcher = _build_ikyu_fetcher()
 
     class _Page:
         def __init__(self, url: str) -> None:
@@ -202,7 +208,7 @@ def test_get_or_create_page_prefers_existing_target_like_page() -> None:
 
 def test_get_page_by_tab_id_uses_stable_page_key(monkeypatch) -> None:
     """依分頁識別碼抓取時，不應再依賴 context.pages 的 index 順序。"""
-    fetcher = ChromeCdpHtmlFetcher()
+    fetcher = _build_ikyu_fetcher()
 
     class _Page:
         def __init__(self, url: str, stable_id: str) -> None:
@@ -231,9 +237,52 @@ def test_get_page_by_tab_id_uses_stable_page_key(monkeypatch) -> None:
     assert page.url == "https://www.ikyu.com/"
 
 
+def test_capture_page_uses_injected_page_strategy() -> None:
+    """抓取分頁內容時，應透過注入的 strategy 判斷阻擋頁。"""
+
+    class _BlockedPageStrategy:
+        """測試用 strategy，固定把頁面判定為 blocked。"""
+
+        profile_start_url = "https://strategy.example/"
+
+        def raise_if_blocked_page(self, html: str) -> None:
+            raise ValueError(f"blocked by strategy: {html}")
+
+        def is_ready_page(self, *, current_url: str, expected_url: str) -> bool:
+            return current_url == expected_url
+
+        def score_page(self, current_url: str, *, expected_url: str) -> int:
+            return 100 if current_url == expected_url else 0
+
+        def page_signature(self, url: str):
+            return url
+
+        def is_confident_page_match(
+            self,
+            *,
+            current_signature,
+            expected_signature,
+            score: int,
+            minimum_score: int,
+        ) -> bool:
+            del minimum_score
+            return current_signature == expected_signature and score > 0
+
+    class _Page:
+        url = "https://strategy.example/target"
+
+        def content(self) -> str:
+            return "<html>blocked</html>"
+
+    fetcher = ChromeCdpHtmlFetcher(page_strategy=_BlockedPageStrategy())
+
+    with pytest.raises(ValueError, match="blocked by strategy"):
+        fetcher._capture_page(page=_Page())
+
+
 def test_score_page_prefers_matching_room_and_plan_query() -> None:
     """多個 ikyu 分頁同時存在時，應優先匹配同一組 rm/pln 的頁面。"""
-    fetcher = ChromeCdpHtmlFetcher()
+    fetcher = _build_ikyu_fetcher()
 
     expected_url = (
         "https://www.ikyu.com/zh-tw/00082173/"
@@ -259,7 +308,7 @@ def test_score_page_prefers_matching_room_and_plan_query() -> None:
 
 def test_find_best_page_prefers_matching_query_over_same_hotel_root() -> None:
     """同飯店多分頁存在時，應優先選到條件最接近的房型方案頁。"""
-    fetcher = ChromeCdpHtmlFetcher()
+    fetcher = _build_ikyu_fetcher()
     expected_url = (
         "https://www.ikyu.com/zh-tw/00082173/"
         "?adc=1&cid=20260918&pln=11035620&ppc=2&rc=1&rm=10191605&si=1&st=1"
@@ -291,7 +340,7 @@ def test_find_best_page_prefers_matching_query_over_same_hotel_root() -> None:
 
 def test_find_best_page_rejects_same_hotel_with_wrong_room_plan() -> None:
     """若同飯店分頁的 room/plan 不吻合，應回傳 None 走保守 fallback。"""
-    fetcher = ChromeCdpHtmlFetcher()
+    fetcher = _build_ikyu_fetcher()
     expected_url = (
         "https://www.ikyu.com/zh-tw/00082173/"
         "?adc=1&cid=20260918&pln=11035620&ppc=2&rc=1&rm=10191605&si=1&st=1"
@@ -320,7 +369,7 @@ def test_find_best_page_rejects_same_hotel_with_wrong_room_plan() -> None:
 
 def test_find_best_page_rejects_low_confidence_hotel_root_page() -> None:
     """若只有同飯店根頁，應回傳 None 讓 runtime 自行導向精確目標頁。"""
-    fetcher = ChromeCdpHtmlFetcher()
+    fetcher = _build_ikyu_fetcher()
     expected_url = (
         "https://www.ikyu.com/zh-tw/00082173/"
         "?adc=1&cid=20260918&pln=11035620&ppc=2&rc=1&rm=10191605&si=1&st=1"
@@ -346,7 +395,7 @@ def test_find_best_page_rejects_low_confidence_hotel_root_page() -> None:
 
 def test_find_best_page_skips_excluded_tab_ids(monkeypatch) -> None:
     """恢復多個 watch 分頁時，已被前一個 watch 佔用的 tab 不應再次被沿用。"""
-    fetcher = ChromeCdpHtmlFetcher()
+    fetcher = _build_ikyu_fetcher()
     expected_url = (
         "https://www.ikyu.com/zh-tw/00082173/"
         "?adc=1&cid=20260918&pln=11035620&ppc=2&rc=1&rm=10191605&si=1&st=1"

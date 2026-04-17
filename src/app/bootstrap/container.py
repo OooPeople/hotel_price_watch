@@ -12,6 +12,10 @@ from app.application.notification_channel_test import NotificationChannelTestSer
 from app.application.preview_guard import PreviewAttemptGuard
 from app.application.watch_editor import WatchEditorService
 from app.application.watch_lifecycle import WatchLifecycleCoordinator
+from app.bootstrap.site_wiring import (
+    build_default_browser_page_strategy,
+    register_default_sites,
+)
 from app.infrastructure.browser import ChromeCdpHtmlFetcher
 from app.infrastructure.db import (
     SqliteAppSettingsRepository,
@@ -21,8 +25,6 @@ from app.infrastructure.db import (
 )
 from app.monitor.runtime import ChromeDrivenMonitorRuntime
 from app.notifiers import DesktopNotifier, DiscordWebhookNotifier, NtfyNotifier
-from app.sites.ikyu import IkyuAdapter
-from app.sites.ikyu.client import LiveIkyuHtmlClient
 from app.sites.registry import SiteRegistry
 
 
@@ -57,16 +59,10 @@ def build_app_container(db_path: str | Path | None = None) -> AppContainer:
     runtime_repository = SqliteRuntimeRepository(database)
 
     site_registry = SiteRegistry()
-    chrome_cdp_fetcher = ChromeCdpHtmlFetcher()
-    site_registry.register(
-        IkyuAdapter(
-            html_client=LiveIkyuHtmlClient(
-                browser_fallback=chrome_cdp_fetcher,
-                enable_browser_fallback=True,
-                prefer_browser_fallback_for_search=True,
-            )
-        )
+    chrome_cdp_fetcher = ChromeCdpHtmlFetcher(
+        page_strategy=build_default_browser_page_strategy()
     )
+    register_default_sites(site_registry, browser_fallback=chrome_cdp_fetcher)
 
     watch_editor_service = WatchEditorService(
         site_registry=site_registry,

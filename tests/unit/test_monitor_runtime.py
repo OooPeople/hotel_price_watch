@@ -27,7 +27,10 @@ from app.domain.enums import (
 from app.domain.notification_rules import RuleLeaf
 from app.domain.value_objects import SearchDraft, WatchTarget
 from app.infrastructure.browser.chrome_cdp_fetcher import ChromeTabCapture, ChromeTabSummary
-from app.infrastructure.browser.ikyu_page_guards import IkyuBlockedPageError
+from app.infrastructure.browser.page_strategy import (
+    BrowserBlockedPageError,
+    BrowserBlockingOutcome,
+)
 from app.infrastructure.db import (
     SqliteAppSettingsRepository,
     SqliteDatabase,
@@ -42,6 +45,7 @@ from app.monitor.runtime import (
 from app.notifiers.base import Notifier
 from app.notifiers.models import NotificationMessage
 from app.sites.base import CandidateSelection, SiteAdapter
+from app.sites.ikyu.page_guards import IkyuBlockedPageError
 from app.sites.registry import SiteRegistry
 
 
@@ -1217,6 +1221,11 @@ def test_runtime_pauses_watch_when_chrome_refresh_hits_403(tmp_path) -> None:
         chrome_fetcher=_ForbiddenChromeFetcher(),
         app_settings_service=app_settings_service,
     )
+    runtime._scheduler.register_watch(
+        watch_item_id=watch_item.id,
+        interval_seconds=watch_item.scheduler_interval_seconds,
+        now=datetime.now(UTC),
+    )
 
     import asyncio
 
@@ -1238,7 +1247,10 @@ def test_runtime_pauses_watch_when_chrome_refresh_hits_403(tmp_path) -> None:
 
     runtime_state_events = runtime_repository.list_runtime_state_events(watch_item.id)
     assert len(runtime_state_events) == 1
-    assert runtime_state_events[0].event_kind is RuntimeStateEventKind.PAUSE_DUE_TO_HTTP_403
+    assert runtime_state_events[0].event_kind is RuntimeStateEventKind.PAUSE_DUE_TO_BLOCKING
+    assert runtime_state_events[0].detail_text is not None
+    assert "kind=forbidden" in runtime_state_events[0].detail_text
+    assert runtime._scheduler.list_registered_ids() == ()
 
     price_history = runtime_repository.list_price_history(watch_item.id)
     assert price_history == []
@@ -1346,7 +1358,7 @@ def test_runtime_recovers_cleanly_after_manual_resume_from_403_pause(tmp_path) -
 
     runtime_state_events = runtime_repository.list_runtime_state_events(watch_item.id)
     event_kinds = tuple(event.event_kind for event in runtime_state_events)
-    assert RuntimeStateEventKind.PAUSE_DUE_TO_HTTP_403 in event_kinds
+    assert RuntimeStateEventKind.PAUSE_DUE_TO_BLOCKING in event_kinds
     assert RuntimeStateEventKind.RECOVERED_AFTER_SUCCESS in event_kinds
 
 
@@ -1363,6 +1375,22 @@ def test_runtime_error_mapping_no_longer_depends_on_message_fragments() -> None:
     assert (
         _map_runtime_exception_to_error_code_typed(RuntimeError("room 403-B"))
         is CheckErrorCode.NETWORK_ERROR
+    )
+
+
+def test_runtime_maps_generic_rate_limit_blocking_outcome() -> None:
+    """generic browser blocking outcome 應能表達非 403 的站方節流。"""
+    error = BrowserBlockedPageError(
+        outcome=BrowserBlockingOutcome(
+            kind="rate_limited",
+            message="rate limited by site",
+            reason="site_rate_limit",
+        )
+    )
+
+    assert (
+        _map_runtime_exception_to_error_code_typed(error)
+        is CheckErrorCode.RATE_LIMITED_429
     )
 
 

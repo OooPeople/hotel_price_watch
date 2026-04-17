@@ -11,11 +11,9 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from app.sites.ikyu.browser_matching import (
-    extract_ikyu_browser_page_signature,
-    is_confident_ikyu_page_match,
-    is_ikyu_page_url,
-    score_ikyu_browser_page,
+from app.infrastructure.browser.page_strategy import (
+    BasicBrowserPageStrategy,
+    BrowserPageStrategy,
 )
 
 
@@ -55,7 +53,8 @@ class ChromeCdpHtmlFetcher:
     cdp_endpoint: str = "http://127.0.0.1:9222"
     launch_timeout_seconds: float = 10.0
     manual_wait_timeout_seconds: float = 180.0
-    profile_start_url: str = "https://www.ikyu.com/"
+    profile_start_url: str | None = None
+    page_strategy: BrowserPageStrategy = field(default_factory=BasicBrowserPageStrategy)
     minimum_confident_match_score: int = 35
     chrome_candidates: tuple[str, ...] = (
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
@@ -65,6 +64,11 @@ class ChromeCdpHtmlFetcher:
     user_data_dir: Path = field(
         default_factory=lambda: Path("data") / "chrome_cdp_profile"
     )
+
+    def __post_init__(self) -> None:
+        """若未指定起始頁，使用目前 browser strategy 的 profile start URL。"""
+        if self.profile_start_url is None:
+            self.profile_start_url = self.page_strategy.profile_start_url
 
     def fetch_html(self, url: str) -> str:
         """附著既有 Chrome；若尚未啟動則開一個可附著的 instance，並等待人工導頁。"""
@@ -105,8 +109,8 @@ class ChromeCdpHtmlFetcher:
                 # connect_over_cdp 只應解除附著，不應關掉使用者正在操作的 Chrome。
                 pass
 
-    def list_ikyu_tabs(self) -> tuple[ChromeTabSummary, ...]:
-        """列出目前專用 Chrome session 中所有 `ikyu` 分頁。"""
+    def list_tabs(self) -> tuple[ChromeTabSummary, ...]:
+        """列出目前專用 Chrome session 中所有可附著分頁摘要。"""
         browser, playwright = self._connect_playwright_browser()
         try:
             context = browser.contexts[0] if browser.contexts else browser.new_context()
@@ -115,8 +119,7 @@ class ChromeCdpHtmlFetcher:
                 if page.is_closed():
                     continue
                 summary = self._build_tab_summary(page=page)
-                if is_ikyu_page_url(summary.url):
-                    tabs.append(summary)
+                tabs.append(summary)
             return tuple(tabs)
         finally:
             playwright.stop()
@@ -308,14 +311,9 @@ class ChromeCdpHtmlFetcher:
         return page
 
     def _wait_for_manual_resolution(self, *, context, initial_page, expected_url: str) -> str:
-        """等待使用者把目前分頁導到可解析候選的 `ikyu` 頁面。"""
-        from app.infrastructure.browser.ikyu_page_guards import (
-            IkyuBlockedPageError,
-            raise_if_ikyu_block_page,
-        )
-
+        """等待使用者把目前分頁導到 strategy 判定可讀取的目標頁面。"""
         deadline = time.monotonic() + self.manual_wait_timeout_seconds
-        last_error: IkyuBlockedPageError | None = None
+        last_error: Exception | None = None
 
         while time.monotonic() < deadline:
             page = self._find_best_page(context, expected_url=expected_url) or initial_page
@@ -325,12 +323,12 @@ class ChromeCdpHtmlFetcher:
 
             html = page.content()
             try:
-                raise_if_ikyu_block_page(html)
-            except IkyuBlockedPageError as exc:
+                self.page_strategy.raise_if_blocked_page(html)
+            except Exception as exc:
                 last_error = exc
                 page.wait_for_timeout(1000)
                 continue
-            if self._looks_like_ready_ikyu_page(
+            if self.page_strategy.is_ready_page(
                 current_url=page.url,
                 expected_url=expected_url,
             ):
@@ -355,7 +353,7 @@ class ChromeCdpHtmlFetcher:
         best_page = None
         best_score = -1
         best_signature = None
-        expected_signature = extract_ikyu_browser_page_signature(expected_url)
+        expected_signature = self.page_strategy.page_signature(expected_url)
         excluded_ids = set(excluded_tab_ids)
         for page in context.pages:
             if page.is_closed():
@@ -366,7 +364,7 @@ class ChromeCdpHtmlFetcher:
             if score > best_score:
                 best_page = page
                 best_score = score
-                best_signature = extract_ikyu_browser_page_signature(page.url)
+                best_signature = self.page_strategy.page_signature(page.url)
         if (
             best_score <= 0
             or best_signature is None
@@ -425,10 +423,8 @@ class ChromeCdpHtmlFetcher:
 
     def _capture_page(self, *, page) -> ChromeTabCapture:
         """把 page 內容與其摘要封裝成統一抓取結果。"""
-        from app.infrastructure.browser.ikyu_page_guards import raise_if_ikyu_block_page
-
         html = page.content()
-        raise_if_ikyu_block_page(html)
+        self.page_strategy.raise_if_blocked_page(html)
         summary = self._build_tab_summary(page=page)
         return ChromeTabCapture(
             tab=summary,
@@ -466,7 +462,7 @@ class ChromeCdpHtmlFetcher:
         fallback_url: str | None,
     ) -> None:
         """確保要刷新的分頁已在目標飯店頁上下文中。"""
-        if self._looks_like_ready_ikyu_page(
+        if self.page_strategy.is_ready_page(
             current_url=page.url,
             expected_url=expected_url,
         ):
@@ -479,11 +475,7 @@ class ChromeCdpHtmlFetcher:
 
     def _score_page(self, current_url: str, *, expected_url: str) -> int:
         """依 URL 相似度為目前分頁評分，優先使用更接近目標飯店頁的分頁。"""
-        return score_ikyu_browser_page(
-            current_url,
-            expected_url=expected_url,
-            profile_start_url=self.profile_start_url,
-        )
+        return self.page_strategy.score_page(current_url, expected_url=expected_url)
 
     def _is_confident_page_match(
         self,
@@ -493,28 +485,12 @@ class ChromeCdpHtmlFetcher:
         score: int,
     ) -> bool:
         """判斷目前分頁是否足夠接近目標條件，值得沿用而不是保守 fallback。"""
-        return is_confident_ikyu_page_match(
+        return self.page_strategy.is_confident_page_match(
             current_signature=current_signature,
             expected_signature=expected_signature,
             score=score,
             minimum_score=self.minimum_confident_match_score,
         )
-
-    def _looks_like_ready_ikyu_page(self, *, current_url: str, expected_url: str) -> bool:
-        """判斷目前頁面是否已離開首頁並進到與目標飯店相符的 `ikyu` 頁面。"""
-        from urllib.parse import urlparse
-
-        current = urlparse(current_url)
-        expected = urlparse(expected_url)
-        profile_start = urlparse(self.profile_start_url)
-
-        if not current.scheme or not current.netloc:
-            return False
-        if current.netloc != expected.netloc:
-            return False
-        if current.path.rstrip("/") == profile_start.path.rstrip("/"):
-            return False
-        return current.path.rstrip("/").startswith(expected.path.rstrip("/"))
 
 
 def _build_chrome_launch_command(

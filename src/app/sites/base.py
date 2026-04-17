@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from decimal import Decimal
 
-from app.domain.entities import PriceSnapshot
+from app.domain.entities import PriceSnapshot, WatchItem
 from app.domain.value_objects import SearchDraft, WatchTarget
 
 
@@ -114,3 +114,21 @@ class SiteAdapter(ABC):
         selection: CandidateSelection,
     ) -> WatchTarget:
         """依草稿與使用者選擇建立正式的 canonical target。"""
+
+    def is_browser_page_url(self, url: str) -> bool:
+        """判斷 Chrome 分頁 URL 是否屬於此站點可處理範圍。"""
+        return self.match_url(url)
+
+    def browser_tab_matches_watch(
+        self,
+        *,
+        tab_url: str,
+        watch_item: WatchItem,
+        draft: SearchDraft | None,
+    ) -> bool:
+        """判斷 Chrome 分頁是否已對應指定 watch，站點可覆寫精確規則。"""
+        if watch_item.target.site != self.site_name:
+            return False
+        if draft is not None and draft.browser_page_url == tab_url:
+            return True
+        return watch_item.canonical_url == tab_url

@@ -746,6 +746,7 @@ def _existing_watch_ids_by_tab_id(
         chrome_tabs=chrome_tabs,
         watch_items=watch_items,
         drafts_by_watch_id=drafts_by_watch_id,
+        site_registry=container.site_registry,
     )
 
 

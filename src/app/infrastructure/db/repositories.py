@@ -40,64 +40,8 @@ class SqliteWatchItemRepository:
 
     def save(self, watch_item: WatchItem) -> None:
         """新增或更新 watch item，不把 runtime 狀態混進資料表。"""
-        target = watch_item.target
-        created_at_text = _datetime_to_text(watch_item.created_at) or _datetime_to_text(
-            datetime.now(UTC)
-        )
-        updated_at_text = _datetime_to_text(watch_item.updated_at) or _datetime_to_text(
-            datetime.now(UTC)
-        )
         with self._database.connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO watch_items (
-                    id, site, hotel_id, room_id, plan_id,
-                    check_in_date, check_out_date, people_count, room_count,
-                    hotel_name, room_name, plan_name, canonical_url,
-                    notification_rule_json, scheduler_interval_seconds,
-                    enabled, paused_reason, created_at_utc, updated_at_utc
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    site = excluded.site,
-                    hotel_id = excluded.hotel_id,
-                    room_id = excluded.room_id,
-                    plan_id = excluded.plan_id,
-                    check_in_date = excluded.check_in_date,
-                    check_out_date = excluded.check_out_date,
-                    people_count = excluded.people_count,
-                    room_count = excluded.room_count,
-                    hotel_name = excluded.hotel_name,
-                    room_name = excluded.room_name,
-                    plan_name = excluded.plan_name,
-                    canonical_url = excluded.canonical_url,
-                    notification_rule_json = excluded.notification_rule_json,
-                    scheduler_interval_seconds = excluded.scheduler_interval_seconds,
-                    enabled = excluded.enabled,
-                    paused_reason = excluded.paused_reason,
-                    updated_at_utc = COALESCE(excluded.updated_at_utc, CURRENT_TIMESTAMP)
-                """,
-                (
-                    watch_item.id,
-                    target.site,
-                    target.hotel_id,
-                    target.room_id,
-                    target.plan_id,
-                    target.check_in_date.isoformat(),
-                    target.check_out_date.isoformat(),
-                    target.people_count,
-                    target.room_count,
-                    watch_item.hotel_name,
-                    watch_item.room_name,
-                    watch_item.plan_name,
-                    watch_item.canonical_url,
-                    json.dumps(_serialize_notification_rule(watch_item.notification_rule)),
-                    watch_item.scheduler_interval_seconds,
-                    int(watch_item.enabled),
-                    watch_item.paused_reason,
-                    created_at_text,
-                    updated_at_text,
-                ),
-            )
+            _save_watch_item(connection, watch_item)
 
     def get(self, watch_item_id: str) -> WatchItem | None:
         """依 id 載入單一 watch item。"""
@@ -200,6 +144,7 @@ class SqliteRuntimeRepository:
         latest_snapshot: LatestCheckSnapshot,
         check_event: CheckEvent,
         notification_state: NotificationState,
+        control_watch_item: WatchItem | None = None,
         price_history_entry: PriceHistoryEntry | None = None,
         debug_artifact: DebugArtifact | None = None,
         runtime_state_events: tuple[RuntimeStateEvent, ...] = (),
@@ -214,6 +159,8 @@ class SqliteRuntimeRepository:
             self._save_notification_state(connection, notification_state)
             for runtime_state_event in runtime_state_events:
                 self._append_runtime_state_event(connection, runtime_state_event)
+            if control_watch_item is not None:
+                _save_watch_item(connection, control_watch_item)
             if debug_artifact is not None:
                 self._append_debug_artifact(
                     connection,
@@ -737,6 +684,67 @@ def _row_to_watch_item(row: Row) -> WatchItem:
         paused_reason=row["paused_reason"],
         created_at=_text_to_datetime(row["created_at_utc"]),
         updated_at=_text_to_datetime(row["updated_at_utc"]),
+    )
+
+
+def _save_watch_item(connection: Connection, watch_item: WatchItem) -> None:
+    """在既有 transaction 內新增或更新 watch item control state 與設定。"""
+    target = watch_item.target
+    created_at_text = _datetime_to_text(watch_item.created_at) or _datetime_to_text(
+        datetime.now(UTC)
+    )
+    updated_at_text = _datetime_to_text(watch_item.updated_at) or _datetime_to_text(
+        datetime.now(UTC)
+    )
+    connection.execute(
+        """
+        INSERT INTO watch_items (
+            id, site, hotel_id, room_id, plan_id,
+            check_in_date, check_out_date, people_count, room_count,
+            hotel_name, room_name, plan_name, canonical_url,
+            notification_rule_json, scheduler_interval_seconds,
+            enabled, paused_reason, created_at_utc, updated_at_utc
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            site = excluded.site,
+            hotel_id = excluded.hotel_id,
+            room_id = excluded.room_id,
+            plan_id = excluded.plan_id,
+            check_in_date = excluded.check_in_date,
+            check_out_date = excluded.check_out_date,
+            people_count = excluded.people_count,
+            room_count = excluded.room_count,
+            hotel_name = excluded.hotel_name,
+            room_name = excluded.room_name,
+            plan_name = excluded.plan_name,
+            canonical_url = excluded.canonical_url,
+            notification_rule_json = excluded.notification_rule_json,
+            scheduler_interval_seconds = excluded.scheduler_interval_seconds,
+            enabled = excluded.enabled,
+            paused_reason = excluded.paused_reason,
+            updated_at_utc = COALESCE(excluded.updated_at_utc, CURRENT_TIMESTAMP)
+        """,
+        (
+            watch_item.id,
+            target.site,
+            target.hotel_id,
+            target.room_id,
+            target.plan_id,
+            target.check_in_date.isoformat(),
+            target.check_out_date.isoformat(),
+            target.people_count,
+            target.room_count,
+            watch_item.hotel_name,
+            watch_item.room_name,
+            watch_item.plan_name,
+            watch_item.canonical_url,
+            json.dumps(_serialize_notification_rule(watch_item.notification_rule)),
+            watch_item.scheduler_interval_seconds,
+            int(watch_item.enabled),
+            watch_item.paused_reason,
+            created_at_text,
+            updated_at_text,
+        ),
     )
 
 

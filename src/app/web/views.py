@@ -1337,6 +1337,7 @@ def _render_watch_action_controls(
         )
     elif runtime_state in {
         WatchRuntimeState.MANUALLY_PAUSED,
+        WatchRuntimeState.PAUSED_BLOCKED,
         WatchRuntimeState.PAUSED_BLOCKED_403,
         WatchRuntimeState.PAUSED_OTHER,
     }:
@@ -1646,6 +1647,7 @@ def _describe_runtime_state_event_kind(event_kind: RuntimeStateEventKind) -> str
         RuntimeStateEventKind.MANUAL_DISABLE: "人工停用",
         RuntimeStateEventKind.MANUAL_PAUSE: "人工暫停",
         RuntimeStateEventKind.MANUAL_RESUME: "人工恢復",
+        RuntimeStateEventKind.PAUSE_DUE_TO_BLOCKING: "因站方阻擋而暫停",
         RuntimeStateEventKind.PAUSE_DUE_TO_HTTP_403: "因站方阻擋而暫停",
         RuntimeStateEventKind.ENTERED_BACKOFF: "進入退避",
         RuntimeStateEventKind.CLEARED_BACKOFF: "解除退避",

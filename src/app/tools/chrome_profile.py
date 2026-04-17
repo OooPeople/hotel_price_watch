@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import sys
 
+from app.bootstrap.site_wiring import build_default_browser_page_strategy
 from app.infrastructure.browser.chrome_cdp_fetcher import ChromeCdpHtmlFetcher
 
 
 def main() -> None:
     """啟動專用 Chrome profile，讓使用者先建立長期可重用的 `ikyu` session。"""
     start_url = sys.argv[1] if len(sys.argv) > 1 else None
-    fetcher = ChromeCdpHtmlFetcher()
+    fetcher = ChromeCdpHtmlFetcher(page_strategy=build_default_browser_page_strategy())
     fetcher.open_profile_window(start_url=start_url)
 
     print("已啟動可附著的專用 Chrome profile。")

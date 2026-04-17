@@ -20,8 +20,13 @@ from app.application.watch_editor import WatchCreationPreview, WatchEditorServic
 from app.application.watch_lifecycle import WatchLifecycleCoordinator
 from app.bootstrap.container import AppContainer
 from app.config.models import NotificationChannelSettings
-from app.domain.entities import NotificationDispatchResult, WatchItem
-from app.domain.enums import NotificationLeafKind
+from app.domain.entities import LatestCheckSnapshot, NotificationDispatchResult, WatchItem
+from app.domain.enums import (
+    Availability,
+    NotificationLeafKind,
+    RuntimeStateEventKind,
+    WatchRuntimeState,
+)
 from app.domain.notification_rules import RuleLeaf
 from app.domain.value_objects import SearchDraft, WatchTarget
 from app.infrastructure.browser import ChromeCdpHtmlFetcher, ChromeTabSummary
@@ -34,6 +39,7 @@ from app.infrastructure.db import (
 from app.main import create_app
 from app.monitor.runtime import MonitorRuntimeStatus
 from app.sites.base import CandidateBundle, LookupDiagnostic, OfferCandidate
+from app.sites.ikyu import IkyuAdapter
 from app.sites.registry import SiteRegistry
 from app.web.views import (
     render_chrome_tab_selection_page,
@@ -737,6 +743,40 @@ def test_post_watch_pause_and_resume_updates_status(tmp_path) -> None:
     assert resumed_watch.paused_reason is None
 
 
+def test_post_watch_resume_records_recover_pending_transition(tmp_path) -> None:
+    """從 403 暫停恢復時，手動事件應保留 latest snapshot 的恢復待驗證語意。"""
+    container = _build_test_container(tmp_path)
+    container.watch_item_repository.save(
+        replace(_build_watch_item(), paused_reason="http_403")
+    )
+    container.runtime_repository.save_latest_check_snapshot(
+        LatestCheckSnapshot(
+            watch_item_id="watch-list-1",
+            checked_at=datetime(2026, 4, 14, 12, 0, tzinfo=timezone.utc),
+            availability=Availability.UNKNOWN,
+            normalized_price_amount=None,
+            currency=None,
+            last_error_code="http_403",
+            consecutive_failures=1,
+        )
+    )
+    client = TestClient(create_app(container))
+
+    response = client.post(
+        "/watches/watch-list-1/resume",
+        headers=_local_request_headers(),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    runtime_state_events = container.runtime_repository.list_runtime_state_events(
+        "watch-list-1"
+    )
+    assert runtime_state_events[0].event_kind is RuntimeStateEventKind.MANUAL_RESUME
+    assert runtime_state_events[0].from_state is WatchRuntimeState.PAUSED_BLOCKED
+    assert runtime_state_events[0].to_state is WatchRuntimeState.RECOVER_PENDING
+
+
 def test_post_watch_enable_reactivates_disabled_watch(tmp_path) -> None:
     """啟用 route 應可把 disabled watch 恢復為 enabled。"""
     container = _build_test_container(tmp_path)
@@ -1323,6 +1363,7 @@ def _build_test_container(tmp_path) -> AppContainer:
     watch_repository = SqliteWatchItemRepository(database)
     runtime_repository = SqliteRuntimeRepository(database)
     site_registry = SiteRegistry()
+    site_registry.register(IkyuAdapter())
     watch_editor_service = FakeWatchEditorService(watch_repository, runtime_repository)
     return AppContainer(
         instance_id="test-instance",

@@ -7,7 +7,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.domain.entities import PriceSnapshot
+from app.domain.entities import PriceSnapshot, WatchItem
 from app.domain.enums import SourceKind
 from app.domain.value_objects import SearchDraft, WatchTarget
 from app.sites.base import (
@@ -16,6 +16,12 @@ from app.sites.base import (
     CandidateSelection,
     LookupDiagnostic,
     SiteAdapter,
+)
+from app.sites.ikyu.browser_matching import (
+    extract_ikyu_browser_page_signature,
+    ikyu_signature_matches_watch_target,
+    ikyu_urls_match_confidently,
+    is_ikyu_page_url,
 )
 from app.sites.ikyu.client import HtmlFetchResult, IkyuHtmlClient
 from app.sites.ikyu.normalizer import (
@@ -43,6 +49,38 @@ class IkyuAdapter(SiteAdapter):
     def match_url(self, url: str) -> bool:
         """判斷是否由 `ikyu` adapter 負責處理此 seed URL。"""
         return is_supported_ikyu_url(url)
+
+    def is_browser_page_url(self, url: str) -> bool:
+        """判斷 Chrome 分頁 URL 是否屬於可建立 `ikyu` preview 的頁面。"""
+        return is_ikyu_page_url(url)
+
+    def browser_tab_matches_watch(
+        self,
+        *,
+        tab_url: str,
+        watch_item: WatchItem,
+        draft: SearchDraft | None,
+    ) -> bool:
+        """判斷 `ikyu` 分頁是否對應到既有 watch target。"""
+        if watch_item.target.site != self.site_name:
+            return False
+        if draft is not None and draft.browser_page_url is not None and (
+            draft.browser_page_url == tab_url
+            or ikyu_urls_match_confidently(
+                left_url=draft.browser_page_url,
+                right_url=tab_url,
+            )
+        ):
+            return True
+        if ikyu_urls_match_confidently(
+            left_url=watch_item.canonical_url,
+            right_url=tab_url,
+        ):
+            return True
+        return ikyu_signature_matches_watch_target(
+            signature=extract_ikyu_browser_page_signature(tab_url),
+            target=watch_item.target,
+        )
 
     def parse_seed_url(self, url: str) -> SearchDraft:
         """將原始 `ikyu` URL 轉成可供 editor 使用的查詢草稿。"""

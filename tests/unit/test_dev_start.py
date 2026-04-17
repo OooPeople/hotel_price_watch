@@ -1,4 +1,4 @@
-"""驗證單一啟動入口的 Chrome 檢查與 GUI 啟動流程。"""
+﻿"""驗證單一啟動入口的 Chrome 檢查與 GUI 啟動流程。"""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def test_dev_start_uses_existing_debuggable_chrome(monkeypatch) -> None:
     """若已存在可附著 Chrome，單一啟動入口不應再重開 profile。"""
     fetcher = _FakeFetcher(running=True)
     uvicorn_calls: list[dict[str, object]] = []
-    monkeypatch.setattr(dev_start, "ChromeCdpHtmlFetcher", lambda: fetcher)
+    monkeypatch.setattr(dev_start, "ChromeCdpHtmlFetcher", lambda **kwargs: fetcher)
     monkeypatch.setattr(dev_start, "read_lock_record", lambda path: None)
     monkeypatch.setattr(dev_start, "_is_port_in_use", lambda **kwargs: False)
     monkeypatch.setattr(dev_start, "write_lock_record", lambda path, record: None)
@@ -63,7 +63,7 @@ def test_dev_start_opens_profile_when_debuggable_chrome_missing(monkeypatch) -> 
     """若尚未啟動專用 Chrome，單一啟動入口應先喚醒 profile 再起 GUI。"""
     fetcher = _FakeFetcher(running=False)
     uvicorn_calls: list[dict[str, object]] = []
-    monkeypatch.setattr(dev_start, "ChromeCdpHtmlFetcher", lambda: fetcher)
+    monkeypatch.setattr(dev_start, "ChromeCdpHtmlFetcher", lambda **kwargs: fetcher)
     monkeypatch.setattr(dev_start, "read_lock_record", lambda path: None)
     monkeypatch.setattr(dev_start, "_is_port_in_use", lambda **kwargs: False)
     monkeypatch.setattr(dev_start, "write_lock_record", lambda path, record: None)
@@ -98,7 +98,7 @@ def test_dev_start_reuses_existing_instance_when_port_and_lock_exist(monkeypatch
     """若已有既有 app instance，單一啟動入口應直接沿用而不再啟動 uvicorn。"""
     fetcher = _FakeFetcher(running=True)
     uvicorn_calls: list[dict[str, object]] = []
-    monkeypatch.setattr(dev_start, "ChromeCdpHtmlFetcher", lambda: fetcher)
+    monkeypatch.setattr(dev_start, "ChromeCdpHtmlFetcher", lambda **kwargs: fetcher)
     monkeypatch.setattr(
         dev_start,
         "read_lock_record",
@@ -144,7 +144,7 @@ def test_dev_start_reuses_existing_instance_when_port_and_lock_exist(monkeypatch
 def test_dev_start_reuse_requires_healthy_existing_instance(monkeypatch) -> None:
     """若偵測到既有實例但 /health 無法取得有效回應，應直接報錯而非靜默沿用。"""
     fetcher = _FakeFetcher(running=True)
-    monkeypatch.setattr(dev_start, "ChromeCdpHtmlFetcher", lambda: fetcher)
+    monkeypatch.setattr(dev_start, "ChromeCdpHtmlFetcher", lambda **kwargs: fetcher)
     monkeypatch.setattr(
         dev_start,
         "read_lock_record",
@@ -173,7 +173,7 @@ def test_dev_start_reuse_requires_healthy_existing_instance(monkeypatch) -> None
 def test_dev_start_reuse_requires_matching_instance_id(monkeypatch) -> None:
     """既有實例沿用前，lock file 與 `/health` 的 instance_id 必須一致。"""
     fetcher = _FakeFetcher(running=True)
-    monkeypatch.setattr(dev_start, "ChromeCdpHtmlFetcher", lambda: fetcher)
+    monkeypatch.setattr(dev_start, "ChromeCdpHtmlFetcher", lambda **kwargs: fetcher)
     monkeypatch.setattr(
         dev_start,
         "read_lock_record",
@@ -212,7 +212,7 @@ def test_dev_start_cleans_stale_lock_before_start(monkeypatch) -> None:
     removed_paths: list[object] = []
     written_records: list[object] = []
     uvicorn_calls: list[dict[str, object]] = []
-    monkeypatch.setattr(dev_start, "ChromeCdpHtmlFetcher", lambda: fetcher)
+    monkeypatch.setattr(dev_start, "ChromeCdpHtmlFetcher", lambda **kwargs: fetcher)
     monkeypatch.setattr(
         dev_start,
         "read_lock_record",

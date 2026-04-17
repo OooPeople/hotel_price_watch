@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import uvicorn
 
+from app.bootstrap.site_wiring import build_default_browser_page_strategy
 from app.infrastructure.browser.chrome_cdp_fetcher import ChromeCdpHtmlFetcher
 from app.monitor.single_instance import (
     SingleInstanceAction,
@@ -93,7 +94,7 @@ def main() -> None:
     )
     os.environ["HOTEL_PRICE_WATCH_INSTANCE_ID"] = instance_id
 
-    fetcher = ChromeCdpHtmlFetcher()
+    fetcher = ChromeCdpHtmlFetcher(page_strategy=build_default_browser_page_strategy())
     if fetcher.is_debuggable_chrome_running():
         print("已偵測到可附著的專用 Chrome，直接啟動 GUI。")
     else:

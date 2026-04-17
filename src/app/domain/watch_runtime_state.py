@@ -20,7 +20,7 @@ def derive_watch_runtime_state(
     if not watch_item.enabled:
         return WatchRuntimeState.MANUALLY_DISABLED
     if watch_item.paused_reason == "http_403":
-        return WatchRuntimeState.PAUSED_BLOCKED_403
+        return WatchRuntimeState.PAUSED_BLOCKED
     if watch_item.paused_reason == "manually_paused":
         return WatchRuntimeState.MANUALLY_PAUSED
     if watch_item.paused_reason is not None:
@@ -50,6 +50,7 @@ def describe_watch_runtime_state(state: WatchRuntimeState) -> str:
         WatchRuntimeState.RECOVER_PENDING: "恢復待驗證",
         WatchRuntimeState.MANUALLY_PAUSED: "人工暫停",
         WatchRuntimeState.MANUALLY_DISABLED: "停用",
+        WatchRuntimeState.PAUSED_BLOCKED: "站方阻擋已暫停",
         WatchRuntimeState.PAUSED_BLOCKED_403: "站方阻擋已暫停",
         WatchRuntimeState.PAUSED_OTHER: "暫停",
     }

@@ -1,21 +1,13 @@
 # Task Breakdown
 
-本文件只保留三種資訊：
-- 已完成到哪個里程碑
-- 目前主線還缺什麼
-- 下一步應先做什麼
-
-細節設計與交接說明請看：
-- `docs/V1_SPEC.md`
-- `docs/ARCHITECTURE_PLAN.md`
-- `docs/HANDOFF_PLAN.md`
+本文件只保留專案進度與下一步。規格看 `docs/V1_SPEC.md`，架構邊界看 `docs/ARCHITECTURE_PLAN.md`，交接看 `docs/HANDOFF_PLAN.md`。
 
 ## 目前總結
 
-- o V1 正式主線已改為「附著專用 Chrome profile + CDP attach」
-- o GUI、preview、watch CRUD、全域通知設定、debug captures 已可實際操作
-- o background runtime 已接線，且已完成第一輪高風險穩定化
-- 目前主線已從「功能缺失」轉進「長時間穩定性驗證 + 第二層結構整理」
+- o V1 正式主線已收斂為「附著專用 Chrome profile + CDP attach」
+- o GUI、preview、watch CRUD、通知設定、debug captures、background runtime 已可實際操作
+- o 拆 `main.py` / `web/views.py` 前的第一輪高風險收斂已完成
+- 目前主線進入第二層結構整理：先拆 `main.py`，再拆 `web/views.py`，最後收斂 `ChromeCdpHtmlFetcher`
 
 ## Milestone 1: 專案初始化（已完成）
 
@@ -25,92 +17,63 @@
 
 ## Milestone 2: Parser Proof（已完成）
 
-- o `ikyu` URL normalizer
-- o fixture 收集規則與 parser tests
-- o `seed_url -> search_draft`
-- o 精確 `room-plan` 價格解析
-- o watch target canonicalization
-- o 條件改變後的候選重查
+- o `ikyu` URL normalizer、fixture、parser tests
+- o `seed_url -> search_draft -> watch_target`
+- o 精確 `room-plan` 價格解析與 target identity
 - o 每人每晚價格衍生顯示
 
-## Milestone 3: Monitor Engine（已完成模組，已初步接線）
+## Milestone 3: Monitor Engine（已完成）
 
 - o scheduler / queue / worker state
 - o compare / notification evaluator / dedupe / backoff / wakeup rescan
-- o 單實例所需的 port / lock / PID 驗證骨架
-- o monitor runtime 已透過 app `lifespan` 初步接到啟動流程
+- o monitor runtime 已透過 app `lifespan` 接到啟動流程
+- o 背景排程與 `check-now` 已共用 per-watch 互斥
 
 ## Milestone 4: Persistence（已完成）
 
-- o SQLite schema
-- o watch item / draft / latest snapshot / check event / price history / notification state / debug artifact persistence
+- o SQLite schema、migration、`WAL`、`busy_timeout`
 - o watch 設定與 runtime state 分離
-- o schema versioning 與 migration 基礎
+- o latest snapshot / check event / price history / notification state / runtime state event / debug artifact persistence
+- o 單次 check 已改成單一 transaction 持久化
 
-## Milestone 5: Notifications（已完成模組，已初步接線）
+## Milestone 5: Notifications（已完成）
 
 - o desktop / `ntfy` / Discord webhook notifier
 - o formatter / dispatcher / throttle
-- o degraded 通知流程
-- o 全域通知通道設定已接到 runtime
-- o 測試通知會走正式 dispatcher / notifier 路徑
+- o 全域通知通道設定與測試通知已走正式 dispatcher / notifier 路徑
+- o 通道冷卻可跨 runtime 重啟保留
 
 ## Milestone 6: GUI（已完成第一版）
 
-- o watch 列表、新增、刪除
-- o 從專用 Chrome 分頁抓取建立 watch
-- o 候選方案、價格、每人每晚顯示
-- o watch 詳細頁、歷史與錯誤摘要
-- o 單一 watch 的通知規則設定
-- o 全域通知通道設定頁
+- o watch 列表、新增、刪除、詳細頁、歷史與錯誤摘要
+- o 從專用 Chrome 分頁抓取建立 watch，不再要求手動 Seed URL
+- o 單一 watch 通知規則與全域通知通道設定頁
 - o debug captures 列表、詳細頁、清空
-- o watch 的啟用 / 停用 / 暫停 / 恢復 / 手動立即檢查
-- o 首頁與 watch 詳細頁已支援局部 polling 更新，不需手動整頁刷新
-- o Chrome 分頁清單已改成以 target identity / `browser_page_url` / query-aware matching 判斷既有 watch，不再由 `tab_id` 主導
-- o runtime 啟動恢復時，已恢復給前一個 watch 的 tab 不會再被下一個 watch 重用
+- o watch 啟用 / 停用 / 暫停 / 恢復 / 手動立即檢查
+- o 首頁與 watch 詳細頁支援局部 polling 更新
+- o Chrome 分頁清單已用 target identity / `browser_page_url` / query-aware matching 判斷既有 watch
+- o runtime 啟動恢復時，多個 watch 不會共用同一分頁依序跳轉
 
-### Milestone 6 風險註記
+## Milestone 6.5: Chrome-driven Runtime 收斂（第一輪完成）
 
-- `ikyu` 真站仍可能對同一出口 IP 做風控
-- 背景監看依賴專用 Chrome session，不依賴使用者當前前景分頁
-- Chrome 縮小或背景運作時，仍需持續驗證節流 / discard / blocked page 行為
+- o V1 control command policy 已文件化：不硬取消 in-flight check，阻止新任務並在提交前 gate
+- o `WatchLifecycleCoordinator` 已接上 pause / disable / resume / check-now
+- o in-flight check 中途被 pause / disable 時，不寫入新結果或發通知
+- o 403 auto-pause 的 control state 已納入 check outcome 同一個 SQLite transaction，且會同步從 scheduler 移除
+- o `WatchRuntimeState` 與 `runtime_state_events` 已成為 GUI / runtime 的正式狀態語意
+- o `RECOVER_PENDING`、`PAUSED_BLOCKED`、`pause_due_to_blocking` 已取代新的 403 中心顯示語意；舊 403 enum/state 僅保留歷史相容
+- o `SiteAdapter` 已補 browser page capability，tab filtering / matching 已由 adapter / registry 驅動
+- o `ChromeCdpHtmlFetcher` 已改用可注入 browser page strategy，blocked / ready / page scoring 不再硬寫在 fetcher 內
+- o `ikyu` blocked page guard 已移到 `sites/ikyu`
+- o `BrowserBlockingOutcome` 已取代錯誤訊息片段判斷，支援 `forbidden -> http_403` 與 `rate_limited -> http_429`
+- o preview cooldown 與 debug capture 已補 site metadata / site filter
+- o V1 站點 adapter 與 browser strategy wiring 已集中到 `bootstrap/site_wiring.py`
 
-## Milestone 6.5: Chrome-driven Runtime 收斂（第一輪高風險項已完成）
-
-- o runtime 已正式接上 app 啟動流程
-- o `SiteAdapter` 已正式支援 browser preview 與 browser snapshot
-- o create flow 與 runtime 主線已收斂到 Chrome-driven 路徑
-- o watch 與 Chrome 分頁的穩定識別已初步落地
-- o runtime status、blocked page、throttling、tab discard 已可觀測
-- o 單實例沿用已加 `/health` 與 `instance_id` 驗證
-- o runtime 錯誤映射已改為型別導向
-- o 背景排程與 `check-now` 已共用 per-watch 互斥
-- o 單次 check 已改成單一 transaction 持久化
-- o SQLite 已補 `WAL`、`busy_timeout` 與歷史查詢 index
-- o migration 已改成明確鏈式升版
-- o state-changing POST route 已補本機 `Origin/Referer` 驗證
-- o notifier 外部 HTTP 請求已補顯式 timeout
-- o runtime 啟動時會低速恢復 enabled 且未 paused 的 watch 分頁，輪詢時仍保留缺頁補建
-- o 已引入正式 `WatchRuntimeState`，GUI 不再靠零散欄位拼湊目前狀態語意
-- o 已補 server-side invariant：輪詢秒數下限、正數目標價、通知 URL 必須為合法 `http/https`
-- o 已建立 watch lifecycle coordinator，讓 pause / disable / resume / check-now 走單一協調入口
-- o 已補 in-flight check 提交前控制狀態驗證，watch 中途被 pause / disable 時不寫入新結果或發通知
-- o preview cooldown 已改成 site-scoped，避免未來多站互相冷卻
-- o preview debug capture 已補 site metadata 與 site filter，避免第二站後 debug reader 只認 `ikyu`
-- o `ikyu` browser page matching 已集中到站點模組，`main.py` 與 CDP fetcher 不再各自維護一份 URL signature 規則
-- o `WatchTargetIdentity` 已改為具名 value object，不再用裸 tuple 表示 watch target identity
-
-### Milestone 6.5 尚未完成
+## Milestone 6.5 尚未完成但不阻擋拆檔
 
 - 補更完整的長時間運作、節流與重試行為驗證
-- 釐清 preview / runtime / notification 的更長時間失敗模式
-
-### Milestone 6.5 近期已補的驗證
-
-- o 已驗證通知通道冷卻會跨 runtime 重啟保留
-- o 已驗證單一通知通道失敗不會中止整次 check，且其他通道仍可成功送出
-- o 已驗證連續 timeout 會遞增 backoff，且 backoff 後成功檢查會清掉 failure 狀態
-- o 已引入 `runtime_state_events`，把 blocked / paused / resumed / recovered transition 納入正式事件模型
+- 補 blocked / recover control recommendation 的更完整語意
+- 規劃 `watch_item` 靜態定義與控制狀態的長期分離方式，先不急著做大 migration
 
 ## Milestone 7: Packaging（尚未開始）
 
@@ -118,17 +81,16 @@
 - 建立 build 腳本
 - 驗證無 Python 環境啟動
 
-## 第二層整理（非第一線風險）
+## 下一步
 
-- 在第二站前，補更正式的 site capability / browser strategy 契約；目前 `ikyu` browser matching 已先集中，但 CDP fetcher 仍是單站假設
-- 拆 `main.py`
-- 拆 `web/views.py`
-- 收斂 `ChromeCdpHtmlFetcher`
-- 整理 state ownership
+- 拆 `main.py`：先拆 router / web orchestration，保留 app 建立、lifespan、container 掛載在 entrypoint
+- 拆 `web/views.py`：依 watch list、watch detail、settings、debug pages 拆 render helper
+- 收斂 `ChromeCdpHtmlFetcher`：拆 profile / attach / tab matching / capture 訊號
+- 整理 state ownership：避免 runtime 欄位回流到 `watch_item`
 
-## 立即下一步
+## 目前主要風險
 
-- 補更完整的長時間運作、節流與重試行為驗證
-- 開始拆 `main.py`：先拆 router / web orchestration，保留 app 建立與 lifespan 在 entrypoint
-- 視結果決定是否再做一輪整體 review
-- 若拆 `main.py` 後沒有新增高風險項，再拆 `web/views.py`、收斂 `ChromeCdpHtmlFetcher`、整理 state ownership
+- `ikyu` 真站仍可能對同一出口 IP 做風控
+- 背景監看依賴專用 Chrome session，不依賴使用者目前前景分頁
+- Chrome 縮小或背景運作時，仍需持續驗證節流 / discard / blocked page 行為
+- 第二站前需避免把新站點邏輯直接塞進 `main.py`、`views.py` 或 `ChromeCdpHtmlFetcher`
