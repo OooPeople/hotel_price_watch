@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from enum import StrEnum
 
 from app.domain.entities import (
     CheckEvent,
@@ -40,6 +41,99 @@ class RuntimeControlRecommendation:
         if self.lifecycle_decision is None:
             return None
         return self.lifecycle_decision.watch_item
+
+
+class TaskLifecycleCheckpoint(StrEnum):
+    """表示 runtime task 執行過程中需要重新檢查 control state 的節點。"""
+
+    AFTER_CAPTURE = "after_capture"
+    BEFORE_NOTIFICATION_DISPATCH = "before_notification_dispatch"
+    BEFORE_PERSIST_RESULT = "before_persist_result"
+
+
+class TaskDispositionKind(StrEnum):
+    """表示 in-flight task 在 control gate 後應採取的處置。"""
+
+    CONTINUE = "continue"
+    DISCARD = "discard"
+
+
+@dataclass(frozen=True, slots=True)
+class TaskLifecycleDisposition:
+    """描述 in-flight task 在某個 checkpoint 的正式處置結果。"""
+
+    checkpoint: TaskLifecycleCheckpoint
+    kind: TaskDispositionKind
+    reason: str | None = None
+
+    @property
+    def should_continue(self) -> bool:
+        """回傳 task 是否可繼續執行下一個 side effect。"""
+        return self.kind is TaskDispositionKind.CONTINUE
+
+    @property
+    def should_discard(self) -> bool:
+        """回傳 task 是否應丟棄後續結果。"""
+        return self.kind is TaskDispositionKind.DISCARD
+
+
+@dataclass(frozen=True, slots=True)
+class TaskLifecyclePolicy:
+    """封裝 V1 `continue-and-gate` 的 in-flight task lifecycle policy。"""
+
+    def evaluate(
+        self,
+        *,
+        watch_item: WatchItem | None,
+        checkpoint: TaskLifecycleCheckpoint,
+    ) -> TaskLifecycleDisposition:
+        """依目前 control state 判斷指定 checkpoint 的 task disposition。"""
+        return _evaluate_continue_and_gate_disposition(
+            watch_item=watch_item,
+            checkpoint=checkpoint,
+        )
+
+
+def evaluate_task_lifecycle_disposition(
+    *,
+    watch_item: WatchItem | None,
+    checkpoint: TaskLifecycleCheckpoint,
+) -> TaskLifecycleDisposition:
+    """依目前 control state 判斷 in-flight task 在指定 checkpoint 的處置。"""
+    return TaskLifecyclePolicy().evaluate(
+        watch_item=watch_item,
+        checkpoint=checkpoint,
+    )
+
+
+def _evaluate_continue_and_gate_disposition(
+    *,
+    watch_item: WatchItem | None,
+    checkpoint: TaskLifecycleCheckpoint,
+) -> TaskLifecycleDisposition:
+    """執行 V1 continue-and-gate policy 的實際 disposition 判斷。"""
+    if watch_item is None:
+        return TaskLifecycleDisposition(
+            checkpoint=checkpoint,
+            kind=TaskDispositionKind.DISCARD,
+            reason="watch_missing",
+        )
+    if not watch_item.enabled:
+        return TaskLifecycleDisposition(
+            checkpoint=checkpoint,
+            kind=TaskDispositionKind.DISCARD,
+            reason="watch_disabled",
+        )
+    if watch_item.paused_reason is not None:
+        return TaskLifecycleDisposition(
+            checkpoint=checkpoint,
+            kind=TaskDispositionKind.DISCARD,
+            reason=f"watch_paused:{watch_item.paused_reason}",
+        )
+    return TaskLifecycleDisposition(
+        checkpoint=checkpoint,
+        kind=TaskDispositionKind.CONTINUE,
+    )
 
 
 def decide_error_handling(

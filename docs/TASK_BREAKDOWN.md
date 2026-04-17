@@ -91,9 +91,20 @@
 - o 抽出 `watch_lifecycle_state_machine.py`，集中定義 control command decision / transition result / scheduler side effect / in-flight policy
 - o 明確描述 enable / disable / pause / resume / check-now / runtime blocked pause 的允許條件與副作用
 - o runtime auto-pause 已改走同一套 lifecycle state machine，runtime 不再直接拼接暫停 watch state 或 runtime state event
-- o 明確定義 in-flight task lifecycle：維持不硬取消、以 late gate 丟棄結果；目前不引入硬取消策略
-- 評估是否新增 `watch_control_states` table；若沒有第二站或更複雜控制需求，先只完成設計，不做 migration
+- o 明確定義 in-flight task lifecycle：維持不硬取消、以 `TaskLifecyclePolicy` / `TaskLifecycleDisposition` 套用 `continue-and-gate`
+- o 已完成 `watch_control_states` future migration plan；目前不做 migration，先避免新增更多 control 欄位到 `watch_item`
 - o 已完成拆 `main.py` 前的 lifecycle/control 決策：不做 migration，先以 state machine + coordinator + recommendation 收斂控制權
+
+## Milestone 6.8: Web Route 拆分（準備中）
+
+- o 已補 `main.py` 拆分 guardrails：route 不新增 lifecycle 決策、不新增 site-specific 規則
+- o 第一刀已完成：抽出 request / form helper 到 `app.web.request_helpers`
+- o 第二刀已完成：抽出 debug captures routes 到 `app.web.routes.debug_routes`
+- o 第三刀已完成：抽出 settings / notification routes 到 `app.web.routes.settings_routes`
+- o 第四刀已完成：抽出 watch list / detail / control routes 到 `app.web.routes.watch_routes`
+- o 第五刀已完成：抽出 watch creation / Chrome tab preview routes 到 `app.web.routes.watch_creation_routes`
+- o `main.py` 已收斂為 app factory、lifespan、container 掛載、router include 與 health endpoint
+- 下一步改拆 `web/views.py`，避免 route 與 render helper 繼續互相膨脹
 
 ## Milestone 7: Packaging（尚未開始）
 
@@ -103,8 +114,8 @@
 
 ## 下一步
 
-1. 開始拆 `main.py`：先拆 router / web orchestration，保留 app 建立、lifespan、container 掛載在 entrypoint
-2. 拆 `web/views.py`：依 watch list、watch detail、settings、debug pages 拆 render helper
+1. 拆 `web/views.py`：依 watch list、watch detail、settings、debug pages 拆 render helper
+2. 檢查 web routes 是否需要共用 page context / view model helper，避免 route 直接組太多頁面資料
 3. 進一步收斂 `ChromeCdpHtmlFetcher` 內部責任：profile 啟動、CDP attach、tab matching、capture 訊號分層
 
 ## 目前主要風險

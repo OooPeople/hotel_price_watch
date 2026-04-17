@@ -8,6 +8,7 @@ from app.notifiers.ntfy import NtfyNotifier
 
 
 def test_desktop_notifier_builds_powershell_command() -> None:
+    """驗證桌面通知通道會組出 Windows PowerShell balloon command。"""
     commands: list[list[str]] = []
     notifier = DesktopNotifier(command_runner=commands.append)
 
@@ -20,6 +21,7 @@ def test_desktop_notifier_builds_powershell_command() -> None:
 
 
 def test_ntfy_notifier_posts_plain_text_payload() -> None:
+    """驗證 ntfy 通道會送出 UTF-8 JSON payload。"""
     requests: list[tuple[str, dict[str, str], bytes, float]] = []
     notifier = NtfyNotifier(
         server_url="https://ntfy.example.com",
@@ -52,6 +54,7 @@ def test_ntfy_notifier_posts_plain_text_payload() -> None:
 
 
 def test_discord_notifier_posts_json_payload() -> None:
+    """驗證 Discord webhook 通道會送出相容 webhook 的 JSON payload。"""
     requests: list[tuple[str, dict[str, str], bytes, float]] = []
     notifier = DiscordWebhookNotifier(
         webhook_url="https://discord.example.com/webhook",

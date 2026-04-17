@@ -54,6 +54,31 @@ src/app/
 
 `watch_item.enabled` 與 `watch_item.paused_reason` 目前仍是 control state 的最小欄位。後續若要更完整分離 control state，需做正式 migration，不應臨時增加零散欄位。
 
+### 3.1 `watch_control_states` Future Migration Plan
+
+目前不立即實作 `watch_control_states` migration，但先固定長期方向，避免後續新增控制欄位時繼續塞進 `watch_item`。
+
+未來拆分目標：
+
+- `watch_items`：只保存 watch 靜態定義，例如 target、hotel / room / plan 顯示資訊、canonical URL、notification rule、scheduler interval
+- `watch_control_states`：保存 control plane 狀態，例如 `watch_item_id`、`enabled`、`paused_reason`、`updated_at`、可選的 `version`
+- lifecycle state machine 未來輸出 control state transition，而不是直接回傳修改後的 `WatchItem`
+- repository 提供 GUI / runtime 需要的 read model，避免 route 或 runtime 自行拼 join
+- scheduler sync、check-now gate、pause / disable / resume 都只依 control state 判斷
+
+暫緩原因：
+
+- 目前只有單站，control state 仍只有 `enabled` / `paused_reason`
+- 立即 migration 會同時影響 SQLite schema、repository、GUI list、runtime scheduler sync、integration tests
+- 目前較重要的是先守住 state ownership：不要新增更多 control 欄位到 `watch_item`
+
+觸發條件：
+
+- 第二站需要更多 control state
+- 出現 per-site control policy
+- 需要 user-visible pause reason history 或 control state versioning
+- `enabled` / `paused_reason` 以外的控制欄位開始增加
+
 ## 4. Site Boundary
 
 `SiteAdapter` 是 GUI / runtime 使用站點能力的正式邊界。V1.5 的目標是先讓現有單站流程 site-aware，而不是立刻平台化多站。
@@ -128,6 +153,29 @@ V1 採保守策略：
 - 若 check 已進入單一 DB transaction，允許安全收尾，避免半套寫入
 - `resume` / `enable` 只解除 control gate，不代表已成功恢復；若 latest snapshot 仍是 blocked error，current state 仍會是 `RECOVER_PENDING`
 
+### 6.1 分頁關閉與 In-flight Check
+
+`pause` / `disable` 的產品語意是「立即停止後續監看意圖」，不是「強制殺掉已進入外部系統的同步操作」。
+
+使用者在按下 `pause` / `disable` 後，可以關閉對應 Chrome 分頁。若當下剛好有 in-flight check 正在透過 Chrome / CDP 抓取該分頁，該次檢查可能產生一次臨時 browser error，例如 tab closed、frame detached 或 network error。這類錯誤應被視為 bounded error：
+
+- 不應造成程式崩潰
+- 不應造成 watch 永久壞掉
+- 不應造成 paused / disabled watch 持續重試
+- 不應阻止之後 `resume` / `enable` 重新找回或補開分頁
+
+因此 V1 的正式 task lifecycle policy 是 `continue-and-gate`：
+
+- control command 立即更新 control state 並移除 scheduler active set
+- in-flight check 不硬取消
+- 每個不可逆外部 side effect 前由 `TaskLifecyclePolicy` 評估 `TaskLifecycleDisposition`
+- runtime 目前在 `AFTER_CAPTURE`、`BEFORE_NOTIFICATION_DISPATCH`、`BEFORE_PERSIST_RESULT` 三個 checkpoint 套用 disposition
+- 若中途已 pause / disable，後續通知與持久化結果丟棄
+- 若 notifier 已經送出或 DB transaction 已經開始，不嘗試回滾
+- `resume` / `enable` 後，runtime 需依保存的 watch identity、`browser_page_url` 與 canonical URL 找回或補開分頁
+
+這個策略刻意避免 hard cancel，因為目前 Chrome 操作、notifier dispatch 與 SQLite 寫入可能透過同步外部操作執行，強制中斷反而會讓 side effect 邊界更難推理。
+
 ## 7. Blocking 與 Runtime State
 
 目前新語意採 generic 命名：
@@ -189,12 +237,22 @@ V1 採保守策略：
 
 ### 9.4 `main.py` 偏大
 
-等 site descriptor、per-site strategy、lifecycle owner 決策落地後，再把 route / web orchestration 拆出 router 模組，保留 `main.py` 只做：
+site descriptor、per-site strategy、lifecycle owner 與 task disposition 已完成第一輪，可以開始低風險拆分 route / web orchestration。拆分 guardrails：
 
-- app 建立
-- lifespan
-- container 掛載
-- router include
+- `main.py` 保留 app 建立、lifespan、container 掛載、router include
+- routes 可依頁面群組拆到 `src/app/web/routes/`
+- 共用 request / form parsing helper 可先抽到 `src/app/web/`
+- 不在 route 層新增 lifecycle 決策，必須繼續呼叫 application service / state machine owner
+- 不在 route 層新增 site-specific 規則，必須透過 `SiteAdapter` / registry
+- 每一刀只搬一組 route 或一組 helper，搬完跑 route 相關測試
+
+目標結構：
+
+- `src/app/main.py`：app factory、lifespan、router include
+- `src/app/web/routes/watch_routes.py`：watch list、detail、control action、creation flow
+- `src/app/web/routes/settings_routes.py`：notification channel settings
+- `src/app/web/routes/debug_routes.py`：debug captures
+- `src/app/web/routes/system_routes.py`：health / fragments 可視情況拆分
 
 ### 9.5 `web/views.py` 偏大
 

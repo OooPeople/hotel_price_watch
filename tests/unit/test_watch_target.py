@@ -6,6 +6,7 @@ from app.domain.value_objects import WatchTarget, WatchTargetIdentity
 
 
 def test_watch_target_identity_excludes_currency_context() -> None:
+    """驗證 watch identity 只包含目標條件，不包含價格或幣別上下文。"""
     target = WatchTarget(
         site="ikyu",
         hotel_id="hotel-1",
@@ -31,6 +32,7 @@ def test_watch_target_identity_excludes_currency_context() -> None:
 
 
 def test_watch_target_rejects_invalid_date_range() -> None:
+    """驗證退房日早於入住日會被 watch target 拒絕。"""
     with pytest.raises(ValueError):
         WatchTarget(
             site="ikyu",
@@ -45,6 +47,7 @@ def test_watch_target_rejects_invalid_date_range() -> None:
 
 
 def test_watch_target_rejects_blank_identity_fields() -> None:
+    """驗證 watch target 的 identity 欄位不可為空白字串。"""
     with pytest.raises(ValueError):
         WatchTarget(
             site="ikyu",

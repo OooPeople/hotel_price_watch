@@ -10,6 +10,7 @@ from app.sites.ikyu.client import (
 
 
 def test_build_search_page_url_updates_query_from_draft() -> None:
+    """驗證 search draft 會被轉成 `ikyu` 搜尋頁所需的查詢參數。"""
     url = _build_search_page_url(
         SearchDraft(
             seed_url="https://www.ikyu.com/zh-tw/00082173/?top=rooms",
@@ -29,6 +30,7 @@ def test_build_search_page_url_updates_query_from_draft() -> None:
 
 
 def test_build_target_page_url_includes_room_and_plan_ids() -> None:
+    """驗證正式 watch target URL 會帶上精確房型與方案 ID。"""
     url = _build_target_page_url(
         WatchTarget(
             site="ikyu",

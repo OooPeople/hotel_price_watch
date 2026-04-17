@@ -8,6 +8,7 @@ from app.domain.notification_rules import RuleLeaf
 
 
 def test_any_drop_notifies_on_price_drop() -> None:
+    """驗證任意降價規則在價格下降時會產生通知決策。"""
     result = compare_snapshots(
         checked_at=datetime(2026, 4, 12, 10, 0, 0),
         previous_snapshot=_snapshot(amount="24000"),
@@ -26,6 +27,7 @@ def test_any_drop_notifies_on_price_drop() -> None:
 
 
 def test_below_target_price_notifies_when_price_changes_under_threshold() -> None:
+    """驗證低於目標價規則在低於門檻且價格變動時會通知。"""
     rule = RuleLeaf(
         kind=NotificationLeafKind.BELOW_TARGET_PRICE,
         target_price=Decimal("20000"),
@@ -58,6 +60,7 @@ def test_below_target_price_notifies_when_price_changes_under_threshold() -> Non
 
 
 def test_below_target_price_dedupes_same_price_and_availability() -> None:
+    """驗證同價格與同 availability 的低於目標價通知會去重。"""
     rule = RuleLeaf(
         kind=NotificationLeafKind.BELOW_TARGET_PRICE,
         target_price=Decimal("20000"),
@@ -84,6 +87,7 @@ def test_below_target_price_dedupes_same_price_and_availability() -> None:
 
 
 def test_became_available_is_notified_independently() -> None:
+    """驗證從售完變可訂會獨立觸發恢復可訂通知。"""
     result = compare_snapshots(
         checked_at=datetime(2026, 4, 12, 10, 0, 0),
         previous_snapshot=_snapshot(amount=None, availability=Availability.SOLD_OUT),
@@ -100,6 +104,7 @@ def test_became_available_is_notified_independently() -> None:
 
 
 def test_became_available_ignores_immediate_unknown_when_last_effective_is_available() -> None:
+    """驗證 unknown 到 available 若上個有效狀態已可訂，不算恢復可訂。"""
     result = compare_snapshots(
         checked_at=datetime(2026, 4, 12, 10, 0, 0),
         previous_snapshot=_snapshot(amount=None, availability=Availability.UNKNOWN),
@@ -117,6 +122,7 @@ def test_became_available_ignores_immediate_unknown_when_last_effective_is_avail
 
 
 def test_became_available_looks_back_to_last_effective_sold_out() -> None:
+    """驗證 unknown 之前最後有效狀態為售完時，回到 available 會通知。"""
     result = compare_snapshots(
         checked_at=datetime(2026, 4, 12, 10, 0, 0),
         previous_snapshot=_snapshot(amount=None, availability=Availability.UNKNOWN),
@@ -134,6 +140,7 @@ def test_became_available_looks_back_to_last_effective_sold_out() -> None:
 
 
 def test_first_successful_snapshot_is_not_treated_as_became_available() -> None:
+    """驗證第一筆成功 snapshot 不會被誤判為恢復可訂。"""
     result = compare_snapshots(
         checked_at=datetime(2026, 4, 12, 10, 0, 0),
         previous_snapshot=None,
@@ -150,6 +157,7 @@ def test_first_successful_snapshot_is_not_treated_as_became_available() -> None:
 
 
 def test_parse_failed_only_notifies_when_streak_reaches_three() -> None:
+    """驗證解析失敗需達到指定連續次數才會通知，且通知後會去重。"""
     rule = RuleLeaf(kind=NotificationLeafKind.ANY_DROP)
     state = NotificationState(watch_item_id="watch-1")
 

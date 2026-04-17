@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -21,15 +22,19 @@ from app.domain.notification_engine import compare_snapshots
 from app.domain.notification_rules import RuleLeaf
 from app.domain.value_objects import WatchTarget
 from app.monitor.policies import (
+    TaskDispositionKind,
+    TaskLifecycleCheckpoint,
     build_monitor_check_artifacts,
     build_runtime_control_recommendation,
     decide_error_handling,
+    evaluate_task_lifecycle_disposition,
     reset_notification_state_after_success,
     should_trigger_wakeup_rescan,
 )
 
 
 def test_rate_limited_backoff_caps_at_two_hours() -> None:
+    """驗證 rate limited 連續失敗的退避時間最高限制為兩小時。"""
     decision = decide_error_handling(
         checked_at=datetime(2026, 4, 12, 10, 0, 0),
         error_code=CheckErrorCode.RATE_LIMITED_429,
@@ -41,6 +46,7 @@ def test_rate_limited_backoff_caps_at_two_hours() -> None:
 
 
 def test_forbidden_pauses_watch_item() -> None:
+    """驗證 forbidden 類阻擋會建議暫停 watch 而不是只做 backoff。"""
     decision = decide_error_handling(
         checked_at=datetime(2026, 4, 12, 10, 0, 0),
         error_code=CheckErrorCode.FORBIDDEN_403,
@@ -53,6 +59,7 @@ def test_forbidden_pauses_watch_item() -> None:
 
 
 def test_network_error_backoff_caps_at_thirty_minutes() -> None:
+    """驗證網路錯誤連續失敗的退避時間最高限制為三十分鐘。"""
     decision = decide_error_handling(
         checked_at=datetime(2026, 4, 12, 10, 0, 0),
         error_code=CheckErrorCode.NETWORK_TIMEOUT,
@@ -97,7 +104,43 @@ def test_runtime_control_recommendation_pauses_for_forbidden() -> None:
     assert recommendation.remove_from_scheduler is True
 
 
+def test_task_lifecycle_policy_allows_active_watch_to_continue() -> None:
+    """active watch 在 checkpoint 應可繼續執行下一個 side effect。"""
+    disposition = evaluate_task_lifecycle_disposition(
+        watch_item=_watch_item(),
+        checkpoint=TaskLifecycleCheckpoint.BEFORE_NOTIFICATION_DISPATCH,
+    )
+
+    assert disposition.kind is TaskDispositionKind.CONTINUE
+    assert disposition.should_continue is True
+    assert disposition.reason is None
+
+
+def test_task_lifecycle_policy_discards_paused_watch() -> None:
+    """paused watch 在 checkpoint 應丟棄後續結果。"""
+    disposition = evaluate_task_lifecycle_disposition(
+        watch_item=replace(_watch_item(), paused_reason="manually_paused"),
+        checkpoint=TaskLifecycleCheckpoint.BEFORE_PERSIST_RESULT,
+    )
+
+    assert disposition.kind is TaskDispositionKind.DISCARD
+    assert disposition.should_discard is True
+    assert disposition.reason == "watch_paused:manually_paused"
+
+
+def test_task_lifecycle_policy_discards_missing_watch() -> None:
+    """不存在的 watch 在 checkpoint 應丟棄後續結果。"""
+    disposition = evaluate_task_lifecycle_disposition(
+        watch_item=None,
+        checkpoint=TaskLifecycleCheckpoint.AFTER_CAPTURE,
+    )
+
+    assert disposition.kind is TaskDispositionKind.DISCARD
+    assert disposition.reason == "watch_missing"
+
+
 def test_wakeup_rescan_respects_backoff_window() -> None:
+    """驗證恢復後喚醒重掃不會繞過尚未結束的 backoff。"""
     resumed_at = datetime(2026, 4, 12, 10, 30, 0)
 
     assert (
@@ -119,6 +162,7 @@ def test_wakeup_rescan_respects_backoff_window() -> None:
 
 
 def test_build_monitor_check_artifacts_creates_history_and_latest_snapshot() -> None:
+    """驗證成功降價檢查會建立 latest snapshot、check event 與 price history。"""
     checked_at = datetime(2026, 4, 12, 10, 0, 0)
     result = compare_snapshots(
         checked_at=checked_at,
@@ -156,6 +200,7 @@ def test_build_monitor_check_artifacts_creates_history_and_latest_snapshot() -> 
 
 
 def test_build_monitor_check_artifacts_skips_price_history_without_price() -> None:
+    """驗證沒有有效價格的錯誤結果不會寫入 price history。"""
     checked_at = datetime(2026, 4, 12, 10, 0, 0)
     result = compare_snapshots(
         checked_at=checked_at,
@@ -191,6 +236,7 @@ def test_build_monitor_check_artifacts_skips_price_history_without_price() -> No
 
 
 def test_build_monitor_check_artifacts_keeps_multiple_notification_events() -> None:
+    """驗證同次檢查可同時保留多個通知事件種類。"""
     checked_at = datetime(2026, 4, 12, 10, 0, 0)
     result = compare_snapshots(
         checked_at=checked_at,
@@ -261,6 +307,7 @@ def test_build_monitor_check_artifacts_records_actual_dispatch_result() -> None:
 
 
 def test_reset_notification_state_after_success_clears_parse_failure_streak() -> None:
+    """驗證成功檢查後會清除通知狀態中的解析失敗 streak。"""
     next_state = reset_notification_state_after_success(
         NotificationState(
             watch_item_id="watch-1",

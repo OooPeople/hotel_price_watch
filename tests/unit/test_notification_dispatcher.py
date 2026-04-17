@@ -10,6 +10,7 @@ from app.notifiers.throttling import (
 
 
 def test_dispatcher_sends_to_all_channels_when_not_throttled() -> None:
+    """驗證未被節流時 dispatcher 會向所有通道送出通知。"""
     desktop = FakeNotifier("desktop")
     discord = FakeNotifier("discord")
     dispatcher = NotificationDispatcher(
@@ -31,6 +32,7 @@ def test_dispatcher_sends_to_all_channels_when_not_throttled() -> None:
 
 
 def test_dispatcher_throttles_same_message_within_cooldown() -> None:
+    """驗證同一訊息在通道冷卻時間內會被節流。"""
     desktop = FakeNotifier("desktop")
     dispatcher = NotificationDispatcher(
         notifiers=(desktop,),

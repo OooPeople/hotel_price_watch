@@ -39,9 +39,12 @@ from app.infrastructure.db.repositories import (
     SqliteWatchItemRepository,
 )
 from app.monitor.policies import (
+    TaskLifecycleCheckpoint,
+    TaskLifecycleDisposition,
     build_monitor_check_artifacts,
     build_runtime_control_recommendation,
     decide_error_handling,
+    evaluate_task_lifecycle_disposition,
     reset_notification_state_after_success,
     should_trigger_wakeup_rescan,
 )
@@ -259,7 +262,12 @@ class ChromeDrivenMonitorRuntime:
             error_code=error_code,
             consecutive_failures=consecutive_failures,
         )
-        if not await self._is_watch_still_checkable(watch_item_id):
+        if (
+            await self._evaluate_task_disposition(
+                watch_item_id,
+                TaskLifecycleCheckpoint.AFTER_CAPTURE,
+            )
+        ).should_discard:
             return
 
         check_result = compare_snapshots(
@@ -284,7 +292,12 @@ class ChromeDrivenMonitorRuntime:
 
         dispatch_result = None
         if notification_decision.should_notify:
-            if not await self._is_watch_still_checkable(watch_item_id):
+            if (
+                await self._evaluate_task_disposition(
+                    watch_item_id,
+                    TaskLifecycleCheckpoint.BEFORE_NOTIFICATION_DISPATCH,
+                )
+            ).should_discard:
                 return
             dispatch_result = await asyncio.to_thread(
                 self._dispatch_notification,
@@ -294,7 +307,12 @@ class ChromeDrivenMonitorRuntime:
                 checked_at,
             )
 
-        if not await self._is_watch_still_checkable(watch_item_id):
+        if (
+            await self._evaluate_task_disposition(
+                watch_item_id,
+                TaskLifecycleCheckpoint.BEFORE_PERSIST_RESULT,
+            )
+        ).should_discard:
             return
 
         artifacts = build_monitor_check_artifacts(
@@ -342,16 +360,19 @@ class ChromeDrivenMonitorRuntime:
         if control_recommendation.remove_from_scheduler:
             self._scheduler.remove_watch(watch_item_id)
 
-    async def _is_watch_still_checkable(self, watch_item_id: str) -> bool:
-        """重新讀取 control state，確認本次檢查仍可繼續提交結果。"""
+    async def _evaluate_task_disposition(
+        self,
+        watch_item_id: str,
+        checkpoint: TaskLifecycleCheckpoint,
+    ) -> TaskLifecycleDisposition:
+        """重新讀取 control state，套用 continue-and-gate task lifecycle policy。"""
         current_watch = await asyncio.to_thread(
             self._watch_item_repository.get,
             watch_item_id,
         )
-        return (
-            current_watch is not None
-            and current_watch.enabled
-            and current_watch.paused_reason is None
+        return evaluate_task_lifecycle_disposition(
+            watch_item=current_watch,
+            checkpoint=checkpoint,
         )
 
     async def request_check_now(self, watch_item_id: str) -> None:

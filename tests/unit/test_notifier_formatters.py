@@ -20,6 +20,7 @@ from app.notifiers.formatters import build_notification_message
 
 
 def test_build_notification_message_formats_price_drop_content() -> None:
+    """驗證降價通知訊息會包含飯店、房型、價格與 dedupe key。"""
     message = build_notification_message(
         watch_item=_watch_item(),
         check_result=CheckResult(
@@ -46,6 +47,7 @@ def test_build_notification_message_formats_price_drop_content() -> None:
 
 
 def test_build_notification_message_formats_parse_failed_content() -> None:
+    """驗證解析異常通知訊息會使用對應標題與 tag。"""
     message = build_notification_message(
         watch_item=_watch_item(),
         check_result=CheckResult(

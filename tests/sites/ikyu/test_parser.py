@@ -19,6 +19,7 @@ _FIXTURE_DIR = Path("fixtures/ikyu")
 
 
 def test_parse_candidate_bundle_from_available_fixture() -> None:
+    """驗證可訂 fixture 能解析出飯店資訊與候選房型方案。"""
     html = _read_fixture("available_basic.html")
 
     bundle = parse_candidate_bundle(html)
@@ -116,6 +117,7 @@ def test_parse_candidate_bundle_falls_back_to_hotel_json_ld() -> None:
 
 
 def test_parse_available_snapshot_matches_expected_fixture() -> None:
+    """驗證可訂 fixture 解析出的價格與 availability 符合期望值。"""
     expected = _read_expectation("available_basic.json")
 
     snapshot = parse_target_snapshot(_read_fixture("available_basic.html"), _build_target())
@@ -129,6 +131,7 @@ def test_parse_available_snapshot_matches_expected_fixture() -> None:
 
 
 def test_parse_sold_out_snapshot_matches_expected_fixture() -> None:
+    """驗證售完 fixture 解析出的 snapshot 會標記為 sold out。"""
     expected = _read_expectation("sold_out_basic.json")
 
     snapshot = parse_target_snapshot(_read_fixture("sold_out_basic.html"), _build_target())
@@ -144,6 +147,7 @@ def test_parse_sold_out_snapshot_matches_expected_fixture() -> None:
 
 
 def test_parse_target_missing_snapshot_matches_expected_fixture() -> None:
+    """驗證找不到目標方案 fixture 會回 target missing 語意。"""
     expected = _read_expectation("target_missing_basic.json")
 
     snapshot = parse_target_snapshot(_read_fixture("target_missing_basic.html"), _build_target())
@@ -155,6 +159,7 @@ def test_parse_target_missing_snapshot_matches_expected_fixture() -> None:
 
 
 def test_parse_format_variation_snapshot_uses_normalized_amount() -> None:
+    """驗證價格格式變體仍能解析出正規化金額。"""
     expected = _read_expectation("format_variation_basic.json")
 
     snapshot = parse_target_snapshot(_read_fixture("format_variation_basic.html"), _build_target())
@@ -271,6 +276,7 @@ def test_parse_target_snapshot_returns_parse_error_when_price_shape_is_invalid()
 
 
 def test_adapter_resolve_watch_target_builds_canonical_target() -> None:
+    """驗證 adapter 會將候選選擇正規化成 canonical watch target。"""
     adapter = IkyuAdapter()
     draft = SearchDraft(
         seed_url="https://www.ikyu.com/hotel/hotel-123?cid=hotel-123&ci=2026-05-01&co=2026-05-03&adults=2&rooms=1",
@@ -299,6 +305,7 @@ def test_adapter_resolve_watch_target_builds_canonical_target() -> None:
 
 
 def test_adapter_refetches_candidates_when_draft_changes() -> None:
+    """驗證搜尋草稿條件改變時，adapter 會重新抓候選資料。"""
     adapter = IkyuAdapter(html_client=FakeIkyuHtmlClient())
 
     first_bundle = adapter.fetch_candidates(
@@ -327,6 +334,7 @@ def test_adapter_refetches_candidates_when_draft_changes() -> None:
 
 
 def test_adapter_build_snapshot_from_browser_page_marks_browser_source() -> None:
+    """驗證從瀏覽器頁面建立 snapshot 時會標記來源為 browser。"""
     adapter = IkyuAdapter()
 
     snapshot = adapter.build_snapshot_from_browser_page(
@@ -340,6 +348,7 @@ def test_adapter_build_snapshot_from_browser_page_marks_browser_source() -> None
 
 
 def test_parse_target_snapshot_with_source_can_mark_browser_origin() -> None:
+    """驗證 parser wrapper 可保留呼叫端指定的 source kind。"""
     snapshot = parse_target_snapshot_with_source(
         _read_fixture("available_basic.html"),
         _build_target(),

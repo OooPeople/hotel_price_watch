@@ -1,4 +1,4 @@
-﻿"""驗證單一啟動入口的 Chrome 檢查與 GUI 啟動流程。"""
+"""驗證單一啟動入口的 Chrome 檢查與 GUI 啟動流程。"""
 
 from __future__ import annotations
 

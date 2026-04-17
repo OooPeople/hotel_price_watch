@@ -6,7 +6,6 @@ from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 
-import app.main as main_module
 from app.application.app_settings import AppSettingsService
 from app.application.debug_captures import (
     DebugCaptureClearResult,
@@ -41,6 +40,7 @@ from app.monitor.runtime import MonitorRuntimeStatus
 from app.sites.base import CandidateBundle, LookupDiagnostic, OfferCandidate, SiteDescriptor
 from app.sites.ikyu import IkyuAdapter
 from app.sites.registry import SiteRegistry
+from app.web.routes import debug_routes as debug_routes_module
 from app.web.views import (
     render_chrome_tab_selection_page,
     render_debug_capture_detail_page,
@@ -95,6 +95,7 @@ def _local_request_headers() -> dict[str, str]:
 
 
 def test_create_app_registers_gui_routes(tmp_path) -> None:
+    """驗證 app factory 會註冊 GUI 需要的主要 route。"""
     container = _build_test_container(tmp_path)
 
     app = create_app(container)
@@ -195,6 +196,7 @@ def test_watch_detail_fragments_endpoint_returns_partial_sections(tmp_path) -> N
 
 
 def test_render_watch_list_page_shows_existing_watch_items() -> None:
+    """驗證 watch 列表頁會顯示既有 watch item 與 runtime 摘要。"""
     html = render_watch_list_page(
         watch_items=(_build_watch_item(),),
         runtime_status=MonitorRuntimeStatus(
@@ -221,6 +223,7 @@ def test_render_watch_list_page_shows_existing_watch_items() -> None:
 
 
 def test_render_new_watch_page_shows_candidate_preview() -> None:
+    """驗證新增 watch 頁會顯示 preview 候選方案與建立表單。"""
     html = render_new_watch_page(
         seed_url="https://www.ikyu.com/zh-tw/00082173/?top=rooms",
         preview=_build_preview(
@@ -301,6 +304,7 @@ def test_render_new_watch_page_shows_debug_capture_paths() -> None:
 
 
 def test_render_new_watch_page_shows_diagnostics() -> None:
+    """驗證新增 watch 頁會顯示 preview 診斷資訊。"""
     html = render_new_watch_page(
         seed_url="https://www.ikyu.com/zh-tw/00082173/?top=rooms",
         diagnostics=(
@@ -580,7 +584,11 @@ def test_post_debug_capture_clear_redirects_partial_failure_message(tmp_path, mo
             failed_paths=("debug/ikyu_preview_locked.html",),
         )
 
-    monkeypatch.setattr(main_module, "clear_debug_captures", fake_clear_debug_captures)
+    monkeypatch.setattr(
+        debug_routes_module,
+        "clear_debug_captures",
+        fake_clear_debug_captures,
+    )
 
     response = client.post(
         "/debug/captures/clear",
@@ -1091,6 +1099,7 @@ def test_clear_debug_captures_removes_saved_files(tmp_path) -> None:
 
 
 def test_watch_editor_service_creates_watch_item_and_saves_it(tmp_path) -> None:
+    """驗證 watch editor service 可由 preview 建立並保存 watch item。"""
     container = _build_test_container(tmp_path)
     preview = container.watch_editor_service.preview_from_seed_url(
         "https://www.ikyu.com/zh-tw/00082173/?top=rooms"

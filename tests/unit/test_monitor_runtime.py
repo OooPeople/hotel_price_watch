@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import threading
 from dataclasses import replace
@@ -50,7 +50,7 @@ from app.sites.registry import SiteRegistry
 
 
 class _FakeChromeFetcher:
-    """?? monitor runtime 皜祈岫?函??箏? Chrome capture??"""
+    """提供 monitor runtime 測試用的假 Chrome capture fetcher。"""
 
     def __init__(self) -> None:
         """記錄啟動恢復分頁時的輸入，方便驗證 runtime 行為。"""
@@ -95,7 +95,7 @@ class _FakeChromeFetcher:
         preferred_tab_id: str | None = None,
         page_strategy=None,
     ) -> ChromeTabCapture:
-        """??箏???????HTML嚗芋?砍?啣?????"""
+        """回傳固定 HTML，模擬成功刷新指定 URL 的 Chrome 分頁。"""
         del fallback_url, preferred_tab_id, page_strategy
         return ChromeTabCapture(
             tab=ChromeTabSummary(
@@ -110,7 +110,7 @@ class _FakeChromeFetcher:
 
 
 class _ThrottledChromeFetcher(_FakeChromeFetcher):
-    """??撣嗆??蝭瘚??? Chrome capture??"""
+    """模擬分頁被瀏覽器節流或 discarded 的 Chrome fetcher。"""
 
     def refresh_capture_for_url(
         self,
@@ -120,7 +120,7 @@ class _ThrottledChromeFetcher(_FakeChromeFetcher):
         preferred_tab_id: str | None = None,
         page_strategy=None,
     ) -> ChromeTabCapture:
-        """? hidden / not_focused ????閬?"""
+        """回傳 hidden / not_focused 分頁狀態，模擬可能被節流的頁面。"""
         del fallback_url, preferred_tab_id, page_strategy
         return ChromeTabCapture(
             tab=ChromeTabSummary(
@@ -135,7 +135,7 @@ class _ThrottledChromeFetcher(_FakeChromeFetcher):
 
 
 class _DiscardedChromeFetcher(_FakeChromeFetcher):
-    """???曇◤?汗?其?璉???Chrome capture??"""
+    """模擬 Chrome 回傳 was_discarded 分頁狀態的 fetcher。"""
 
     def refresh_capture_for_url(
         self,
@@ -145,7 +145,7 @@ class _DiscardedChromeFetcher(_FakeChromeFetcher):
         preferred_tab_id: str | None = None,
         page_strategy=None,
     ) -> ChromeTabCapture:
-        """?撣嗆? `was_discarded` 閮?????閬?"""
+        """回傳 `was_discarded` 分頁狀態，模擬已被 Chrome 丟棄的頁面。"""
         del fallback_url, preferred_tab_id, page_strategy
         return ChromeTabCapture(
             tab=ChromeTabSummary(
@@ -161,7 +161,7 @@ class _DiscardedChromeFetcher(_FakeChromeFetcher):
 
 
 class _RecordingChromeFetcher(_FakeChromeFetcher):
-    """閮? runtime 閬???preferred tab ??fallback URL嚗?霅?watch-to-tab 撠???"""
+    """記錄 runtime refresh 時傳入的 preferred tab 與 fallback URL。"""
 
     def __init__(self) -> None:
         super().__init__()
@@ -175,7 +175,7 @@ class _RecordingChromeFetcher(_FakeChromeFetcher):
         preferred_tab_id: str | None = None,
         page_strategy=None,
     ) -> ChromeTabCapture:
-        """閮? runtime 撖阡??喳????蝝Ｕ?"""
+        """記錄 runtime refresh 實際傳入的 URL 與 preferred tab。"""
         del page_strategy
         self.calls.append((expected_url, fallback_url, preferred_tab_id))
         return super().refresh_capture_for_url(
@@ -351,7 +351,7 @@ class _FailingRestoreChromeFetcher(_FakeChromeFetcher):
 
 
 class _RecordingNotifier:
-    """閮?撖阡??閮?批捆?陛??notifier??"""
+    """記錄 dispatcher 實際送出的通知訊息。"""
 
     channel_name = "desktop"
 
@@ -359,7 +359,7 @@ class _RecordingNotifier:
         self.messages: list[NotificationMessage] = []
 
     def send(self, message: NotificationMessage) -> None:
-        """靽? dispatch ?????荔?靘葫閰阡?霅?"""
+        """保存 dispatch 傳入的通知訊息。"""
         self.messages.append(message)
 
 
@@ -418,16 +418,16 @@ class _CountingNotifierFactory:
 
 
 class _FakeRuntimeAdapter(SiteAdapter):
-    """?? Chrome-driven runtime 皜祈岫?函??撠?暺?adapter??"""
+    """提供 Chrome-driven runtime 測試使用的最小 site adapter。"""
 
     site_name = "ikyu"
 
     def match_url(self, url: str) -> bool:
-        """?亙??桀?皜祈岫?函? `ikyu` URL??"""
+        """判斷測試 adapter 是否支援指定 `ikyu` URL。"""
         return "ikyu.com" in url
 
     def parse_seed_url(self, url: str) -> SearchDraft:
-        """??seed URL 頧??箏??亥岷?阮??"""
+        """將 seed URL 轉成 runtime 測試用的 search draft。"""
         return SearchDraft(
             seed_url=url,
             hotel_id="00082173",
@@ -440,15 +440,15 @@ class _FakeRuntimeAdapter(SiteAdapter):
         )
 
     def normalize_search_draft(self, draft: SearchDraft) -> SearchDraft:
-        """皜祈岫 adapter 銝憭??渲?蝔踴?"""
+        """測試 adapter 不額外改寫 search draft。"""
         return draft
 
     def fetch_candidates(self, draft: SearchDraft):
-        """?祆葫閰虫?雿輻??亥岷瘚???"""
+        """本 runtime 測試不使用候選查詢。"""
         raise NotImplementedError
 
     def build_preview_from_browser_page(self, *, page_url: str, html: str, diagnostics=()):
-        """?祆葫閰虫?雿輻 preview 瘚???"""
+        """本 runtime 測試不使用 browser preview。"""
         raise NotImplementedError
 
     def build_snapshot_from_browser_page(
@@ -458,7 +458,7 @@ class _FakeRuntimeAdapter(SiteAdapter):
         html: str,
         target: WatchTarget,
     ) -> PriceSnapshot:
-        """??browser HTML ?湔撱箇??箏??寞敹怎??"""
+        """依 browser HTML 建立 runtime 檢查用價格快照。"""
         return PriceSnapshot(
             display_price_text="JPY 22990",
             normalized_price_amount=Decimal("22990"),
@@ -472,7 +472,7 @@ class _FakeRuntimeAdapter(SiteAdapter):
         draft: SearchDraft,
         selection: CandidateSelection,
     ) -> WatchTarget:
-        """?祆葫閰虫?雿輻 watch editor 撱箇?瘚???"""
+        """本 runtime 測試不使用 watch editor target 解析。"""
         del draft, selection
         raise NotImplementedError
 
@@ -504,7 +504,7 @@ class _AmountByPlanRuntimeAdapter(_FakeRuntimeAdapter):
 
 
 def test_runtime_run_watch_check_once_persists_snapshot_and_history(tmp_path) -> None:
-    """?格活 runtime 瑼Ｘ?神?交??唳?閬?隞嗉??寞甇瑕??"""
+    """驗證 runtime 單次檢查會保存 latest snapshot、事件與價格歷史。"""
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
@@ -590,7 +590,7 @@ def test_runtime_run_watch_check_once_persists_snapshot_and_history(tmp_path) ->
 
 
 def test_runtime_dispatches_notification_and_records_sent_status(tmp_path) -> None:
-    """?賭葉?閬???runtime ??銝行?蝯?撖怠瑼Ｘ甇瑕??"""
+    """驗證 runtime 觸發通知後會保存 sent 狀態與通知通道資訊。"""
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
@@ -1173,7 +1173,7 @@ def test_runtime_success_after_backoff_clears_timeout_failure_state(tmp_path, mo
 
 
 def test_runtime_records_possible_throttling_debug_artifact(tmp_path) -> None:
-    """?蝭瘚???靽???runtime debug artifact??"""
+    """驗證可能被節流的 Chrome 分頁會寫入 runtime debug artifact。"""
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
@@ -1242,7 +1242,7 @@ def test_runtime_records_possible_throttling_debug_artifact(tmp_path) -> None:
 
 
 def test_runtime_records_discarded_page_debug_artifact(tmp_path) -> None:
-    """?亙??鋡怎汗?其?璉?runtime ??摮???debug artifact??"""
+    """驗證 Chrome discarded 分頁會寫入 page discarded debug artifact。"""
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
@@ -1310,7 +1310,7 @@ def test_runtime_records_discarded_page_debug_artifact(tmp_path) -> None:
 
 
 def test_runtime_prefers_saved_browser_tab_hint(tmp_path) -> None:
-    """runtime 頛芾岷???芸?瘝輻撱箇? watch ??摮? Chrome ??蝺揣??"""
+    """驗證 runtime 刷新時會優先使用 watch draft 保存的 browser tab hint。"""
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
@@ -2289,7 +2289,7 @@ def _build_latest_snapshot(
     backoff_until: datetime | None = None,
     checked_at: datetime | None = None,
 ):
-    """撱箇? runtime 皜祈岫?函?銝?蝑?latest snapshot??"""
+    """建立 runtime 測試用的 latest snapshot。"""
     from app.domain.entities import LatestCheckSnapshot
 
     return LatestCheckSnapshot(
@@ -2368,6 +2368,6 @@ def _build_notifiers_for_test(
     settings: NotificationChannelSettings,
     notifier: Notifier,
 ) -> tuple[Notifier, ...]:
-    """靘葫閰衣閮剖?瘙箏??臬? recording notifier??"""
+    """建立測試用 notifier 集合，固定回傳外部傳入的 notifier。"""
     del settings
     return (notifier,)

@@ -7,11 +7,13 @@ from app.domain.notification_rules import CompositeRule, RuleLeaf
 
 
 def test_below_target_price_requires_target_price() -> None:
+    """驗證低於目標價規則必須提供 target price。"""
     with pytest.raises(ValueError):
         RuleLeaf(kind=NotificationLeafKind.BELOW_TARGET_PRICE)
 
 
 def test_any_drop_rejects_target_price() -> None:
+    """驗證任意降價規則不可帶 target price，避免語意混淆。"""
     with pytest.raises(ValueError):
         RuleLeaf(
             kind=NotificationLeafKind.ANY_DROP,
@@ -35,6 +37,7 @@ def test_target_price_must_be_greater_than_zero() -> None:
 
 
 def test_composite_rule_requires_multiple_children() -> None:
+    """驗證 composite rule 至少需要兩個子規則才有意義。"""
     leaf = RuleLeaf(
         kind=NotificationLeafKind.BELOW_TARGET_PRICE,
         target_price=Decimal("10000"),

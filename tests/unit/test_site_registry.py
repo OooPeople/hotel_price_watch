@@ -87,6 +87,7 @@ class DummyAdapter(SiteAdapter):
 
 
 def test_registry_matches_adapter_by_url() -> None:
+    """驗證 registry 可依 URL 找到對應 site adapter。"""
     registry = SiteRegistry()
     registry.register(DummyAdapter())
 
@@ -96,6 +97,7 @@ def test_registry_matches_adapter_by_url() -> None:
 
 
 def test_registry_rejects_duplicate_site_names() -> None:
+    """驗證 registry 不允許註冊重複 site name。"""
     registry = SiteRegistry()
     registry.register(DummyAdapter())
 
