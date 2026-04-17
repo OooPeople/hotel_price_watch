@@ -27,7 +27,7 @@ from app.domain.enums import (
 from app.domain.pricing import calculate_price_per_person_per_night
 from app.infrastructure.browser import ChromeTabSummary
 from app.monitor.runtime import MonitorRuntimeStatus
-from app.sites.base import LookupDiagnostic
+from app.sites.base import LookupDiagnostic, SiteDescriptor
 
 _CARD_STYLE = "display:grid;gap:12px;padding:20px;border:1px solid #d7e2df;background:#fcfffe;"
 _ERROR_STYLE = "padding:12px;border:1px solid #e57c7c;background:#fff3f3;"
@@ -182,9 +182,12 @@ def render_new_watch_page(
     error_message: str | None = None,
     diagnostics: tuple[LookupDiagnostic, ...] = (),
     seed_url: str = "",
+    site_descriptors: tuple[SiteDescriptor, ...] = (),
 ) -> str:
     """渲染新增 watch item 的 editor 頁。"""
     del seed_url
+    site_label_list = _format_site_label_list(site_descriptors)
+    site_hint_list = _format_site_hint_list(site_descriptors)
     preview_html = ""
     if preview is not None:
         preview_html = _render_preview_section(preview)
@@ -205,7 +208,7 @@ def render_new_watch_page(
           <div>
             <a href="/" style="color:#0f766e;text-decoration:none;">← 回列表</a>
             <h1>新增 Watch</h1>
-            <p>請先在專用 Chrome 開好 `ikyu` 頁面，再從目前頁面抓取候選。</p>
+            <p>請先在專用 Chrome 開好 {escape(site_hint_list)} 頁面，再從目前頁面抓取候選。</p>
             <p style="{_SUCCESS_STYLE}">
               建議直接執行
               <code>uv run python -m app.tools.dev_start</code>
@@ -223,7 +226,7 @@ def render_new_watch_page(
             <h2 style="margin:0;">從專用 Chrome 建立 Watch</h2>
             <p style="margin:0;">
               不需要再手動貼上 Seed URL。請直接從目前專用 Chrome 頁面抓取，
-              再選擇要建立 watch 的 `ikyu` 分頁。
+              再選擇要建立 watch 的 {escape(site_label_list)} 分頁。
             </p>
             <div style="display:flex;gap:12px;align-items:center;">
               <a href="/watches/chrome-tabs" style="{_primary_button_style()}">
@@ -244,9 +247,14 @@ def render_chrome_tab_selection_page(
     diagnostics: tuple[LookupDiagnostic, ...] = (),
     selected_tab_id: str | None = None,
     existing_watch_ids_by_tab_id: dict[str, str] | None = None,
+    site_descriptors: tuple[SiteDescriptor, ...] = (),
+    site_labels_by_tab_id: dict[str, str] | None = None,
 ) -> str:
     """渲染專用 Chrome 分頁選擇頁。"""
     existing_watch_ids_by_tab_id = existing_watch_ids_by_tab_id or {}
+    site_labels_by_tab_id = site_labels_by_tab_id or {}
+    site_label_list = _format_site_label_list(site_descriptors)
+    site_hint_list = _format_site_hint_list(site_descriptors)
     error_html = (
         f'<p style="{_ERROR_STYLE}">{escape(error_message)}</p>'
         if error_message
@@ -261,6 +269,12 @@ def render_chrome_tab_selection_page(
         throttling_text = "可能節流" if tab.possible_throttling else "正常"
         discarded_text = "；曾被丟棄" if tab.was_discarded else ""
         linked_watch_id = existing_watch_ids_by_tab_id.get(tab.tab_id)
+        site_label = site_labels_by_tab_id.get(tab.tab_id)
+        site_label_html = (
+            f'<p style="margin:0;">站點：{escape(site_label)}</p>'
+            if site_label is not None
+            else ""
+        )
         action_html = (
             f"""
             <div style="display:grid;gap:8px;justify-items:start;">
@@ -292,6 +306,7 @@ def render_chrome_tab_selection_page(
                   焦點：{escape(_format_focus_text(tab.has_focus))}，
                   訊號：{escape(throttling_text + discarded_text)}
                 </p>
+                {site_label_html}
               </div>
               {action_html}
             </form>
@@ -300,10 +315,10 @@ def render_chrome_tab_selection_page(
 
     rows_html = "".join(rows) or f"""
     <section style="{_CARD_STYLE}">
-      <p>目前找不到可用的 `ikyu` Chrome 分頁。</p>
+      <p>目前找不到可用的 {escape(site_label_list)} Chrome 分頁。</p>
       <p>
         請先執行 <code>uv run python -m app.tools.dev_start</code>，
-        並在專用 Chrome 中打開 `ikyu` 頁面後再重試。
+        並在專用 Chrome 中打開 {escape(site_hint_list)} 頁面後再重試。
       </p>
     </section>
     """
@@ -314,7 +329,10 @@ def render_chrome_tab_selection_page(
           <div>
             <a href="/watches/new" style="color:#0f766e;text-decoration:none;">← 回新增頁</a>
             <h1>從目前專用 Chrome 頁面抓取</h1>
-            <p>請先在專用 Chrome 中打開你要建立 watch 的 `ikyu` 頁面，再從下面清單選擇對應分頁。</p>
+            <p>
+              請先在專用 Chrome 中打開你要建立 watch 的
+              {escape(site_hint_list)} 頁面，再從下面清單選擇對應分頁。
+            </p>
             <p style="{_SUCCESS_STYLE}">
               若某個分頁顯示「可能節流」，代表它不是前景活動頁；
               建議先把該分頁切回前景後再抓取，避免背景分頁節流影響內容完整性。
@@ -1624,6 +1642,26 @@ def _format_focus_text(has_focus: bool | None) -> str:
     if has_focus is False:
         return "not_focused"
     return "unknown"
+
+
+def _format_site_label_list(site_descriptors: tuple[SiteDescriptor, ...]) -> str:
+    """把站點顯示名稱整理成適合 GUI 句子使用的文字。"""
+    labels = tuple(
+        descriptor.display_name
+        for descriptor in site_descriptors
+        if descriptor.supports_browser_preview
+    )
+    return "、".join(labels) if labels else "支援站點"
+
+
+def _format_site_hint_list(site_descriptors: tuple[SiteDescriptor, ...]) -> str:
+    """把站點瀏覽器開頁提示整理成適合 GUI 句子使用的文字。"""
+    hints = tuple(
+        descriptor.browser_tab_hint
+        for descriptor in site_descriptors
+        if descriptor.supports_browser_preview
+    )
+    return "、".join(hints) if hints else "支援站點"
 
 
 def _describe_debug_reason(reason: str) -> str:

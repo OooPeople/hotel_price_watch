@@ -35,7 +35,7 @@ src/app/
 ├─ sites/           # 站點 adapter、parser、browser matching / strategy
 ├─ tools/           # dev_start、chrome_profile 等本機工具
 ├─ web/             # 本機 GUI render helper
-└─ main.py          # 目前仍承載 routes，下一步要拆
+└─ main.py          # 目前仍承載 routes，等 V1.5 site-aware flow 落地後再拆
 ```
 
 ## 3. 主要資料模型
@@ -56,7 +56,7 @@ src/app/
 
 ## 4. Site Boundary
 
-`SiteAdapter` 是 GUI / runtime 使用站點能力的正式邊界。
+`SiteAdapter` 是 GUI / runtime 使用站點能力的正式邊界。V1.5 的目標是先讓現有單站流程 site-aware，而不是立刻平台化多站。
 
 目前最小能力：
 
@@ -70,6 +70,18 @@ src/app/
 - `is_browser_page_url`
 - `browser_tab_matches_watch`
 
+V1.5 已補第一輪 `SiteDescriptor` metadata / capability：
+
+- `display_name`
+- `browser_page_label`
+- browser page 操作提示
+- 是否支援 browser preview
+- 是否支援 browser runtime snapshot
+
+仍待收斂：
+
+- Chrome tab preview service 的回傳模型可再直接攜帶 site descriptor
+
 站點 browser 行為透過 browser page strategy 注入 `ChromeCdpHtmlFetcher`，目前包含：
 
 - blocked page detection
@@ -77,6 +89,8 @@ src/app/
 - page scoring
 - page signature
 - confident page matching
+
+目前 browser page strategy 已完成第一輪 per-site / per-request 化：`SiteAdapter` 可提供 strategy，preview、runtime capture、runtime tab restore 會依 adapter 傳入 `ChromeCdpHtmlFetcher`。`ChromeCdpHtmlFetcher` 自身仍保留 generic 預設 strategy，供無站點 context 的低階操作兜底。
 
 V1 的站點 adapter 與 browser strategy wiring 集中在 `src/app/bootstrap/site_wiring.py`。新增第二站時，優先擴充這裡與 `sites/<site>`，不要直接把站點規則塞進 `main.py`、`views.py` 或 `ChromeCdpHtmlFetcher`。
 
@@ -151,16 +165,36 @@ V1 採保守策略：
 
 ## 9. 目前架構缺口
 
-### 9.1 `main.py` 偏大
+### 9.1 Lifecycle Owner 已完成第一輪收斂
 
-下一步應把 route / web orchestration 拆出 router 模組，保留 `main.py` 只做：
+目前 control command policy 已明確，且 runtime 已在 notification dispatch 前與 persist 前補 late gate，讓 pause / disable 在後段也能阻止通知或結果提交。
+
+`WatchLifecycleCoordinator` 已接管人工 enable / disable / pause / resume transition，不再轉呼叫 `WatchEditorService`。check-now gate 也由 coordinator 依 control state 判斷。runtime auto-pause 已改成先產生 `RuntimeControlRecommendation`，再交給 persistence 套用控制狀態。
+
+目前決策：
+
+- 維持現有 in-flight policy：不硬取消，以多段 gate 丟棄結果
+- 不新增 `watch_control_states` table；等第二站或更複雜控制需求明確後再評估 migration
+- `WatchEditorService` 聚焦 watch 建立、刪除、通知規則與 preview，不再負責 lifecycle transition
+
+### 9.2 Browser strategy 已完成第一輪 per-request 化
+
+`ChromeCdpHtmlFetcher` 的主要抓取方法已可接收 request-scoped browser page strategy；runtime 與 Chrome tab preview 會依 adapter 傳入對應策略。後續若新增第二站，應在 `sites/<site>` 實作自己的 strategy，並從 adapter 暴露，不要把站點規則塞進 fetcher。
+
+### 9.3 UI / Preview Flow 的單站假設已完成第一輪收斂
+
+目前已補 `SiteDescriptor`，新增 watch 與 Chrome 分頁選擇頁已開始使用 site metadata，`PreviewAttemptGuard` 也不再提供 `site_name="ikyu"` 預設值。後續仍應讓 Chrome tab preview service 直接回傳 site descriptor，避免 route 層自行補 tab label。
+
+### 9.4 `main.py` 偏大
+
+等 site descriptor、per-site strategy、lifecycle owner 決策落地後，再把 route / web orchestration 拆出 router 模組，保留 `main.py` 只做：
 
 - app 建立
 - lifespan
 - container 掛載
 - router include
 
-### 9.2 `web/views.py` 偏大
+### 9.5 `web/views.py` 偏大
 
 後續應依頁面拆分 render helper：
 
@@ -170,16 +204,16 @@ V1 採保守策略：
 - global settings
 - debug captures
 
-### 9.3 `ChromeCdpHtmlFetcher` 偏大
+### 9.6 `ChromeCdpHtmlFetcher` 偏大
 
-後續可拆成：
+per-site strategy 落地後，可再拆成：
 
 - profile 啟動
 - CDP attach
 - tab matching
 - capture / throttling / discard 訊號
 
-### 9.4 State Ownership 仍需守住
+### 9.7 State Ownership 仍需守住
 
 後續新增功能時，避免：
 

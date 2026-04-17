@@ -41,7 +41,7 @@ class PreviewAttemptGuard:
         init=False,
     )
 
-    def ensure_allowed(self, *, site_name: str = "ikyu", now: datetime | None = None) -> None:
+    def ensure_allowed(self, *, site_name: str, now: datetime | None = None) -> None:
         """若 preview 仍在冷卻中，直接阻止本次嘗試。"""
         current_time = now or datetime.now(UTC)
         state = self._states_by_site.get(site_name)
@@ -72,7 +72,7 @@ class PreviewAttemptGuard:
         self,
         *,
         diagnostics: tuple[LookupDiagnostic, ...],
-        site_name: str = "ikyu",
+        site_name: str,
         now: datetime | None = None,
     ) -> None:
         """依本次 preview 的實際結果更新下一次可嘗試時間。"""

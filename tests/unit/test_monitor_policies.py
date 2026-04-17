@@ -6,17 +6,22 @@ from app.domain.entities import (
     NotificationDispatchResult,
     NotificationState,
     PriceSnapshot,
+    WatchItem,
 )
 from app.domain.enums import (
     Availability,
     CheckErrorCode,
     NotificationDeliveryStatus,
     NotificationEventKind,
+    NotificationLeafKind,
     SourceKind,
 )
 from app.domain.notification_engine import compare_snapshots
+from app.domain.notification_rules import RuleLeaf
+from app.domain.value_objects import WatchTarget
 from app.monitor.policies import (
     build_monitor_check_artifacts,
+    build_runtime_control_recommendation,
     decide_error_handling,
     reset_notification_state_after_success,
     should_trigger_wakeup_rescan,
@@ -66,6 +71,25 @@ def test_parse_failed_backoff_matches_short_retry_strategy() -> None:
 
     assert decision.backoff_until == datetime(2026, 4, 12, 10, 20, 0)
     assert decision.should_pause is False
+
+
+def test_runtime_control_recommendation_pauses_for_forbidden() -> None:
+    """runtime control recommendation 應把 forbidden 決策轉成暫停 watch。"""
+    watch_item = _watch_item()
+    recommendation = build_runtime_control_recommendation(
+        watch_item=watch_item,
+        error_handling=decide_error_handling(
+            checked_at=datetime(2026, 4, 12, 10, 0, 0),
+            error_code=CheckErrorCode.FORBIDDEN_403,
+            consecutive_failures=1,
+        ),
+        error_code=CheckErrorCode.FORBIDDEN_403,
+    )
+
+    assert recommendation.watch_item is not None
+    assert recommendation.watch_item.enabled is True
+    assert recommendation.watch_item.paused_reason == "http_403"
+    assert recommendation.remove_from_scheduler is True
 
 
 def test_wakeup_rescan_respects_backoff_window() -> None:
@@ -258,4 +282,30 @@ def _snapshot(
         currency=None if amount is None else "JPY",
         availability=availability,
         source_kind=SourceKind.HTTP,
+    )
+
+
+def _watch_item() -> WatchItem:
+    """建立 monitor policy 測試使用的 watch item。"""
+    return WatchItem(
+        id="watch-1",
+        target=WatchTarget(
+            site="ikyu",
+            hotel_id="00082173",
+            room_id="10191605",
+            plan_id="11035620",
+            check_in_date=datetime(2026, 9, 18).date(),
+            check_out_date=datetime(2026, 9, 19).date(),
+            people_count=2,
+            room_count=1,
+        ),
+        hotel_name="Dormy Inn",
+        room_name="Room",
+        plan_name="Plan",
+        canonical_url="https://www.ikyu.com/zh-tw/00082173/",
+        notification_rule=RuleLeaf(
+            kind=NotificationLeafKind.BELOW_TARGET_PRICE,
+            target_price=Decimal("20000"),
+        ),
+        scheduler_interval_seconds=600,
     )

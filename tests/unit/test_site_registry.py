@@ -101,3 +101,27 @@ def test_registry_rejects_duplicate_site_names() -> None:
 
     with pytest.raises(ValueError):
         registry.register(DummyAdapter())
+
+
+def test_registry_exposes_site_descriptors() -> None:
+    """registry 應公開站點 descriptor 供 UI 與 capability 判斷使用。"""
+    registry = SiteRegistry()
+    registry.register(DummyAdapter())
+
+    descriptors = registry.descriptors()
+
+    assert descriptors[0].site_name == "dummy"
+    assert descriptors[0].display_name == "dummy"
+    assert descriptors[0].supports_browser_preview is True
+
+
+def test_registry_matches_descriptor_by_browser_page_url() -> None:
+    """registry 應能依 browser page URL 回推站點 descriptor。"""
+    registry = SiteRegistry()
+    registry.register(DummyAdapter())
+
+    descriptor = registry.descriptor_for_browser_page_url(
+        "https://dummy.example/hotel-1"
+    )
+
+    assert descriptor.site_name == "dummy"

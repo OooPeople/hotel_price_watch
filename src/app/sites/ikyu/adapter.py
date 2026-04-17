@@ -16,6 +16,7 @@ from app.sites.base import (
     CandidateSelection,
     LookupDiagnostic,
     SiteAdapter,
+    SiteDescriptor,
 )
 from app.sites.ikyu.browser_matching import (
     extract_ikyu_browser_page_signature,
@@ -23,6 +24,7 @@ from app.sites.ikyu.browser_matching import (
     ikyu_urls_match_confidently,
     is_ikyu_page_url,
 )
+from app.sites.ikyu.browser_strategy import IkyuBrowserPageStrategy
 from app.sites.ikyu.client import HtmlFetchResult, IkyuHtmlClient
 from app.sites.ikyu.normalizer import (
     is_supported_ikyu_url,
@@ -41,10 +43,25 @@ class IkyuAdapter(SiteAdapter):
     """封裝 `ikyu` 站點的 URL 解析與後續查詢入口。"""
 
     site_name = "ikyu"
+    descriptor = SiteDescriptor(
+        site_name=site_name,
+        display_name="IKYU",
+        browser_page_label="IKYU",
+        browser_tab_hint="IKYU.com",
+    )
+    @property
+    def browser_page_strategy(self) -> IkyuBrowserPageStrategy:
+        """回傳 `ikyu` 專用 browser page strategy，供 CDP fetcher 依 request 使用。"""
+        return self._browser_page_strategy
 
-    def __init__(self, html_client: IkyuHtmlClient | None = None) -> None:
+    def __init__(
+        self,
+        html_client: IkyuHtmlClient | None = None,
+        browser_page_strategy: IkyuBrowserPageStrategy | None = None,
+    ) -> None:
         """建立 adapter，並允許後續注入實際的 HTML 抓取實作。"""
         self._html_client = html_client
+        self._browser_page_strategy = browser_page_strategy or IkyuBrowserPageStrategy()
 
     def match_url(self, url: str) -> bool:
         """判斷是否由 `ikyu` adapter 負責處理此 seed URL。"""

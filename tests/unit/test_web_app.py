@@ -38,7 +38,7 @@ from app.infrastructure.db import (
 )
 from app.main import create_app
 from app.monitor.runtime import MonitorRuntimeStatus
-from app.sites.base import CandidateBundle, LookupDiagnostic, OfferCandidate
+from app.sites.base import CandidateBundle, LookupDiagnostic, OfferCandidate, SiteDescriptor
 from app.sites.ikyu import IkyuAdapter
 from app.sites.registry import SiteRegistry
 from app.web.views import (
@@ -366,6 +366,33 @@ def test_render_chrome_tab_selection_page_shows_tabs_and_throttling_signal() -> 
     assert "可能節流" in html
     assert "曾被丟棄" in html
     assert "抓取此分頁" in html
+
+
+def test_render_chrome_tab_selection_page_uses_site_descriptor_labels() -> None:
+    """Chrome 分頁選擇頁應使用 site descriptor 顯示站點名稱。"""
+    html = render_chrome_tab_selection_page(
+        tabs=(
+            ChromeTabSummary(
+                tab_id="0",
+                title="Dormy Inn",
+                url="https://www.ikyu.com/zh-tw/00082173/?rm=1&pln=2",
+                visibility_state="visible",
+                has_focus=True,
+            ),
+        ),
+        site_descriptors=(
+            SiteDescriptor(
+                site_name="ikyu",
+                display_name="IKYU",
+                browser_page_label="IKYU",
+                browser_tab_hint="IKYU.com",
+            ),
+        ),
+        site_labels_by_tab_id={"0": "IKYU"},
+    )
+
+    assert "IKYU.com" in html
+    assert "站點：IKYU" in html
 
 
 def test_render_chrome_tab_selection_page_marks_existing_watch_tabs() -> None:
@@ -812,7 +839,6 @@ def test_post_watch_check_now_calls_monitor_runtime(tmp_path) -> None:
     fake_runtime = _FakeMonitorRuntime()
     container.monitor_runtime = fake_runtime
     container.watch_lifecycle_coordinator = WatchLifecycleCoordinator(
-        watch_editor_service=container.watch_editor_service,
         watch_item_repository=container.watch_item_repository,
         runtime_repository=container.runtime_repository,
         monitor_runtime=fake_runtime,
@@ -838,7 +864,6 @@ def test_post_watch_check_now_rejects_paused_watch(tmp_path) -> None:
     fake_runtime = _FakeMonitorRuntime()
     container.monitor_runtime = fake_runtime
     container.watch_lifecycle_coordinator = WatchLifecycleCoordinator(
-        watch_editor_service=container.watch_editor_service,
         watch_item_repository=container.watch_item_repository,
         runtime_repository=container.runtime_repository,
         monitor_runtime=fake_runtime,
@@ -1146,6 +1171,7 @@ def test_preview_guard_blocks_immediate_retry_after_blocked_page() -> None:
     )
 
     guard.register_result(
+        site_name="ikyu",
         diagnostics=(
             LookupDiagnostic(
                 stage="browser_fallback_direct",
@@ -1156,7 +1182,7 @@ def test_preview_guard_blocks_immediate_retry_after_blocked_page() -> None:
     )
 
     try:
-        guard.ensure_allowed()
+        guard.ensure_allowed(site_name="ikyu")
     except ValueError as exc:
         assert "冷卻中" in str(exc)
         assert exc.diagnostics[0].stage == "preview_rate_guard"
@@ -1196,12 +1222,10 @@ class FakeWatchEditorService(WatchEditorService):
     def __init__(
         self,
         watch_item_repository: SqliteWatchItemRepository,
-        runtime_repository: SqliteRuntimeRepository,
     ) -> None:
         super().__init__(
             site_registry=SiteRegistry(),
             watch_item_repository=watch_item_repository,
-            runtime_repository=runtime_repository,
         )
         self._watch_item_repository = watch_item_repository
 
@@ -1364,7 +1388,7 @@ def _build_test_container(tmp_path) -> AppContainer:
     runtime_repository = SqliteRuntimeRepository(database)
     site_registry = SiteRegistry()
     site_registry.register(IkyuAdapter())
-    watch_editor_service = FakeWatchEditorService(watch_repository, runtime_repository)
+    watch_editor_service = FakeWatchEditorService(watch_repository)
     return AppContainer(
         instance_id="test-instance",
         database=database,
@@ -1376,7 +1400,6 @@ def _build_test_container(tmp_path) -> AppContainer:
         notification_channel_test_service=_FakeNotificationChannelTestService(),
         watch_editor_service=watch_editor_service,
         watch_lifecycle_coordinator=WatchLifecycleCoordinator(
-            watch_editor_service=watch_editor_service,
             watch_item_repository=watch_repository,
             runtime_repository=runtime_repository,
             monitor_runtime=None,

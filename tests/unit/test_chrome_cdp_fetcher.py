@@ -69,7 +69,9 @@ def test_fetch_html_attaches_to_existing_cdp_session(monkeypatch) -> None:
     monkeypatch.setattr(
         ChromeCdpHtmlFetcher,
         "_wait_for_manual_resolution",
-        lambda self, context, initial_page, expected_url: "<html>ok</html>",
+        lambda self, context, initial_page, expected_url, page_strategy=None: (
+            "<html>ok</html>"
+        ),
     )
     monkeypatch.setattr("playwright.sync_api.sync_playwright", lambda: _Manager())
 
@@ -278,6 +280,50 @@ def test_capture_page_uses_injected_page_strategy() -> None:
 
     with pytest.raises(ValueError, match="blocked by strategy"):
         fetcher._capture_page(page=_Page())
+
+
+def test_score_page_can_use_request_scoped_strategy() -> None:
+    """單次 request 傳入 strategy 時，fetcher 應優先使用該 strategy。"""
+
+    class _RequestScopedStrategy:
+        """測試用 request strategy，固定回傳可辨識分數。"""
+
+        profile_start_url = "https://request.example/"
+
+        def raise_if_blocked_page(self, html: str) -> None:
+            del html
+
+        def is_ready_page(self, *, current_url: str, expected_url: str) -> bool:
+            return current_url == expected_url
+
+        def score_page(self, current_url: str, *, expected_url: str) -> int:
+            del current_url, expected_url
+            return 77
+
+        def page_signature(self, url: str):
+            return url
+
+        def is_confident_page_match(
+            self,
+            *,
+            current_signature,
+            expected_signature,
+            score: int,
+            minimum_score: int,
+        ) -> bool:
+            del current_signature, expected_signature, minimum_score
+            return score == 77
+
+    fetcher = ChromeCdpHtmlFetcher()
+
+    assert (
+        fetcher._score_page(
+            "https://request.example/current",
+            expected_url="https://request.example/expected",
+            page_strategy=_RequestScopedStrategy(),
+        )
+        == 77
+    )
 
 
 def test_score_page_prefers_matching_room_and_plan_query() -> None:

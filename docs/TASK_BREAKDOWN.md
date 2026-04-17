@@ -7,7 +7,7 @@
 - o V1 正式主線已收斂為「附著專用 Chrome profile + CDP attach」
 - o GUI、preview、watch CRUD、通知設定、debug captures、background runtime 已可實際操作
 - o 拆 `main.py` / `web/views.py` 前的第一輪高風險收斂已完成
-- 目前主線進入第二層結構整理：先拆 `main.py`，再拆 `web/views.py`，最後收斂 `ChromeCdpHtmlFetcher`
+- 目前主線進入 V1.5 架構地基：先補 lifecycle late gate，再收斂多站前的 site / browser strategy 邊界，最後才拆 `main.py`
 
 ## Milestone 1: 專案初始化（已完成）
 
@@ -69,11 +69,30 @@
 - o preview cooldown 與 debug capture 已補 site metadata / site filter
 - o V1 站點 adapter 與 browser strategy wiring 已集中到 `bootstrap/site_wiring.py`
 
-## Milestone 6.5 尚未完成但不阻擋拆檔
+## Milestone 6.5 尚未完成但不阻擋 V1 使用
 
 - 補更完整的長時間運作、節流與重試行為驗證
 - 補 blocked / recover control recommendation 的更完整語意
 - 規劃 `watch_item` 靜態定義與控制狀態的長期分離方式，先不急著做大 migration
+
+## Milestone 6.6: V1.5 多站地基（進行中）
+
+- o 補 lifecycle late gate：notification dispatch 前與 persist 前再次確認 control state，縮小 pause / disable race window
+- o 建立 site descriptor / capability metadata：先只註冊 `ikyu`，但 UI / preview flow 不再直接硬寫站點文案與預設 site
+- o `PreviewAttemptGuard` 已移除 `site_name="ikyu"` 預設值，呼叫端需明確提供 site scope
+- o 調整 Chrome tab preview / runtime restore / capture，使 site metadata 與 browser strategy 跟著 adapter 走
+- o 將 browser page strategy 改成 per-site / per-request：`ChromeCdpHtmlFetcher` 不再只有全域單一 `IkyuBrowserPageStrategy`
+- 暫緩 `WatchTarget` / `SearchDraft` 的 `site_payload` 化，等第二站樣本明確後再決定
+- 暫緩把 `ChromeDrivenMonitorRuntime` 泛化成非 browser runtime，等第二站確定需要 HTTP execution 再做
+
+## Milestone 6.7: Lifecycle Owner / Control State 深化（拆 `main.py` 前決策）
+
+- o 將 `WatchLifecycleCoordinator` 從 façade 演進成 lifecycle transition owner，人工 control transition 不再由 `WatchEditorService` 執行
+- o 抽出 control command decision / transition result，明確描述 enable / disable / pause / resume / check-now 的允許條件與副作用
+- o 抽出 runtime auto-pause control recommendation，讓 runtime 不再直接拼接暫停 watch state
+- o 明確定義 in-flight task lifecycle：維持不硬取消、以 late gate 丟棄結果；目前不引入硬取消策略
+- 評估是否新增 `watch_control_states` table；若沒有第二站或更複雜控制需求，先只完成設計，不做 migration
+- o 已完成拆 `main.py` 前的 lifecycle/control 決策：不做 migration，先以 coordinator + recommendation 收斂控制權
 
 ## Milestone 7: Packaging（尚未開始）
 
@@ -83,14 +102,13 @@
 
 ## 下一步
 
-- 拆 `main.py`：先拆 router / web orchestration，保留 app 建立、lifespan、container 掛載在 entrypoint
-- 拆 `web/views.py`：依 watch list、watch detail、settings、debug pages 拆 render helper
-- 收斂 `ChromeCdpHtmlFetcher`：拆 profile / attach / tab matching / capture 訊號
-- 整理 state ownership：避免 runtime 欄位回流到 `watch_item`
+1. 開始拆 `main.py`：先拆 router / web orchestration，保留 app 建立、lifespan、container 掛載在 entrypoint
+2. 拆 `web/views.py`：依 watch list、watch detail、settings、debug pages 拆 render helper
+3. 進一步收斂 `ChromeCdpHtmlFetcher` 內部責任：profile 啟動、CDP attach、tab matching、capture 訊號分層
 
 ## 目前主要風險
 
 - `ikyu` 真站仍可能對同一出口 IP 做風控
 - 背景監看依賴專用 Chrome session，不依賴使用者目前前景分頁
 - Chrome 縮小或背景運作時，仍需持續驗證節流 / discard / blocked page 行為
-- 第二站前需避免把新站點邏輯直接塞進 `main.py`、`views.py` 或 `ChromeCdpHtmlFetcher`
+- 第二站前仍需檢查新站是否需要額外 `site_payload` 或非 Chrome-driven execution strategy

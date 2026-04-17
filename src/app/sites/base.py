@@ -5,9 +5,25 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from app.domain.entities import PriceSnapshot, WatchItem
 from app.domain.value_objects import SearchDraft, WatchTarget
+
+if TYPE_CHECKING:
+    from app.infrastructure.browser.page_strategy import BrowserPageStrategy
+
+
+@dataclass(frozen=True, slots=True)
+class SiteDescriptor:
+    """描述站點在 GUI 與 runtime 能力判斷中需要的穩定 metadata。"""
+
+    site_name: str
+    display_name: str
+    browser_page_label: str
+    browser_tab_hint: str
+    supports_browser_preview: bool = True
+    supports_browser_runtime_snapshot: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +86,21 @@ class SiteAdapter(ABC):
     """定義 application 與 monitor 共同依賴的站點介面。"""
 
     site_name: str
+
+    @property
+    def descriptor(self) -> SiteDescriptor:
+        """回傳此站點在 UI 與 capability 判斷中使用的描述資料。"""
+        return SiteDescriptor(
+            site_name=self.site_name,
+            display_name=self.site_name,
+            browser_page_label=self.site_name,
+            browser_tab_hint=self.site_name,
+        )
+
+    @property
+    def browser_page_strategy(self) -> BrowserPageStrategy | None:
+        """回傳此站點的 browser page strategy；不需要時可回傳 `None`。"""
+        return None
 
     @abstractmethod
     def match_url(self, url: str) -> bool:

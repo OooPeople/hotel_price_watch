@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 from app.domain.entities import (
@@ -15,8 +15,17 @@ from app.domain.entities import (
     NotificationDispatchResult,
     NotificationState,
     PriceHistoryEntry,
+    WatchItem,
 )
 from app.domain.enums import CheckErrorCode, NotificationDeliveryStatus
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeControlRecommendation:
+    """描述 runtime 本次檢查後建議套用的 control state 變更。"""
+
+    watch_item: WatchItem | None = None
+    remove_from_scheduler: bool = False
 
 
 def decide_error_handling(
@@ -68,6 +77,31 @@ def should_trigger_wakeup_rescan(
     if last_checked_at is None:
         return True
     return resumed_at > last_checked_at
+
+
+def build_runtime_control_recommendation(
+    *,
+    watch_item: WatchItem,
+    error_handling: ErrorHandlingDecision,
+    error_code: CheckErrorCode | None,
+) -> RuntimeControlRecommendation:
+    """依錯誤處理決策建立 runtime control state 建議。"""
+    if not error_handling.should_pause:
+        return RuntimeControlRecommendation()
+
+    paused_reason = (
+        error_handling.paused_reason.value
+        if error_handling.paused_reason is not None
+        else error_code.value if error_code is not None else "paused"
+    )
+    return RuntimeControlRecommendation(
+        watch_item=replace(
+            watch_item,
+            enabled=True,
+            paused_reason=paused_reason,
+        ),
+        remove_from_scheduler=True,
+    )
 
 
 def build_monitor_check_artifacts(

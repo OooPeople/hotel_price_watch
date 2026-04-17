@@ -38,7 +38,11 @@ class ChromeTabPreviewService:
 
     def preview_from_tab_id(self, tab_id: str) -> WatchCreationPreview:
         """從指定的 Chrome 分頁內容建立 watch editor preview。"""
-        capture = self._chrome_fetcher.fetch_tab_capture(tab_id)
+        adapter = self._adapter_for_tab_id(tab_id)
+        capture = self._chrome_fetcher.fetch_tab_capture(
+            tab_id,
+            page_strategy=adapter.browser_page_strategy,
+        )
         adapter = self._site_registry.for_browser_page_url(capture.tab.url)
         diagnostics = _build_tab_diagnostics(capture)
         draft, candidate_bundle = adapter.build_preview_from_browser_page(
@@ -61,6 +65,13 @@ class ChromeTabPreviewService:
             browser_tab_title=capture.tab.title,
             browser_page_url=capture.tab.url,
         )
+
+    def _adapter_for_tab_id(self, tab_id: str):
+        """依目前分頁 URL 先決定 preview capture 應使用的站點 strategy。"""
+        for tab in self.list_tabs():
+            if tab.tab_id == tab_id:
+                return self._site_registry.for_browser_page_url(tab.url)
+        raise ValueError("找不到指定的 Chrome 分頁；請重新整理分頁清單後再試一次。")
 
 
 def _build_tab_diagnostics(capture: ChromeTabCapture) -> tuple[LookupDiagnostic, ...]:

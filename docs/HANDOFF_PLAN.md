@@ -23,7 +23,7 @@
 最新驗證狀態：
 
 - `ruff check src tests` 通過
-- `pytest` 通過，`203 passed`
+- `pytest` 通過，`213 passed`
 
 ## 2. 正式主線
 
@@ -83,6 +83,7 @@ V1 正式主線是 Chrome-driven：
 - background assignment 與 `check-now` 共用同一 inflight task
 - 單次 check 的 transaction 一致性
 - in-flight check 中途被 pause / disable 時不寫入結果或發通知
+- notification dispatch 前與 persist 前已有 late gate，後段 pause / disable 仍能阻止提交
 - 403 auto-pause 的 control state 與 check outcome 同 transaction
 - auto-pause 後從 scheduler 移除 watch
 - runtime 啟動時多 watch 不共用同一分頁
@@ -92,41 +93,89 @@ V1 正式主線是 Chrome-driven：
 - preview cooldown 與 debug capture 已具 site metadata / site filter
 - state-changing POST 已有本機 `Origin/Referer` 驗證
 
-## 5. 下一步
+## 5. 下一步：V1.5 多站地基
 
-### Step 1: 拆 `main.py`
+V1 功能層已可視為完成。下一階段不是立刻新增第二站，也不是先拆 `main.py`，而是先把不需要第二站樣本也能確定正確的地基收斂掉。
 
-先做純拆檔，不改行為。
+### Step 1: 建立 site descriptor / capability metadata（已完成第一輪）
+
+已完成：
+
+- 先只註冊 `ikyu`
+- 補 `SiteDescriptor`，包含 display name、browser page label、browser tab hint 與 browser preview/runtime capability
+- UI / preview flow 已開始吃 metadata，不再直接硬寫 `ikyu` 文案
+- `PreviewAttemptGuard` 不再有預設 `site_name="ikyu"`，呼叫端需明確傳入
+- Chrome 分頁選擇頁可顯示每個 tab 對應的站點 label
+
+後續可再優化：
+
+- Chrome tab preview service 的回傳模型仍可進一步帶 site descriptor，而不是只在 route 層補 label
+
+### Step 2: browser page strategy 改為 per-site / per-request（已完成第一輪）
+
+已完成：
+
+- `ChromeCdpHtmlFetcher` 保留 generic CDP 能力
+- `fetch_html` / `fetch_tab_capture` / `refresh_capture_for_url` / `ensure_tab_for_url` 可由呼叫端傳入 site strategy
+- `SiteAdapter` 可提供 `browser_page_strategy`
+- `ikyu` adapter 持有 `IkyuBrowserPageStrategy`
+- `runtime` 由 watch target / adapter 決定 refresh / restore 使用的 strategy
+- Chrome tab preview 由分頁 URL 對應 adapter，再使用該 adapter 的 strategy 抓取內容
+- `LiveIkyuHtmlClient` 的 browser fallback 透過 strategy-bound wrapper 使用 `ikyu` strategy
+
+後續可再優化：
+
+- `ChromeCdpHtmlFetcher` 仍同時負責 profile 啟動、CDP attach、tab matching、capture 訊號；拆 `main.py` 後可再拆內部責任
+- `build_default_browser_page_strategy()` 仍保留給 dev_start / chrome_profile 作為 V1 預設起始頁用途，不再代表 runtime 的全域唯一策略
+
+### Step 3: lifecycle owner / control state 拆分決策（已完成第一輪）
+
+已完成：
+
+- `WatchLifecycleCoordinator` 已接管 enable / disable / pause / resume transition，不再轉呼叫 `WatchEditorService`
+- `WatchEditorService` 已回到 watch 建立、刪除、通知規則更新與 preview 相關責任
+- 已補 `WatchLifecycleTransitionResult` 與 `WatchControlSnapshot`，讓人工控制命令有明確 transition 結果與判斷資料
+- check-now gate 仍由 coordinator 依 control state 判斷
+- runtime auto-pause 已改由 `RuntimeControlRecommendation` 描述控制狀態建議，runtime 不再直接拼接 paused watch
+- in-flight policy 維持不硬取消，依 notification dispatch 前與 persist 前 late gate 丟棄結果
+
+決策：
+
+- 目前不新增 `watch_control_states` table；等第二站或更複雜控制需求明確後再 migration
+- 目前不引入 in-flight hard cancel；避免取消 Chrome / DB / notifier 中間狀態造成更難推理的錯誤
+
+已切入：
+
+- `src/app/application/watch_lifecycle.py`
+- `src/app/application/watch_editor.py`
+- `src/app/monitor/runtime.py`
+- `src/app/monitor/policies.py`
+- `tests/unit/test_watch_lifecycle.py`
+- `tests/unit/test_monitor_runtime.py`
+- `tests/unit/test_web_app.py`
+
+### Step 4: 再拆 `main.py`
 
 建議方向：
 
+- site-aware flow、per-site strategy、lifecycle owner 決策已完成第一輪，可以開始拆
 - `main.py` 保留 app 建立、lifespan、container 掛載、router include
 - routes 拆到 `src/app/web/routes/`
 - POST origin / referer 驗證保留共用 helper
-- 拆完立即跑 `ruff check src tests` 與 `pytest`
 
-### Step 2: 拆 `web/views.py`
+### 延後項目
 
-建議方向：
-
-- 先拆 watch list / watch detail
-- 再拆 notification settings / global settings / debug captures
-- 保持 HTML 輸出不變，避免與 route 拆分混在一起
-
-### Step 3: 收斂 `ChromeCdpHtmlFetcher`
-
-建議方向：
-
-- 拆 profile 啟動
-- 拆 CDP attach
-- 拆 tab matching
-- 拆 capture / throttling / discard 訊號
+- 不急著把 `WatchTarget` / `SearchDraft` 改成 `site_payload`
+- 不急著把 `ChromeDrivenMonitorRuntime` 泛化成非 browser runtime
+- 不急著新增 `watch_control_states` table；目前 lifecycle owner 與 control state 拆分先不做 migration
+- 等第二站樣本明確後，再決定是否需要 capability payload 或 HTTP execution strategy
 
 ## 6. 不要重做的方向
 
 - 不要回到 `HTTP-first` 主線
 - 不要把 Seed URL 手動輸入流程加回 GUI
 - 不要把站點規則塞回 `main.py` 或 `views.py`
+- 不要在第二站尚未明確前大改 `WatchTarget` / `SearchDraft`
 - 不要把 runtime 結果塞回 `watch_item`
 - 不要移除舊 403 enum / state，因為舊 DB 可能仍有歷史資料
 

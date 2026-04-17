@@ -12,10 +12,7 @@ from app.application.notification_channel_test import NotificationChannelTestSer
 from app.application.preview_guard import PreviewAttemptGuard
 from app.application.watch_editor import WatchEditorService
 from app.application.watch_lifecycle import WatchLifecycleCoordinator
-from app.bootstrap.site_wiring import (
-    build_default_browser_page_strategy,
-    register_default_sites,
-)
+from app.bootstrap.site_wiring import register_default_sites
 from app.infrastructure.browser import ChromeCdpHtmlFetcher
 from app.infrastructure.db import (
     SqliteAppSettingsRepository,
@@ -59,15 +56,12 @@ def build_app_container(db_path: str | Path | None = None) -> AppContainer:
     runtime_repository = SqliteRuntimeRepository(database)
 
     site_registry = SiteRegistry()
-    chrome_cdp_fetcher = ChromeCdpHtmlFetcher(
-        page_strategy=build_default_browser_page_strategy()
-    )
+    chrome_cdp_fetcher = ChromeCdpHtmlFetcher()
     register_default_sites(site_registry, browser_fallback=chrome_cdp_fetcher)
 
     watch_editor_service = WatchEditorService(
         site_registry=site_registry,
         watch_item_repository=watch_item_repository,
-        runtime_repository=runtime_repository,
     )
     app_settings_service = AppSettingsService(
         settings_repository=app_settings_repository,
@@ -88,7 +82,6 @@ def build_app_container(db_path: str | Path | None = None) -> AppContainer:
         app_settings_service=app_settings_service,
     )
     watch_lifecycle_coordinator = WatchLifecycleCoordinator(
-        watch_editor_service=watch_editor_service,
         watch_item_repository=watch_item_repository,
         runtime_repository=runtime_repository,
         monitor_runtime=monitor_runtime,

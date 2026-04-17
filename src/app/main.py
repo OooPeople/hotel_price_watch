@@ -106,6 +106,7 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
             render_new_watch_page(
                 seed_url=seed_url,
                 error_message=error,
+                site_descriptors=container.site_registry.descriptors(),
             )
         )
 
@@ -122,6 +123,7 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
                     tabs=(),
                     error_message=_to_user_facing_error_message(exc),
                     diagnostics=getattr(exc, "diagnostics", ()),
+                    site_descriptors=container.site_registry.descriptors(),
                 ),
                 status_code=400,
             )
@@ -130,6 +132,11 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
                 tabs=tabs,
                 existing_watch_ids_by_tab_id=_existing_watch_ids_by_tab_id(
                     container,
+                    chrome_tabs=tabs,
+                ),
+                site_descriptors=container.site_registry.descriptors(),
+                site_labels_by_tab_id=_site_labels_by_tab_id(
+                    container=container,
                     chrome_tabs=tabs,
                 ),
             )
@@ -236,14 +243,16 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         _ensure_local_request_origin(request)
         form = await _read_form_data(request)
         seed_url = form.get("seed_url", "")
+        site_name = _site_name_for_seed_url(container=container, seed_url=seed_url)
         try:
-            container.preview_attempt_guard.ensure_allowed(site_name="ikyu")
+            container.preview_attempt_guard.ensure_allowed(site_name=site_name)
         except PreviewCooldownError as exc:
             return HTMLResponse(
                 render_new_watch_page(
                     seed_url=seed_url,
                     error_message=str(exc),
                     diagnostics=exc.diagnostics,
+                    site_descriptors=container.site_registry.descriptors(),
                 ),
                 status_code=429,
             )
@@ -256,22 +265,30 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
             diagnostics = getattr(exc, "diagnostics", ())
             container.preview_attempt_guard.register_result(
                 diagnostics=diagnostics,
-                site_name="ikyu",
+                site_name=site_name,
             )
             return HTMLResponse(
                 render_new_watch_page(
                     seed_url=seed_url,
                     error_message=_to_user_facing_error_message(exc),
                     diagnostics=diagnostics,
+                    site_descriptors=container.site_registry.descriptors(),
                 ),
                 status_code=400,
             )
         preview = container.watch_editor_service.mark_existing_watch_for_preview(preview)
+        site_name = _site_name_for_preview(container=container, preview=preview)
         container.preview_attempt_guard.register_result(
             diagnostics=preview.diagnostics,
-            site_name="ikyu",
+            site_name=site_name,
         )
-        return HTMLResponse(render_new_watch_page(seed_url=seed_url, preview=preview))
+        return HTMLResponse(
+            render_new_watch_page(
+                seed_url=seed_url,
+                preview=preview,
+                site_descriptors=container.site_registry.descriptors(),
+            )
+        )
 
     @app.post("/watches/chrome-tabs/preview", response_class=HTMLResponse, tags=["web"])
     async def preview_watch_from_chrome_tab(request: Request) -> HTMLResponse:
@@ -290,11 +307,21 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
                         container,
                         chrome_tabs=tabs,
                     ),
+                    site_descriptors=container.site_registry.descriptors(),
+                    site_labels_by_tab_id=_site_labels_by_tab_id(
+                        container=container,
+                        chrome_tabs=tabs,
+                    ),
                 ),
                 status_code=400,
             )
+        site_name = _site_name_for_selected_tab(
+            container=container,
+            chrome_tabs=tabs,
+            selected_tab_id=selected_tab_id,
+        )
         try:
-            container.preview_attempt_guard.ensure_allowed(site_name="ikyu")
+            container.preview_attempt_guard.ensure_allowed(site_name=site_name)
         except PreviewCooldownError as exc:
             return HTMLResponse(
                 render_chrome_tab_selection_page(
@@ -304,6 +331,11 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
                     selected_tab_id=selected_tab_id,
                     existing_watch_ids_by_tab_id=_existing_watch_ids_by_tab_id(
                         container,
+                        chrome_tabs=tabs,
+                    ),
+                    site_descriptors=container.site_registry.descriptors(),
+                    site_labels_by_tab_id=_site_labels_by_tab_id(
+                        container=container,
                         chrome_tabs=tabs,
                     ),
                 ),
@@ -318,7 +350,7 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
             diagnostics = getattr(exc, "diagnostics", ())
             container.preview_attempt_guard.register_result(
                 diagnostics=diagnostics,
-                site_name="ikyu",
+                site_name=site_name,
             )
             return HTMLResponse(
                 render_chrome_tab_selection_page(
@@ -330,18 +362,25 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
                         container,
                         chrome_tabs=tabs,
                     ),
+                    site_descriptors=container.site_registry.descriptors(),
+                    site_labels_by_tab_id=_site_labels_by_tab_id(
+                        container=container,
+                        chrome_tabs=tabs,
+                    ),
                 ),
                 status_code=400,
             )
         preview = container.watch_editor_service.mark_existing_watch_for_preview(preview)
+        site_name = _site_name_for_preview(container=container, preview=preview)
         container.preview_attempt_guard.register_result(
             diagnostics=preview.diagnostics,
-            site_name="ikyu",
+            site_name=site_name,
         )
         return HTMLResponse(
             render_new_watch_page(
                 seed_url=preview.draft.seed_url,
                 preview=preview,
+                site_descriptors=container.site_registry.descriptors(),
             )
         )
 
@@ -385,6 +424,7 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
                     diagnostics=diagnostics,
                     preview=preview
                     or await _safe_preview(container=container, seed_url=seed_url),
+                    site_descriptors=container.site_registry.descriptors(),
                 ),
                 status_code=400,
             )
@@ -748,6 +788,64 @@ def _existing_watch_ids_by_tab_id(
         drafts_by_watch_id=drafts_by_watch_id,
         site_registry=container.site_registry,
     )
+
+
+def _site_labels_by_tab_id(
+    *,
+    container: AppContainer,
+    chrome_tabs: tuple,
+) -> dict[str, str]:
+    """依 Chrome 分頁 URL 標示對應站點名稱，供分頁選擇頁顯示。"""
+    labels_by_tab_id: dict[str, str] = {}
+    for tab in chrome_tabs:
+        try:
+            descriptor = container.site_registry.descriptor_for_browser_page_url(tab.url)
+        except LookupError:
+            continue
+        labels_by_tab_id[tab.tab_id] = descriptor.display_name
+    return labels_by_tab_id
+
+
+def _site_name_for_seed_url(*, container: AppContainer, seed_url: str) -> str:
+    """依 seed URL 判定 preview guard 應使用的 site scope。"""
+    try:
+        return container.site_registry.for_url(seed_url).site_name
+    except LookupError:
+        return _default_site_name(container)
+
+
+def _site_name_for_selected_tab(
+    *,
+    container: AppContainer,
+    chrome_tabs: tuple,
+    selected_tab_id: str,
+) -> str:
+    """依使用者選定的 Chrome 分頁判定 preview guard 應使用的 site scope。"""
+    for tab in chrome_tabs:
+        if tab.tab_id != selected_tab_id:
+            continue
+        try:
+            return container.site_registry.for_browser_page_url(tab.url).site_name
+        except LookupError:
+            return _default_site_name(container)
+    return _default_site_name(container)
+
+
+def _site_name_for_preview(
+    *,
+    container: AppContainer,
+    preview: WatchCreationPreview,
+) -> str:
+    """依已建立的 preview 判定實際站點，避免成功結果寫入錯誤 scope。"""
+    try:
+        return container.site_registry.for_url(preview.draft.seed_url).site_name
+    except LookupError:
+        return _default_site_name(container)
+
+
+def _default_site_name(container: AppContainer) -> str:
+    """回傳目前 registry 的預設 site name，供錯誤路徑兜底。"""
+    return container.site_registry.default_descriptor().site_name
 
 
 async def _resolve_watch_creation_preview(

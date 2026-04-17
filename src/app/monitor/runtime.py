@@ -39,6 +39,7 @@ from app.infrastructure.db.repositories import (
 )
 from app.monitor.policies import (
     build_monitor_check_artifacts,
+    build_runtime_control_recommendation,
     decide_error_handling,
     reset_notification_state_after_success,
     should_trigger_wakeup_rescan,
@@ -214,6 +215,7 @@ class ChromeDrivenMonitorRuntime:
                     if draft is not None and draft.browser_tab_id is not None
                     else None
                 ),
+                page_strategy=adapter.browser_page_strategy,
             )
             current_snapshot = adapter.build_snapshot_from_browser_page(
                 page_url=capture.tab.url,
@@ -256,15 +258,7 @@ class ChromeDrivenMonitorRuntime:
             error_code=error_code,
             consecutive_failures=consecutive_failures,
         )
-        current_control_watch = await asyncio.to_thread(
-            self._watch_item_repository.get,
-            watch_item_id,
-        )
-        if (
-            current_control_watch is None
-            or not current_control_watch.enabled
-            or current_control_watch.paused_reason is not None
-        ):
+        if not await self._is_watch_still_checkable(watch_item_id):
             return
 
         check_result = compare_snapshots(
@@ -289,6 +283,8 @@ class ChromeDrivenMonitorRuntime:
 
         dispatch_result = None
         if notification_decision.should_notify:
+            if not await self._is_watch_still_checkable(watch_item_id):
+                return
             dispatch_result = await asyncio.to_thread(
                 self._dispatch_notification,
                 watch_item,
@@ -296,6 +292,9 @@ class ChromeDrivenMonitorRuntime:
                 replace(notification_decision, next_state=next_notification_state),
                 checked_at,
             )
+
+        if not await self._is_watch_still_checkable(watch_item_id):
+            return
 
         artifacts = build_monitor_check_artifacts(
             watch_item_id=watch_item_id,
@@ -308,24 +307,18 @@ class ChromeDrivenMonitorRuntime:
             error_handling=error_handling,
             dispatch_result=dispatch_result,
         )
-        paused_watch = None
-        if error_handling.should_pause:
-            paused_watch = replace(
-                watch_item,
-                enabled=True,
-                paused_reason=(
-                    error_handling.paused_reason.value
-                    if error_handling.paused_reason is not None
-                    else error_code.value if error_code is not None else "paused"
-                ),
-            )
+        control_recommendation = build_runtime_control_recommendation(
+            watch_item=watch_item,
+            error_handling=error_handling,
+            error_code=error_code,
+        )
 
         await asyncio.to_thread(
             self._runtime_repository.persist_check_outcome,
             latest_snapshot=artifacts.latest_check_snapshot,
             check_event=artifacts.check_event,
             notification_state=next_notification_state,
-            control_watch_item=paused_watch,
+            control_watch_item=control_recommendation.watch_item,
             price_history_entry=artifacts.price_history_entry,
             debug_artifact=debug_artifact,
             runtime_state_events=_build_runtime_state_events(
@@ -340,8 +333,20 @@ class ChromeDrivenMonitorRuntime:
             debug_retention_limit=self._debug_retention_limit,
         )
 
-        if error_handling.should_pause:
+        if control_recommendation.remove_from_scheduler:
             self._scheduler.remove_watch(watch_item_id)
+
+    async def _is_watch_still_checkable(self, watch_item_id: str) -> bool:
+        """重新讀取 control state，確認本次檢查仍可繼續提交結果。"""
+        current_watch = await asyncio.to_thread(
+            self._watch_item_repository.get,
+            watch_item_id,
+        )
+        return (
+            current_watch is not None
+            and current_watch.enabled
+            and current_watch.paused_reason is None
+        )
 
     async def request_check_now(self, watch_item_id: str) -> None:
         """提供 GUI 立即檢查入口，並與背景排程共用同一個互斥執行任務。"""
@@ -491,6 +496,9 @@ class ChromeDrivenMonitorRuntime:
                 self._watch_item_repository.get_draft,
                 watch_item.id,
             )
+            adapter = self._site_registry.for_url(
+                draft.seed_url if draft else watch_item.canonical_url
+            )
             try:
                 summary = await asyncio.to_thread(
                     self._chrome_fetcher.ensure_tab_for_url,
@@ -506,6 +514,7 @@ class ChromeDrivenMonitorRuntime:
                         else None
                     ),
                     excluded_tab_ids=tuple(claimed_tab_ids),
+                    page_strategy=adapter.browser_page_strategy,
                 )
                 claimed_tab_ids.add(summary.tab_id)
             except Exception:

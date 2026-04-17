@@ -67,8 +67,10 @@ class _FakeChromeFetcher:
         fallback_url: str | None = None,
         preferred_tab_id: str | None = None,
         excluded_tab_ids: tuple[str, ...] = (),
+        page_strategy=None,
     ) -> ChromeTabSummary:
         """模擬 runtime 啟動時重建或找回既有 watch 分頁。"""
+        del page_strategy
         self.ensure_calls.append(
             (
                 expected_url,
@@ -91,9 +93,10 @@ class _FakeChromeFetcher:
         expected_url: str,
         fallback_url: str | None = None,
         preferred_tab_id: str | None = None,
+        page_strategy=None,
     ) -> ChromeTabCapture:
         """??箏???????HTML嚗芋?砍?啣?????"""
-        del fallback_url, preferred_tab_id
+        del fallback_url, preferred_tab_id, page_strategy
         return ChromeTabCapture(
             tab=ChromeTabSummary(
                 tab_id="tab-1",
@@ -115,9 +118,10 @@ class _ThrottledChromeFetcher(_FakeChromeFetcher):
         expected_url: str,
         fallback_url: str | None = None,
         preferred_tab_id: str | None = None,
+        page_strategy=None,
     ) -> ChromeTabCapture:
         """? hidden / not_focused ????閬?"""
-        del fallback_url, preferred_tab_id
+        del fallback_url, preferred_tab_id, page_strategy
         return ChromeTabCapture(
             tab=ChromeTabSummary(
                 tab_id="tab-1",
@@ -139,9 +143,10 @@ class _DiscardedChromeFetcher(_FakeChromeFetcher):
         expected_url: str,
         fallback_url: str | None = None,
         preferred_tab_id: str | None = None,
+        page_strategy=None,
     ) -> ChromeTabCapture:
         """?撣嗆? `was_discarded` 閮?????閬?"""
-        del fallback_url, preferred_tab_id
+        del fallback_url, preferred_tab_id, page_strategy
         return ChromeTabCapture(
             tab=ChromeTabSummary(
                 tab_id="tab-1",
@@ -168,8 +173,10 @@ class _RecordingChromeFetcher(_FakeChromeFetcher):
         expected_url: str,
         fallback_url: str | None = None,
         preferred_tab_id: str | None = None,
+        page_strategy=None,
     ) -> ChromeTabCapture:
         """閮? runtime 撖阡??喳????蝝Ｕ?"""
+        del page_strategy
         self.calls.append((expected_url, fallback_url, preferred_tab_id))
         return super().refresh_capture_for_url(
             expected_url=expected_url,
@@ -186,9 +193,10 @@ class _ForbiddenChromeFetcher(_FakeChromeFetcher):
         expected_url: str,
         fallback_url: str | None = None,
         preferred_tab_id: str | None = None,
+        page_strategy=None,
     ) -> ChromeTabCapture:
         """直接拋出含 403 訊號的例外，驗證 runtime 會進入暫停流程。"""
-        del expected_url, fallback_url, preferred_tab_id
+        del expected_url, fallback_url, preferred_tab_id, page_strategy
         raise IkyuBlockedPageError("ikyu 已回傳阻擋頁面。")
 
 
@@ -201,9 +209,10 @@ class _TimeoutChromeFetcher(_FakeChromeFetcher):
         expected_url: str,
         fallback_url: str | None = None,
         preferred_tab_id: str | None = None,
+        page_strategy=None,
     ) -> ChromeTabCapture:
         """直接拋出逾時錯誤，驗證 runtime 會映射成 network_timeout。"""
-        del expected_url, fallback_url, preferred_tab_id
+        del expected_url, fallback_url, preferred_tab_id, page_strategy
         raise TimeoutError("refresh timed out")
 
 
@@ -222,8 +231,10 @@ class _BlockingChromeFetcher(_FakeChromeFetcher):
         expected_url: str,
         fallback_url: str | None = None,
         preferred_tab_id: str | None = None,
+        page_strategy=None,
     ) -> ChromeTabCapture:
         """在外部釋放前暫停刷新流程，模擬已在進行中的背景檢查。"""
+        del page_strategy
         self.call_count += 1
         self.started.set()
         self.release.wait(timeout=2)
@@ -253,8 +264,10 @@ class _PausingChromeFetcher(_FakeChromeFetcher):
         expected_url: str,
         fallback_url: str | None = None,
         preferred_tab_id: str | None = None,
+        page_strategy=None,
     ) -> ChromeTabCapture:
         """先暫停 watch，再回傳正常 capture，驗證 runtime 會丟棄結果。"""
+        del page_strategy
         watch_item = self._watch_repository.get(self._watch_item_id)
         assert watch_item is not None
         self._watch_repository.save(
@@ -265,6 +278,40 @@ class _PausingChromeFetcher(_FakeChromeFetcher):
             fallback_url=fallback_url,
             preferred_tab_id=preferred_tab_id,
         )
+
+
+class _PausingOnGetWatchRepository:
+    """在第 N 次讀取 watch 時暫停它，模擬後段 control state 變更。"""
+
+    def __init__(
+        self,
+        repository: SqliteWatchItemRepository,
+        *,
+        watch_item_id: str,
+        pause_on_get_call: int,
+    ) -> None:
+        """建立會代理原 repository 的測試替身。"""
+        self._repository = repository
+        self._watch_item_id = watch_item_id
+        self._pause_on_get_call = pause_on_get_call
+        self.get_call_count = 0
+
+    def __getattr__(self, name: str):
+        """未覆寫的方法直接委派給原 repository。"""
+        return getattr(self._repository, name)
+
+    def get(self, watch_item_id: str) -> WatchItem | None:
+        """在指定讀取次數先暫停 watch，再回傳目前狀態。"""
+        self.get_call_count += 1
+        if watch_item_id == self._watch_item_id and (
+            self.get_call_count == self._pause_on_get_call
+        ):
+            watch_item = self._repository.get(watch_item_id)
+            assert watch_item is not None
+            self._repository.save(
+                replace(watch_item, enabled=True, paused_reason="manually_paused")
+            )
+        return self._repository.get(watch_item_id)
 
 
 class _FailingRestoreChromeFetcher(_FakeChromeFetcher):
@@ -281,8 +328,10 @@ class _FailingRestoreChromeFetcher(_FakeChromeFetcher):
         fallback_url: str | None = None,
         preferred_tab_id: str | None = None,
         excluded_tab_ids: tuple[str, ...] = (),
+        page_strategy=None,
     ) -> ChromeTabSummary:
         """第一次恢復失敗，後續仍允許其它 watch 繼續恢復。"""
+        del page_strategy
         self.ensure_calls.append(
             (
                 expected_url,
@@ -325,6 +374,30 @@ class _FailingNotifier:
         """固定拋出錯誤，模擬外部通知通道失敗。"""
         del message
         raise RuntimeError(self._message)
+
+
+class _PausingNotifier(_RecordingNotifier):
+    """送出通知時暫停 watch，模擬 dispatch 期間的手動控制命令。"""
+
+    def __init__(
+        self,
+        *,
+        watch_repository: SqliteWatchItemRepository,
+        watch_item_id: str,
+    ) -> None:
+        """建立會在 send 時改變 control state 的 notifier。"""
+        super().__init__()
+        self._watch_repository = watch_repository
+        self._watch_item_id = watch_item_id
+
+    def send(self, message: NotificationMessage) -> None:
+        """先記錄通知，再暫停 watch。"""
+        super().send(message)
+        watch_item = self._watch_repository.get(self._watch_item_id)
+        assert watch_item is not None
+        self._watch_repository.save(
+            replace(watch_item, enabled=True, paused_reason="manually_paused")
+        )
 
 
 class _CountingNotifierFactory:
@@ -666,6 +739,121 @@ def test_runtime_discards_result_when_watch_is_paused_midflight(tmp_path) -> Non
     asyncio.run(runtime.run_watch_check_once(watch_item.id))
 
     assert notifier.messages == []
+    assert runtime_repository.list_check_events(watch_item.id) == []
+    latest_snapshot = runtime_repository.get_latest_check_snapshot(watch_item.id)
+    assert latest_snapshot is not None
+    assert latest_snapshot.normalized_price_amount == Decimal("25000")
+    paused_watch = watch_repository.get(watch_item.id)
+    assert paused_watch is not None
+    assert paused_watch.paused_reason == "manually_paused"
+
+
+def test_runtime_skips_notification_when_watch_pauses_before_dispatch(tmp_path) -> None:
+    """通知前若 control state 已改變，本次檢查不應通知或持久化結果。"""
+    database = SqliteDatabase(tmp_path / "watcher.db")
+    database.initialize()
+    watch_repository = SqliteWatchItemRepository(database)
+    runtime_repository = SqliteRuntimeRepository(database)
+    settings_repository = SqliteAppSettingsRepository(database)
+    app_settings_service = AppSettingsService(settings_repository)
+
+    watch_item = replace(
+        _build_runtime_watch_item("watch-runtime-pause-before-dispatch"),
+        notification_rule=RuleLeaf(
+            kind=NotificationLeafKind.BELOW_TARGET_PRICE,
+            target_price=Decimal("23000"),
+        ),
+    )
+    watch_repository.save(watch_item)
+    watch_repository.save_draft(
+        watch_item.id,
+        _build_runtime_draft(watch_item.canonical_url),
+    )
+    runtime_repository.save_latest_check_snapshot(
+        _build_latest_snapshot(
+            watch_item_id=watch_item.id,
+            amount=Decimal("25000"),
+        )
+    )
+
+    site_registry = SiteRegistry()
+    site_registry.register(_FakeRuntimeAdapter())
+    notifier = _RecordingNotifier()
+    runtime = ChromeDrivenMonitorRuntime(
+        watch_item_repository=_PausingOnGetWatchRepository(
+            watch_repository,
+            watch_item_id=watch_item.id,
+            pause_on_get_call=3,
+        ),
+        runtime_repository=runtime_repository,
+        site_registry=site_registry,
+        chrome_fetcher=_FakeChromeFetcher(),
+        app_settings_service=app_settings_service,
+        notifier_factory=lambda settings: _build_notifiers_for_test(settings, notifier),
+    )
+
+    import asyncio
+
+    asyncio.run(runtime.run_watch_check_once(watch_item.id))
+
+    assert notifier.messages == []
+    assert runtime_repository.list_check_events(watch_item.id) == []
+    latest_snapshot = runtime_repository.get_latest_check_snapshot(watch_item.id)
+    assert latest_snapshot is not None
+    assert latest_snapshot.normalized_price_amount == Decimal("25000")
+    paused_watch = watch_repository.get(watch_item.id)
+    assert paused_watch is not None
+    assert paused_watch.paused_reason == "manually_paused"
+
+
+def test_runtime_skips_persist_when_watch_pauses_during_dispatch(tmp_path) -> None:
+    """dispatch 期間若 watch 被暫停，本次結果不應再提交到 runtime history。"""
+    database = SqliteDatabase(tmp_path / "watcher.db")
+    database.initialize()
+    watch_repository = SqliteWatchItemRepository(database)
+    runtime_repository = SqliteRuntimeRepository(database)
+    settings_repository = SqliteAppSettingsRepository(database)
+    app_settings_service = AppSettingsService(settings_repository)
+
+    watch_item = replace(
+        _build_runtime_watch_item("watch-runtime-pause-during-dispatch"),
+        notification_rule=RuleLeaf(
+            kind=NotificationLeafKind.BELOW_TARGET_PRICE,
+            target_price=Decimal("23000"),
+        ),
+    )
+    watch_repository.save(watch_item)
+    watch_repository.save_draft(
+        watch_item.id,
+        _build_runtime_draft(watch_item.canonical_url),
+    )
+    runtime_repository.save_latest_check_snapshot(
+        _build_latest_snapshot(
+            watch_item_id=watch_item.id,
+            amount=Decimal("25000"),
+        )
+    )
+
+    site_registry = SiteRegistry()
+    site_registry.register(_FakeRuntimeAdapter())
+    notifier = _PausingNotifier(
+        watch_repository=watch_repository,
+        watch_item_id=watch_item.id,
+    )
+    runtime = ChromeDrivenMonitorRuntime(
+        watch_item_repository=watch_repository,
+        runtime_repository=runtime_repository,
+        site_registry=site_registry,
+        chrome_fetcher=_FakeChromeFetcher(),
+        app_settings_service=app_settings_service,
+        notifier_factory=lambda settings: _build_notifiers_for_test(settings, notifier),
+    )
+
+    import asyncio
+
+    asyncio.run(runtime.run_watch_check_once(watch_item.id))
+
+    assert len(notifier.messages) == 1
     assert runtime_repository.list_check_events(watch_item.id) == []
     latest_snapshot = runtime_repository.get_latest_check_snapshot(watch_item.id)
     assert latest_snapshot is not None
@@ -1828,7 +2016,12 @@ def test_runtime_loop_syncs_watch_added_after_start(tmp_path) -> None:
                 watch_item.id,
                 _build_runtime_draft(watch_item.canonical_url),
             )
-            await asyncio.sleep(0.15)
+            deadline = asyncio.get_running_loop().time() + 1.0
+            while (
+                runtime_repository.get_latest_check_snapshot(watch_item.id) is None
+                and asyncio.get_running_loop().time() < deadline
+            ):
+                await asyncio.sleep(0.01)
         finally:
             await runtime.stop()
 
