@@ -11,6 +11,8 @@ from app.application.watch_editor import WatchCreationPreview
 from app.application.watch_tab_matching import find_existing_watch_ids_by_tab_id
 from app.bootstrap.container import AppContainer
 from app.domain.enums import NotificationLeafKind
+from app.infrastructure.browser import ChromeTabSummary
+from app.sites.base import LookupDiagnostic
 from app.web import request_helpers
 from app.web.views import (
     render_chrome_tab_selection_page,
@@ -41,28 +43,16 @@ def build_watch_creation_router(container: AppContainer) -> APIRouter:
                 container.chrome_tab_preview_service.list_tabs,
             )
         except Exception as exc:
-            return HTMLResponse(
-                render_chrome_tab_selection_page(
-                    tabs=(),
-                    error_message=request_helpers.to_user_facing_error_message(exc),
-                    diagnostics=getattr(exc, "diagnostics", ()),
-                    site_descriptors=container.site_registry.descriptors(),
-                ),
+            return _chrome_tab_selection_response(
+                container=container,
+                tabs=(),
+                error_message=request_helpers.to_user_facing_error_message(exc),
+                diagnostics=getattr(exc, "diagnostics", ()),
                 status_code=400,
             )
-        return HTMLResponse(
-            render_chrome_tab_selection_page(
-                tabs=tabs,
-                existing_watch_ids_by_tab_id=_existing_watch_ids_by_tab_id(
-                    container,
-                    chrome_tabs=tabs,
-                ),
-                site_descriptors=container.site_registry.descriptors(),
-                site_labels_by_tab_id=_site_labels_by_tab_id(
-                    container=container,
-                    chrome_tabs=tabs,
-                ),
-            )
+        return _chrome_tab_selection_response(
+            container=container,
+            tabs=tabs,
         )
 
     @router.post("/watches/preview", response_class=HTMLResponse)
@@ -126,21 +116,11 @@ def build_watch_creation_router(container: AppContainer) -> APIRouter:
         selected_tab_id = form.get("tab_id", "").strip()
         tabs = await _safe_list_chrome_tabs(container=container)
         if not selected_tab_id:
-            return HTMLResponse(
-                render_chrome_tab_selection_page(
-                    tabs=tabs,
-                    error_message="請先選擇要抓取的 Chrome 分頁。",
-                    selected_tab_id=selected_tab_id or None,
-                    existing_watch_ids_by_tab_id=_existing_watch_ids_by_tab_id(
-                        container,
-                        chrome_tabs=tabs,
-                    ),
-                    site_descriptors=container.site_registry.descriptors(),
-                    site_labels_by_tab_id=_site_labels_by_tab_id(
-                        container=container,
-                        chrome_tabs=tabs,
-                    ),
-                ),
+            return _chrome_tab_selection_response(
+                container=container,
+                tabs=tabs,
+                error_message="請先選擇要抓取的 Chrome 分頁。",
+                selected_tab_id=selected_tab_id or None,
                 status_code=400,
             )
         site_name = _site_name_for_selected_tab(
@@ -151,22 +131,12 @@ def build_watch_creation_router(container: AppContainer) -> APIRouter:
         try:
             container.preview_attempt_guard.ensure_allowed(site_name=site_name)
         except PreviewCooldownError as exc:
-            return HTMLResponse(
-                render_chrome_tab_selection_page(
-                    tabs=tabs,
-                    error_message=str(exc),
-                    diagnostics=exc.diagnostics,
-                    selected_tab_id=selected_tab_id,
-                    existing_watch_ids_by_tab_id=_existing_watch_ids_by_tab_id(
-                        container,
-                        chrome_tabs=tabs,
-                    ),
-                    site_descriptors=container.site_registry.descriptors(),
-                    site_labels_by_tab_id=_site_labels_by_tab_id(
-                        container=container,
-                        chrome_tabs=tabs,
-                    ),
-                ),
+            return _chrome_tab_selection_response(
+                container=container,
+                tabs=tabs,
+                error_message=str(exc),
+                diagnostics=exc.diagnostics,
+                selected_tab_id=selected_tab_id,
                 status_code=429,
             )
         try:
@@ -180,22 +150,12 @@ def build_watch_creation_router(container: AppContainer) -> APIRouter:
                 diagnostics=diagnostics,
                 site_name=site_name,
             )
-            return HTMLResponse(
-                render_chrome_tab_selection_page(
-                    tabs=tabs,
-                    error_message=request_helpers.to_user_facing_error_message(exc),
-                    diagnostics=diagnostics,
-                    selected_tab_id=selected_tab_id,
-                    existing_watch_ids_by_tab_id=_existing_watch_ids_by_tab_id(
-                        container,
-                        chrome_tabs=tabs,
-                    ),
-                    site_descriptors=container.site_registry.descriptors(),
-                    site_labels_by_tab_id=_site_labels_by_tab_id(
-                        container=container,
-                        chrome_tabs=tabs,
-                    ),
-                ),
+            return _chrome_tab_selection_response(
+                container=container,
+                tabs=tabs,
+                error_message=request_helpers.to_user_facing_error_message(exc),
+                diagnostics=diagnostics,
+                selected_tab_id=selected_tab_id,
                 status_code=400,
             )
         preview = container.watch_editor_service.mark_existing_watch_for_preview(preview)
@@ -284,10 +244,40 @@ async def _safe_preview(
         return None
 
 
+def _chrome_tab_selection_response(
+    *,
+    container: AppContainer,
+    tabs: tuple[ChromeTabSummary, ...],
+    error_message: str | None = None,
+    diagnostics: tuple[LookupDiagnostic, ...] = (),
+    selected_tab_id: str | None = None,
+    status_code: int = 200,
+) -> HTMLResponse:
+    """集中建立 Chrome 分頁選擇頁 response，避免 route 分支重複組 page context。"""
+    return HTMLResponse(
+        render_chrome_tab_selection_page(
+            tabs=tabs,
+            error_message=error_message,
+            diagnostics=diagnostics,
+            selected_tab_id=selected_tab_id,
+            existing_watch_ids_by_tab_id=_existing_watch_ids_by_tab_id(
+                container,
+                chrome_tabs=tabs,
+            ),
+            site_descriptors=container.site_registry.descriptors(),
+            site_labels_by_tab_id=_site_labels_by_tab_id(
+                container=container,
+                chrome_tabs=tabs,
+            ),
+        ),
+        status_code=status_code,
+    )
+
+
 def _existing_watch_ids_by_tab_id(
     container: AppContainer,
     *,
-    chrome_tabs: tuple | None = None,
+    chrome_tabs: tuple[ChromeTabSummary, ...] | None = None,
 ) -> dict[str, str]:
     """依既有 watch target 與已保存頁面資訊，標記哪些分頁已對應 watch。"""
     chrome_tabs = chrome_tabs or container.chrome_tab_preview_service.list_tabs()
@@ -307,7 +297,7 @@ def _existing_watch_ids_by_tab_id(
 def _site_labels_by_tab_id(
     *,
     container: AppContainer,
-    chrome_tabs: tuple,
+    chrome_tabs: tuple[ChromeTabSummary, ...],
 ) -> dict[str, str]:
     """依 Chrome 分頁 URL 標示對應站點名稱，供分頁選擇頁顯示。"""
     labels_by_tab_id: dict[str, str] = {}
@@ -331,7 +321,7 @@ def _site_name_for_seed_url(*, container: AppContainer, seed_url: str) -> str:
 def _site_name_for_selected_tab(
     *,
     container: AppContainer,
-    chrome_tabs: tuple,
+    chrome_tabs: tuple[ChromeTabSummary, ...],
     selected_tab_id: str,
 ) -> str:
     """依使用者選定的 Chrome 分頁判定 preview guard 應使用的 site scope。"""
@@ -383,7 +373,7 @@ async def _resolve_watch_creation_preview(
 async def _safe_list_chrome_tabs(
     *,
     container: AppContainer,
-):
+) -> tuple[ChromeTabSummary, ...]:
     """嘗試列出 Chrome 分頁；若失敗則回傳空清單，供錯誤頁面沿用。"""
     try:
         return await run_in_threadpool(

@@ -18,7 +18,7 @@
 目前仍待收斂：
 
 - background runtime 的長時間穩定性驗證
-- 結構整理，例如拆 `main.py`、拆 `web/views.py`、收斂 `ChromeCdpHtmlFetcher`
+- Packaging 與無 Python 環境啟動驗證
 
 ## 1. 目標
 

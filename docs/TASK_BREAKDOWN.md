@@ -1,126 +1,77 @@
 # Task Breakdown
 
-本文件只保留專案進度與下一步。規格看 `docs/V1_SPEC.md`，架構邊界看 `docs/ARCHITECTURE_PLAN.md`，交接看 `docs/HANDOFF_PLAN.md`。
+本文件只保留目前進度、下一步與風險。規格看 `docs/V1_SPEC.md`，架構邊界看 `docs/ARCHITECTURE_PLAN.md`，交接看 `docs/HANDOFF_PLAN.md`。
 
 ## 目前總結
 
 - o V1 正式主線已收斂為「附著專用 Chrome profile + CDP attach」
-- o GUI、preview、watch CRUD、通知設定、debug captures、background runtime 已可實際操作
-- o 拆 `main.py` / `web/views.py` 前的第一輪高風險收斂已完成
-- 目前主線進入 V1.5 架構地基：lifecycle state machine 已先落地，下一步才拆 `main.py` / `web/views.py`
+- o `ikyu` watch 建立、背景輪詢、歷史、debug、通知與控制操作已可實際使用
+- o lifecycle owner、control command policy、site-aware browser strategy 已完成第一輪收斂
+- o `main.py`、web routes、web renderers、`ChromeCdpHtmlFetcher` 已完成第一輪拆分
+- o 目前已通過 `ruff check src tests` 與全量 `pytest`，目前測試數為 `222 passed`
 
-## Milestone 1: 專案初始化（已完成）
+## 已完成範圍
 
-- o Python `3.12` + `uv` 工作流
-- o 專案目錄、lint、test 骨架
-- o `SiteAdapter` / registry / domain model 基礎
+### V1 功能
 
-## Milestone 2: Parser Proof（已完成）
-
-- o `ikyu` URL normalizer、fixture、parser tests
-- o `seed_url -> search_draft -> watch_target`
-- o 精確 `room-plan` 價格解析與 target identity
-- o 每人每晚價格衍生顯示
-
-## Milestone 3: Monitor Engine（已完成）
-
-- o scheduler / queue / worker state
-- o compare / notification evaluator / dedupe / backoff / wakeup rescan
-- o monitor runtime 已透過 app `lifespan` 接到啟動流程
-- o 背景排程與 `check-now` 已共用 per-watch 互斥
-
-## Milestone 4: Persistence（已完成）
-
+- o parser / normalizer / fixture-based parser tests
+- o `seed_url -> search_draft -> watch_target` 與精確 `room-plan` identity
+- o scheduler、runtime、per-watch 互斥、`check-now`
 - o SQLite schema、migration、`WAL`、`busy_timeout`
-- o watch 設定與 runtime state 分離
-- o latest snapshot / check event / price history / notification state / runtime state event / debug artifact persistence
-- o 單次 check 已改成單一 transaction 持久化
-
-## Milestone 5: Notifications（已完成）
-
+- o latest snapshot、check event、price history、notification state、runtime state event、debug artifact persistence
 - o desktop / `ntfy` / Discord webhook notifier
-- o formatter / dispatcher / throttle
-- o 全域通知通道設定與測試通知已走正式 dispatcher / notifier 路徑
-- o 通道冷卻可跨 runtime 重啟保留
-
-## Milestone 6: GUI（已完成第一版）
-
-- o watch 列表、新增、刪除、詳細頁、歷史與錯誤摘要
-- o 從專用 Chrome 分頁抓取建立 watch，不再要求手動 Seed URL
-- o 單一 watch 通知規則與全域通知通道設定頁
-- o debug captures 列表、詳細頁、清空
+- o notification formatter、dispatcher、throttle 與測試通知
+- o watch 列表、新增、刪除、詳細頁、歷史、debug captures、通知設定
 - o watch 啟用 / 停用 / 暫停 / 恢復 / 手動立即檢查
-- o 首頁與 watch 詳細頁支援局部 polling 更新
-- o Chrome 分頁清單已用 target identity / `browser_page_url` / query-aware matching 判斷既有 watch
-- o runtime 啟動恢復時，多個 watch 不會共用同一分頁依序跳轉
+- o 首頁與 watch 詳細頁局部 polling 更新
 
-## Milestone 6.5: Chrome-driven Runtime 收斂（第一輪完成）
+### V1.5 架構地基
 
-- o V1 control command policy 已文件化：不硬取消 in-flight check，阻止新任務並在提交前 gate
-- o `WatchLifecycleCoordinator` 已接上 pause / disable / resume / check-now
-- o in-flight check 中途被 pause / disable 時，不寫入新結果或發通知
-- o 403 auto-pause 的 control state 已納入 check outcome 同一個 SQLite transaction，且會同步從 scheduler 移除
+- o V1 正式路徑不再使用 `HTTP-first`
+- o 建立 watch 的正式入口已改為「從專用 Chrome 分頁抓取」
+- o `WatchLifecycleCoordinator` 已成為人工 control transition owner
+- o `watch_lifecycle_state_machine.py` 已集中 control command decision、scheduler side effect 與 in-flight policy
+- o runtime auto-pause 已改走 lifecycle state machine
+- o in-flight policy 明確採 `continue-and-gate`，不做 hard cancel
+- o `TaskLifecyclePolicy` 已在 capture 後、通知前、持久化前 gate 結果
 - o `WatchRuntimeState` 與 `runtime_state_events` 已成為 GUI / runtime 的正式狀態語意
-- o `RECOVER_PENDING`、`PAUSED_BLOCKED`、`pause_due_to_blocking` 已取代新的 403 中心顯示語意；舊 403 enum/state 僅保留歷史相容
-- o `SiteAdapter` 已補 browser page capability，tab filtering / matching 已由 adapter / registry 驅動
-- o `ChromeCdpHtmlFetcher` 已改用可注入 browser page strategy，blocked / ready / page scoring 不再硬寫在 fetcher 內
-- o `ikyu` blocked page guard 已移到 `sites/ikyu`
-- o `BrowserBlockingOutcome` 已取代錯誤訊息片段判斷，支援 `forbidden -> http_403` 與 `rate_limited -> http_429`
-- o preview cooldown 與 debug capture 已補 site metadata / site filter
-- o V1 站點 adapter 與 browser strategy wiring 已集中到 `bootstrap/site_wiring.py`
+- o `BrowserBlockingOutcome` 已取代錯誤訊息片段判斷
+- o `SiteAdapter` 已承擔 browser page capability 與 browser strategy
+- o `ChromeCdpHtmlFetcher` 已支援 per-site / per-request browser page strategy
+- o 站點 adapter 與 browser strategy wiring 已集中到 `bootstrap/site_wiring.py`
 
-## Milestone 6.5 尚未完成但不阻擋 V1 使用
+### 結構整理
 
-- 補更完整的長時間運作、節流與重試行為驗證
-- 補 blocked / recover control recommendation 的更完整語意
-- 規劃 `watch_item` 靜態定義與控制狀態的長期分離方式，先不急著做大 migration
-
-## Milestone 6.6: V1.5 多站地基（進行中）
-
-- o 補 lifecycle late gate：notification dispatch 前與 persist 前再次確認 control state，縮小 pause / disable race window
-- o 建立 site descriptor / capability metadata：先只註冊 `ikyu`，但 UI / preview flow 不再直接硬寫站點文案與預設 site
-- o `PreviewAttemptGuard` 已移除 `site_name="ikyu"` 預設值，呼叫端需明確提供 site scope
-- o 調整 Chrome tab preview / runtime restore / capture，使 site metadata 與 browser strategy 跟著 adapter 走
-- o 將 browser page strategy 改成 per-site / per-request：`ChromeCdpHtmlFetcher` 不再只有全域單一 `IkyuBrowserPageStrategy`
-- 暫緩 `WatchTarget` / `SearchDraft` 的 `site_payload` 化，等第二站樣本明確後再決定
-- 暫緩把 `ChromeDrivenMonitorRuntime` 泛化成非 browser runtime，等第二站確定需要 HTTP execution 再做
-
-## Milestone 6.7: Lifecycle Owner / Control State 深化（拆 `main.py` 前決策）
-
-- o 將 `WatchLifecycleCoordinator` 從 façade 演進成 lifecycle transition owner，人工 control transition 不再由 `WatchEditorService` 執行
-- o 抽出 `watch_lifecycle_state_machine.py`，集中定義 control command decision / transition result / scheduler side effect / in-flight policy
-- o 明確描述 enable / disable / pause / resume / check-now / runtime blocked pause 的允許條件與副作用
-- o runtime auto-pause 已改走同一套 lifecycle state machine，runtime 不再直接拼接暫停 watch state 或 runtime state event
-- o 明確定義 in-flight task lifecycle：維持不硬取消、以 `TaskLifecyclePolicy` / `TaskLifecycleDisposition` 套用 `continue-and-gate`
-- o 已完成 `watch_control_states` future migration plan；目前不做 migration，先避免新增更多 control 欄位到 `watch_item`
-- o 已完成拆 `main.py` 前的 lifecycle/control 決策：不做 migration，先以 state machine + coordinator + recommendation 收斂控制權
-
-## Milestone 6.8: Web Route 拆分（準備中）
-
-- o 已補 `main.py` 拆分 guardrails：route 不新增 lifecycle 決策、不新增 site-specific 規則
-- o 第一刀已完成：抽出 request / form helper 到 `app.web.request_helpers`
-- o 第二刀已完成：抽出 debug captures routes 到 `app.web.routes.debug_routes`
-- o 第三刀已完成：抽出 settings / notification routes 到 `app.web.routes.settings_routes`
-- o 第四刀已完成：抽出 watch list / detail / control routes 到 `app.web.routes.watch_routes`
-- o 第五刀已完成：抽出 watch creation / Chrome tab preview routes 到 `app.web.routes.watch_creation_routes`
 - o `main.py` 已收斂為 app factory、lifespan、container 掛載、router include 與 health endpoint
-- 下一步改拆 `web/views.py`，避免 route 與 render helper 繼續互相膨脹
+- o web routes 已拆到 `src/app/web/routes/`
+- o web renderers 已依頁面群組拆分，`app.web.views` 只保留相容 re-export
+- o web routes 已補必要 page context helper，避免首屏與 fragment 重複組資料
+- o `ChromeCdpHtmlFetcher` 已拆出 profile launcher、CDP connector、page matcher、page capture helper 與 chrome models
 
-## Milestone 7: Packaging（尚未開始）
+## 第二站前決策
 
-- 建立 PyInstaller spec
-- 建立 build 腳本
-- 驗證無 Python 環境啟動
+- o 已明確標註目前 `SearchDraft`、`WatchTarget`、`OfferCandidate` 與 SQLite schema 仍是 lodging-room-plan contract
+- 第二站若同屬 hotel / room / plan 型網站，可先沿用目前 contract
+- 第二站若不是 hotel / room / plan 型網站，需先設計 site-specific target payload / candidate payload 與 migration
+- 在第二站樣本明確前，暫不把 `WatchTarget` / `SearchDraft` payload 化，避免過度抽象
+- 在第二站樣本明確前，暫不把 `ChromeDrivenMonitorRuntime` 泛化成非 browser runtime
+
+## 延後項目
+
+- `watch_control_states` table：目前只保留 future migration plan，不立即 migration
+- 更完整的長時間真機穩定性驗證：包含節流、discard、blocked page、VPN / IP 風控
+- Packaging：PyInstaller spec、build 腳本、無 Python 環境啟動驗證
+- 第二站 spike：需先選定具體站點樣本，再判斷 target contract 是否足夠
 
 ## 下一步
 
-1. 拆 `web/views.py`：依 watch list、watch detail、settings、debug pages 拆 render helper
-2. 檢查 web routes 是否需要共用 page context / view model helper，避免 route 直接組太多頁面資料
-3. 進一步收斂 `ChromeCdpHtmlFetcher` 內部責任：profile 啟動、CDP attach、tab matching、capture 訊號分層
+1. 先做一次人工 smoke test：啟動、列分頁、建立 watch、手動 check、通知測試、暫停 / 恢復。
+2. 若 smoke test 穩定，進入 Packaging。
+3. 若要先做第二站，先只做 spike，不直接改 DB schema 或 runtime contract。
 
 ## 目前主要風險
 
-- `ikyu` 真站仍可能對同一出口 IP 做風控
-- 背景監看依賴專用 Chrome session，不依賴使用者目前前景分頁
-- Chrome 縮小或背景運作時，仍需持續驗證節流 / discard / blocked page 行為
-- 第二站前仍需檢查新站是否需要額外 `site_payload` 或非 Chrome-driven execution strategy
+- `ikyu` 真站仍可能對同一出口 IP 做風控。
+- 背景監看依賴專用 Chrome session，仍需真機長時間驗證。
+- Chrome 縮小、背景、discard 或站方 blocked page 的實際行為仍可能因環境不同而變動。
+- 第二站若不是 lodging-room-plan 模型，現有 target / candidate / DB contract 需要 migration。

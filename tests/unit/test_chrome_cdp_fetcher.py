@@ -11,6 +11,7 @@ from app.infrastructure.browser.chrome_cdp_fetcher import (
     _build_chrome_launch_command,
     _prepare_chrome_profile,
 )
+from app.infrastructure.browser.chrome_profile_launcher import ChromeProfileLauncher
 from app.sites.ikyu.browser_strategy import IkyuBrowserPageStrategy
 
 
@@ -85,16 +86,8 @@ def test_ensure_debuggable_chrome_raises_when_chrome_is_missing(monkeypatch) -> 
     """找不到 Chrome 時，應回清楚訊息而不是靜默失敗。"""
     fetcher = ChromeCdpHtmlFetcher()
 
-    monkeypatch.setattr(
-        ChromeCdpHtmlFetcher,
-        "_is_cdp_ready",
-        lambda self: False,
-    )
-    monkeypatch.setattr(
-        ChromeCdpHtmlFetcher,
-        "_find_chrome_path",
-        lambda self: None,
-    )
+    monkeypatch.setattr(ChromeProfileLauncher, "is_cdp_ready", lambda self: False)
+    monkeypatch.setattr(ChromeProfileLauncher, "find_chrome_path", lambda self: None)
 
     with pytest.raises(ValueError, match="找不到可用的 Chrome"):
         fetcher._ensure_debuggable_chrome()
@@ -160,14 +153,10 @@ def test_open_profile_window_uses_bootstrap_homepage(monkeypatch, tmp_path) -> N
     )
     launched: list[list[str]] = []
 
+    monkeypatch.setattr(ChromeProfileLauncher, "is_cdp_ready", lambda self: False)
     monkeypatch.setattr(
-        ChromeCdpHtmlFetcher,
-        "_is_cdp_ready",
-        lambda self: False,
-    )
-    monkeypatch.setattr(
-        ChromeCdpHtmlFetcher,
-        "_find_chrome_path",
+        ChromeProfileLauncher,
+        "find_chrome_path",
         lambda self: r"C:\Chrome\chrome.exe",
     )
     monkeypatch.setattr(

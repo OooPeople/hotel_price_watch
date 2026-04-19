@@ -3,47 +3,35 @@
 from __future__ import annotations
 
 import hashlib
-import json
-import subprocess
 import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from app.infrastructure.browser.chrome_cdp_connection import ChromeCdpConnector
+from app.infrastructure.browser.chrome_models import ChromeTabCapture, ChromeTabSummary
+from app.infrastructure.browser.chrome_page_capture import ChromePageCaptureHelper
+from app.infrastructure.browser.chrome_page_matcher import ChromePageMatcher
+from app.infrastructure.browser.chrome_profile_launcher import (
+    ChromeProfileLauncher,
+)
+from app.infrastructure.browser.chrome_profile_launcher import (
+    build_chrome_launch_command as _build_chrome_launch_command,
+)
+from app.infrastructure.browser.chrome_profile_launcher import (
+    prepare_chrome_profile as _prepare_chrome_profile,
+)
 from app.infrastructure.browser.page_strategy import (
     BasicBrowserPageStrategy,
     BrowserPageStrategy,
 )
 
-
-@dataclass(frozen=True, slots=True)
-class ChromeTabSummary:
-    """表示目前可附著的 Chrome 分頁摘要。"""
-
-    tab_id: str
-    title: str
-    url: str
-    visibility_state: str | None
-    has_focus: bool | None
-    was_discarded: bool | None = None
-
-    @property
-    def possible_throttling(self) -> bool:
-        """以頁面可見性與焦點狀態推估背景節流風險。"""
-        return (
-            self.visibility_state == "hidden"
-            or self.has_focus is False
-            or self.was_discarded is True
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ChromeTabCapture:
-    """表示從特定 Chrome 分頁抓回的內容與分頁摘要。"""
-
-    tab: ChromeTabSummary
-    html: str
+__all__ = [
+    "ChromeCdpHtmlFetcher",
+    "ChromeTabCapture",
+    "ChromeTabSummary",
+    "_build_chrome_launch_command",
+    "_prepare_chrome_profile",
+]
 
 
 @dataclass(slots=True)
@@ -247,79 +235,31 @@ class ChromeCdpHtmlFetcher:
 
     def _ensure_debuggable_chrome(self, start_url: str | None = None) -> None:
         """若 CDP 尚未可用，則啟動一個可附著的 Chrome 視窗。"""
-        if self._is_cdp_ready():
-            return
+        self._build_profile_launcher().ensure_debuggable_chrome(start_url=start_url)
 
-        chrome_path = self._find_chrome_path()
-        if chrome_path is None:
-            raise ValueError(
-                "找不到可用的 Chrome 可執行檔；"
-                "請安裝 Chrome，或手動以 remote debugging 模式啟動後再重試。"
-            )
-
-        self.user_data_dir.mkdir(parents=True, exist_ok=True)
-        _prepare_chrome_profile(self.user_data_dir)
-        subprocess.Popen(
-            _build_chrome_launch_command(
-                chrome_path=chrome_path,
-                user_data_dir=self.user_data_dir,
-                url=start_url or self.profile_start_url,
-            ),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-
-        deadline = time.monotonic() + self.launch_timeout_seconds
-        while time.monotonic() < deadline:
-            if self._is_cdp_ready():
-                return
-            time.sleep(0.5)
-
-        raise ValueError(
-            "已嘗試啟動可附著的 Chrome 視窗，但 CDP 端點仍未就緒；"
-            "請確認 Chrome 未被安全軟體或系統政策攔下。"
+    def _build_profile_launcher(self) -> ChromeProfileLauncher:
+        """依目前 fetcher 設定建立 profile launcher。"""
+        return ChromeProfileLauncher(
+            cdp_endpoint=self.cdp_endpoint,
+            launch_timeout_seconds=self.launch_timeout_seconds,
+            chrome_candidates=self.chrome_candidates,
+            user_data_dir=self.user_data_dir,
+            profile_start_url=self.profile_start_url,
         )
 
     def _connect_playwright_browser(self):
         """附著到既有 CDP Chrome session，並回傳 browser 與 playwright 控制器。"""
-        try:
-            from playwright.sync_api import Error as PlaywrightError
-            from playwright.sync_api import sync_playwright
-        except ImportError as exc:
-            raise ValueError(
-                "browser fallback 需要安裝 Playwright 套件；"
-                "請先完成專案依賴同步。"
-            ) from exc
-
-        self._ensure_debuggable_chrome()
-        playwright = sync_playwright().start()
-        try:
-            browser = playwright.chromium.connect_over_cdp(self.cdp_endpoint)
-        except PlaywrightError as exc:
-            playwright.stop()
-            raise ValueError(
-                "無法附著到手動 Chrome session；"
-                "請確認已啟動支援 remote debugging 的 Chrome 視窗。"
-            ) from exc
-        return browser, playwright
+        return ChromeCdpConnector(self.cdp_endpoint).connect_playwright_browser(
+            ensure_debuggable_chrome=self._ensure_debuggable_chrome,
+        )
 
     def _is_cdp_ready(self) -> bool:
         """檢查本機 CDP 端點是否已可連線。"""
-        try:
-            with urllib.request.urlopen(
-                f"{self.cdp_endpoint}/json/version",
-                timeout=2.0,
-            ) as response:
-                return response.status == 200
-        except (urllib.error.URLError, TimeoutError, OSError):
-            return False
+        return self._build_profile_launcher().is_cdp_ready()
 
     def _find_chrome_path(self) -> str | None:
         """找出本機可用的 Chrome 可執行檔。"""
-        for path in self.chrome_candidates:
-            if Path(path).exists():
-                return path
-        return None
+        return self._build_profile_launcher().find_chrome_path()
 
     def _get_or_create_page(
         self,
@@ -400,37 +340,19 @@ class ChromeCdpHtmlFetcher:
     ):
         """在目前所有分頁中挑出最接近目標 URL 的頁面。"""
         resolved_strategy = self._resolve_page_strategy(page_strategy)
-        best_page = None
-        best_score = -1
-        best_signature = None
-        expected_signature = resolved_strategy.page_signature(expected_url)
-        excluded_ids = set(excluded_tab_ids)
-        for page in context.pages:
-            if page.is_closed():
-                continue
-            if excluded_ids and self._get_page_stable_id(page) in excluded_ids:
-                continue
-            score = self._score_page(
-                page.url,
-                expected_url=expected_url,
-                page_strategy=resolved_strategy,
-            )
-            if score > best_score:
-                best_page = page
-                best_score = score
-                best_signature = resolved_strategy.page_signature(page.url)
-        if (
-            best_score <= 0
-            or best_signature is None
-            or not self._is_confident_page_match(
-                current_signature=best_signature,
-                expected_signature=expected_signature,
-                score=best_score,
-                page_strategy=resolved_strategy,
-            )
-        ):
-            return None
-        return best_page
+        return self._build_page_matcher().find_best_page(
+            context,
+            expected_url=expected_url,
+            excluded_tab_ids=excluded_tab_ids,
+            page_strategy=resolved_strategy,
+        )
+
+    def _build_page_matcher(self) -> ChromePageMatcher:
+        """建立目前 fetcher 使用的 Chrome 分頁 matcher。"""
+        return ChromePageMatcher(
+            minimum_confident_match_score=self.minimum_confident_match_score,
+            get_page_stable_id=self._get_page_stable_id,
+        )
 
     def _get_page_by_tab_id(self, context, tab_id: str):
         """依 tab id 取回目前 context 中對應的分頁。"""
@@ -445,36 +367,7 @@ class ChromeCdpHtmlFetcher:
 
     def _build_tab_summary(self, *, page) -> ChromeTabSummary:
         """讀出單一 Chrome 分頁的摘要與背景節流訊號。"""
-        title = ""
-        try:
-            title = page.title()
-        except Exception:
-            title = ""
-
-        visibility_state = None
-        has_focus = None
-        was_discarded = None
-        try:
-            visibility_state = page.evaluate("() => document.visibilityState")
-        except Exception:
-            visibility_state = None
-        try:
-            has_focus = page.evaluate("() => document.hasFocus()")
-        except Exception:
-            has_focus = None
-        try:
-            was_discarded = page.evaluate("() => Boolean(document.wasDiscarded)")
-        except Exception:
-            was_discarded = None
-
-        return ChromeTabSummary(
-            tab_id=self._get_page_stable_id(page),
-            title=title,
-            url=page.url,
-            visibility_state=visibility_state,
-            has_focus=has_focus,
-            was_discarded=was_discarded,
-        )
+        return self._build_page_capture_helper().build_tab_summary(page=page)
 
     def _capture_page(
         self,
@@ -484,13 +377,14 @@ class ChromeCdpHtmlFetcher:
     ) -> ChromeTabCapture:
         """把 page 內容與其摘要封裝成統一抓取結果。"""
         resolved_strategy = self._resolve_page_strategy(page_strategy)
-        html = page.content()
-        resolved_strategy.raise_if_blocked_page(html)
-        summary = self._build_tab_summary(page=page)
-        return ChromeTabCapture(
-            tab=summary,
-            html=html,
+        return self._build_page_capture_helper().capture_page(
+            page=page,
+            page_strategy=resolved_strategy,
         )
+
+    def _build_page_capture_helper(self) -> ChromePageCaptureHelper:
+        """建立目前 fetcher 使用的 Chrome capture helper。"""
+        return ChromePageCaptureHelper(get_page_stable_id=self._get_page_stable_id)
 
     def _get_page_stable_id(self, page) -> str:
         """為目前 session 中的分頁產生較穩定的識別 key。"""
@@ -545,7 +439,11 @@ class ChromeCdpHtmlFetcher:
     ) -> int:
         """依 URL 相似度為目前分頁評分，優先使用更接近目標飯店頁的分頁。"""
         resolved_strategy = self._resolve_page_strategy(page_strategy)
-        return resolved_strategy.score_page(current_url, expected_url=expected_url)
+        return self._build_page_matcher().score_page(
+            current_url,
+            expected_url=expected_url,
+            page_strategy=resolved_strategy,
+        )
 
     def _is_confident_page_match(
         self,
@@ -557,11 +455,11 @@ class ChromeCdpHtmlFetcher:
     ) -> bool:
         """判斷目前分頁是否足夠接近目標條件，值得沿用而不是保守 fallback。"""
         resolved_strategy = self._resolve_page_strategy(page_strategy)
-        return resolved_strategy.is_confident_page_match(
+        return self._build_page_matcher().is_confident_page_match(
             current_signature=current_signature,
             expected_signature=expected_signature,
             score=score,
-            minimum_score=self.minimum_confident_match_score,
+            page_strategy=resolved_strategy,
         )
 
     def _resolve_page_strategy(
@@ -570,89 +468,3 @@ class ChromeCdpHtmlFetcher:
     ) -> BrowserPageStrategy:
         """解析單次 request 要使用的 browser page strategy，未指定時沿用預設值。"""
         return page_strategy or self.page_strategy
-
-
-def _build_chrome_launch_command(
-    *,
-    chrome_path: str,
-    user_data_dir: Path,
-    url: str,
-) -> list[str]:
-    """建立啟動可附著 Chrome instance 的命令列參數。"""
-    return [
-        chrome_path,
-        "--remote-debugging-port=9222",
-        f"--user-data-dir={user_data_dir.resolve()}",
-        "--new-window",
-        "--disable-animations",
-        "--disable-background-networking",
-        "--disable-component-update",
-        "--disable-default-apps",
-        "--disable-dev-shm-usage",
-        "--disable-domain-reliability",
-        "--disable-infobars",
-        "--disable-logging",
-        "--disable-notifications",
-        "--disable-popup-blocking",
-        "--disable-renderer-backgrounding",
-        "--disable-sync",
-        "--disable-translate",
-        "--disable-features=TranslateUI",
-        "--homepage=about:blank",
-        "--lang=zh-TW",
-        "--no-default-browser-check",
-        "--no-first-run",
-        "--no-pings",
-        "--no-service-autorun",
-        "--password-store=basic",
-        url,
-    ]
-
-
-def _prepare_chrome_profile(user_data_dir: Path) -> None:
-    """預先寫入偏好設定，減少第一次啟動的多餘干擾。"""
-    default_dir = user_data_dir / "Default"
-    default_dir.mkdir(parents=True, exist_ok=True)
-
-    preferences = {
-        "credentials_enable_service": False,
-        "ack_existing_ntp_extensions": False,
-        "translate": {"enabled": False},
-        "profile": {
-            "default_content_setting_values": {
-                "notifications": 2,
-                "sound": 2,
-            },
-            "password_manager_enabled": False,
-            "name": "hotel_price_watch",
-        },
-        "privacy_sandbox": {"first_party_sets_enabled": False},
-        "safebrowsing": {"enabled": False, "enhanced": False},
-        "sync": {"autofill_wallet_import_enabled_migrated": False},
-        "net": {"network_prediction_options": 3},
-    }
-    preferences_path = default_dir / "Preferences"
-    if not preferences_path.exists():
-        preferences_path.write_text(
-            json.dumps(preferences),
-            encoding="utf-8",
-        )
-
-    local_state = {
-        "performance_tuning": {"high_efficiency_mode": {"state": 1}},
-        "browser": {
-            "enabled_labs_experiments": [
-                "history-journeys@4",
-                "memory-saver-multi-state-mode@1",
-                "modal-memory-saver@1",
-                "read-anything@2",
-            ]
-        },
-        "dns_over_https": {"mode": "off"},
-    }
-    local_state_path = user_data_dir / "Local State"
-    if not local_state_path.exists():
-        local_state_path.write_text(
-            json.dumps(local_state),
-            encoding="utf-8",
-        )

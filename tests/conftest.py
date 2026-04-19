@@ -7,7 +7,12 @@ import os
 _ORIGINAL_OS_MKDIR = os.mkdir
 
 
-def _patched_os_mkdir(path: str | bytes, mode: int = 0o777, *, dir_fd: int | None = None) -> None:
+def _patched_os_mkdir(
+    path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    mode: int = 0o777,
+    *,
+    dir_fd: int | None = None,
+) -> None:
     """避開 Windows 上 `mode=0o700` 會建立出不可讀目錄的行為。"""
     actual_mode = 0o777 if mode == 0o700 else mode
     if dir_fd is None:

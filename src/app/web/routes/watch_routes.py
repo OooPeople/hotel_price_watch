@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.application.watch_lifecycle import WatchLifecycleError
 from app.bootstrap.container import AppContainer
-from app.domain.entities import LatestCheckSnapshot, WatchItem
+from app.domain.entities import (
+    CheckEvent,
+    DebugArtifact,
+    LatestCheckSnapshot,
+    NotificationState,
+    RuntimeStateEvent,
+    WatchItem,
+)
 from app.monitor.runtime import MonitorRuntimeStatus
 from app.web import request_helpers
 from app.web.views import (
@@ -20,6 +29,27 @@ from app.web.views import (
 )
 
 
+@dataclass(frozen=True)
+class WatchListPageContext:
+    """首頁 watch 列表 renderer 所需的資料集合。"""
+
+    watch_items: tuple[WatchItem, ...]
+    latest_snapshots_by_watch_id: dict[str, LatestCheckSnapshot | None]
+    runtime_status: MonitorRuntimeStatus | None
+
+
+@dataclass(frozen=True)
+class WatchDetailPageContext:
+    """watch 詳細頁與 fragment renderer 共用的資料集合。"""
+
+    watch_item: WatchItem
+    latest_snapshot: LatestCheckSnapshot | None
+    check_events: tuple[CheckEvent, ...]
+    notification_state: NotificationState | None
+    debug_artifacts: tuple[DebugArtifact, ...]
+    runtime_state_events: tuple[RuntimeStateEvent, ...]
+
+
 def build_watch_router(container: AppContainer) -> APIRouter:
     """建立 watch list / detail / control routes。"""
     router = APIRouter(tags=["web"])
@@ -28,11 +58,12 @@ def build_watch_router(container: AppContainer) -> APIRouter:
     def watch_list(request: Request) -> HTMLResponse:
         """顯示 watch item 列表頁。"""
         flash_message = request.query_params.get("message")
+        context = _build_watch_list_context(container)
         html = render_watch_list_page(
-            watch_items=container.watch_item_repository.list_all(),
-            latest_snapshots_by_watch_id=_latest_snapshots_by_watch_id(container),
+            watch_items=context.watch_items,
+            latest_snapshots_by_watch_id=context.latest_snapshots_by_watch_id,
             flash_message=flash_message,
-            runtime_status=_get_runtime_status(container),
+            runtime_status=context.runtime_status,
         )
         return HTMLResponse(html)
 
@@ -47,15 +78,14 @@ def build_watch_router(container: AppContainer) -> APIRouter:
         watch_item = container.watch_item_repository.get(watch_item_id)
         if watch_item is None:
             return HTMLResponse("watch item not found", status_code=404)
+        context = _build_watch_detail_context(container=container, watch_item=watch_item)
         html = render_watch_detail_page(
-            watch_item=watch_item,
-            latest_snapshot=container.runtime_repository.get_latest_check_snapshot(watch_item_id),
-            check_events=tuple(container.runtime_repository.list_check_events(watch_item_id)),
-            notification_state=container.runtime_repository.get_notification_state(watch_item_id),
-            debug_artifacts=tuple(container.runtime_repository.list_debug_artifacts(watch_item_id)),
-            runtime_state_events=tuple(
-                container.runtime_repository.list_runtime_state_events(watch_item_id)
-            ),
+            watch_item=context.watch_item,
+            latest_snapshot=context.latest_snapshot,
+            check_events=context.check_events,
+            notification_state=context.notification_state,
+            debug_artifacts=context.debug_artifacts,
+            runtime_state_events=context.runtime_state_events,
             flash_message=request.query_params.get("message"),
         )
         return HTMLResponse(html)
@@ -157,34 +187,49 @@ def _get_runtime_status(container: AppContainer) -> MonitorRuntimeStatus | None:
 
 
 def _latest_snapshots_by_watch_id(
+    *,
     container: AppContainer,
+    watch_items: tuple[WatchItem, ...],
 ) -> dict[str, LatestCheckSnapshot | None]:
     """建立首頁與局部更新使用的最新摘要索引。"""
-    watch_items = tuple(container.watch_item_repository.list_all())
     return {
         watch_item.id: container.runtime_repository.get_latest_check_snapshot(watch_item.id)
         for watch_item in watch_items
     }
 
 
+def _build_watch_list_context(container: AppContainer) -> WatchListPageContext:
+    """集中讀取首頁與首頁 fragment 需要的 watch 列表 context。"""
+    watch_items = tuple(container.watch_item_repository.list_all())
+    return WatchListPageContext(
+        watch_items=watch_items,
+        latest_snapshots_by_watch_id=_latest_snapshots_by_watch_id(
+            container=container,
+            watch_items=watch_items,
+        ),
+        runtime_status=_get_runtime_status(container),
+    )
+
+
 def _build_watch_list_fragments(container: AppContainer) -> dict[str, str]:
     """建立首頁局部更新所需的 runtime 與 watch 列表 HTML 片段。"""
+    context = _build_watch_list_context(container)
     return {
-        "runtime_html": render_runtime_status_fragment(_get_runtime_status(container)),
+        "runtime_html": render_runtime_status_fragment(context.runtime_status),
         "table_body_html": render_watch_list_rows_fragment(
-            container.watch_item_repository.list_all(),
-            latest_snapshots_by_watch_id=_latest_snapshots_by_watch_id(container),
+            context.watch_items,
+            latest_snapshots_by_watch_id=context.latest_snapshots_by_watch_id,
         ),
     }
 
 
-def _build_watch_detail_fragments(
+def _build_watch_detail_context(
     *,
     container: AppContainer,
     watch_item: WatchItem,
-) -> dict[str, str]:
-    """建立 watch 詳細頁局部更新所需的主要 HTML 片段。"""
-    return render_watch_detail_sections(
+) -> WatchDetailPageContext:
+    """集中讀取 watch 詳細頁與 fragment 需要的 runtime context。"""
+    return WatchDetailPageContext(
         watch_item=watch_item,
         latest_snapshot=container.runtime_repository.get_latest_check_snapshot(watch_item.id),
         check_events=tuple(container.runtime_repository.list_check_events(watch_item.id)),
@@ -193,4 +238,21 @@ def _build_watch_detail_fragments(
         runtime_state_events=tuple(
             container.runtime_repository.list_runtime_state_events(watch_item.id)
         ),
+    )
+
+
+def _build_watch_detail_fragments(
+    *,
+    container: AppContainer,
+    watch_item: WatchItem,
+) -> dict[str, str]:
+    """建立 watch 詳細頁局部更新所需的主要 HTML 片段。"""
+    context = _build_watch_detail_context(container=container, watch_item=watch_item)
+    return render_watch_detail_sections(
+        watch_item=context.watch_item,
+        latest_snapshot=context.latest_snapshot,
+        check_events=context.check_events,
+        notification_state=context.notification_state,
+        debug_artifacts=context.debug_artifacts,
+        runtime_state_events=context.runtime_state_events,
     )
