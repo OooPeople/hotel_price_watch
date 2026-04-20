@@ -81,6 +81,8 @@ V1 正式主線是 Chrome-driven：
 - `src/app/infrastructure/browser/chrome_page_capture.py`：HTML capture 與 throttling / discard 訊號
 - `src/app/web/routes/`：本機 GUI routes
 - `src/app/web/*_views.py`：本機 GUI renderers
+- `src/app/web/watch_view_partials.py`：watch list / detail 可替換區塊 partial
+- `src/app/web/watch_creation_partials.py`：新增 watch / Chrome tab selection 可替換區塊 partial
 - `src/app/sites/ikyu/`：`ikyu` adapter、parser、normalizer、browser strategy
 
 ## 5. 第二站前注意事項
@@ -111,9 +113,8 @@ V1 正式主線是 Chrome-driven：
 
 ## 7. 建議下一步
 
-1. 先做人工 smoke test：啟動、列分頁、建立 watch、手動 check、通知測試、暫停 / 恢復。
-2. 若 smoke test 穩定，進入 Packaging。
-3. 若要先做第二站，只做 spike，先驗證 target / candidate contract 是否足夠。
+1. 做人工 smoke test：啟動、列分頁、建立 watch、手動 check、通知測試、暫停 / 恢復。
+2. 若 smoke test 穩定，進入 Packaging；若要先做第二站，只做 spike，先驗證 target / candidate contract 是否足夠。
 
 ## 8. 仍需觀察
 

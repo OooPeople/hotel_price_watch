@@ -47,6 +47,8 @@
 - o web renderers 已依頁面群組拆分，`app.web.views` 只保留相容 re-export
 - o web routes 已補必要 page context helper，避免首屏與 fragment 重複組資料
 - o `ChromeCdpHtmlFetcher` 已拆出 profile launcher、CDP connector、page matcher、page capture helper 與 chrome models
+- o web renderer 第二輪整理已開始：watch list / detail partial 已拆出，為後續 UI 美化與版面重設準備
+- o watch creation partial 已拆出：preview、candidate option、Chrome tab card、diagnostics table 已與頁面級 renderer 分離
 
 ## 第二站前決策
 
@@ -65,9 +67,8 @@
 
 ## 下一步
 
-1. 先做一次人工 smoke test：啟動、列分頁、建立 watch、手動 check、通知測試、暫停 / 恢復。
-2. 若 smoke test 穩定，進入 Packaging。
-3. 若要先做第二站，先只做 spike，不直接改 DB schema 或 runtime contract。
+1. 做人工 smoke test：啟動、列分頁、建立 watch、手動 check、通知測試、暫停 / 恢復。
+2. 若 smoke test 穩定，再進入 Packaging 或第二站 spike。
 
 ## 目前主要風險
 
