@@ -12,6 +12,7 @@ from app.application.debug_captures import (
     load_debug_capture,
     load_latest_debug_capture,
 )
+from app.bootstrap.container import AppContainer
 from app.web import request_helpers
 from app.web.views import (
     render_debug_capture_detail_page,
@@ -19,7 +20,7 @@ from app.web.views import (
 )
 
 
-def build_debug_router() -> APIRouter:
+def build_debug_router(container: AppContainer) -> APIRouter:
     """建立 debug capture 頁面與操作使用的 router。"""
     router = APIRouter(tags=["web"])
 
@@ -31,6 +32,7 @@ def build_debug_router() -> APIRouter:
             render_debug_capture_list_page(
                 captures=captures,
                 flash_message=request.query_params.get("message"),
+                use_24_hour_time=_use_24_hour_time(container),
             )
         )
 
@@ -40,10 +42,18 @@ def build_debug_router() -> APIRouter:
         capture = load_latest_debug_capture()
         if capture is None:
             return HTMLResponse(
-                render_debug_capture_list_page(captures=()),
+                render_debug_capture_list_page(
+                    captures=(),
+                    use_24_hour_time=_use_24_hour_time(container),
+                ),
                 status_code=404,
             )
-        return HTMLResponse(render_debug_capture_detail_page(capture=capture))
+        return HTMLResponse(
+            render_debug_capture_detail_page(
+                capture=capture,
+                use_24_hour_time=_use_24_hour_time(container),
+            )
+        )
 
     @router.get("/debug/captures/{capture_id}", response_class=HTMLResponse)
     def debug_capture_detail_page(capture_id: str) -> HTMLResponse:
@@ -51,10 +61,18 @@ def build_debug_router() -> APIRouter:
         capture = load_debug_capture(capture_id)
         if capture is None:
             return HTMLResponse(
-                render_debug_capture_list_page(captures=list_debug_captures()),
+                render_debug_capture_list_page(
+                    captures=list_debug_captures(),
+                    use_24_hour_time=_use_24_hour_time(container),
+                ),
                 status_code=404,
             )
-        return HTMLResponse(render_debug_capture_detail_page(capture=capture))
+        return HTMLResponse(
+            render_debug_capture_detail_page(
+                capture=capture,
+                use_24_hour_time=_use_24_hour_time(container),
+            )
+        )
 
     @router.get(
         "/debug/captures/{capture_id}/html",
@@ -91,3 +109,8 @@ def build_debug_router() -> APIRouter:
         )
 
     return router
+
+
+def _use_24_hour_time(container: AppContainer) -> bool:
+    """讀取目前 GUI 時間顯示格式設定。"""
+    return container.app_settings_service.get_display_settings().use_24_hour_time

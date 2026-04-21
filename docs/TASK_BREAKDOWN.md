@@ -1,6 +1,6 @@
 # Task Breakdown
 
-本文件只保留目前進度、下一步與風險。規格看 `docs/V1_SPEC.md`，架構邊界看 `docs/ARCHITECTURE_PLAN.md`，交接看 `docs/HANDOFF_PLAN.md`。
+本文件只保留目前進度、下一步與風險。規格看 `docs/V1_SPEC.md`，架構邊界看 `docs/ARCHITECTURE_PLAN.md`，UI 改版看 `docs/UI_REDESIGN_PLAN.md`，交接看 `docs/HANDOFF_PLAN.md`。
 
 ## 目前總結
 
@@ -8,7 +8,7 @@
 - o `ikyu` watch 建立、背景輪詢、歷史、debug、通知與控制操作已可實際使用
 - o lifecycle owner、control command policy、site-aware browser strategy 已完成第一輪收斂
 - o `main.py`、web routes、web renderers、`ChromeCdpHtmlFetcher` 已完成第一輪拆分
-- o 目前已通過 `ruff check src tests` 與全量 `pytest`，目前測試數為 `222 passed`
+- o 目前已通過 `ruff check src tests` 與全量 `pytest`，目前測試數為 `228 passed`
 
 ## 已完成範圍
 
@@ -22,6 +22,8 @@
 - o desktop / `ntfy` / Discord webhook notifier
 - o notification formatter、dispatcher、throttle 與測試通知
 - o watch 列表、新增、刪除、詳細頁、歷史、debug captures、通知設定
+- o 通用設定頁已集中全域通知通道與 GUI 時間顯示偏好
+- o 設定頁已支援未儲存提示與離頁前防呆
 - o watch 啟用 / 停用 / 暫停 / 恢復 / 手動立即檢查
 - o 首頁與 watch 詳細頁局部 polling 更新
 
@@ -49,6 +51,9 @@
 - o `ChromeCdpHtmlFetcher` 已拆出 profile launcher、CDP connector、page matcher、page capture helper 與 chrome models
 - o web renderer 第二輪整理已開始：watch list / detail partial 已拆出，為後續 UI 美化與版面重設準備
 - o watch creation partial 已拆出：preview、candidate option、Chrome tab card、diagnostics table 已與頁面級 renderer 分離
+- o UI primitives 已收斂：`ui_styles.py` 管理 style token，`ui_components.py` 管理 card、table、button/link，`view_helpers.py` 保留相容匯出
+- o web renderer 內部 import 已改用正式 UI 模組，`view_helpers.py` 僅作相容層，避免後續出入口混亂
+- o 設定頁正式入口已改為 `/settings`，舊 `/settings/notifications` 保留相容
 
 ## 第二站前決策
 
@@ -67,8 +72,11 @@
 
 ## 下一步
 
-1. 做人工 smoke test：啟動、列分頁、建立 watch、手動 check、通知測試、暫停 / 恢復。
-2. 若 smoke test 穩定，再進入 Packaging 或第二站 spike。
+1. 依 `docs/UI_REDESIGN_PLAN.md` 先建立 UI presentation layer 與 design system 第一輪元件。
+2. 重構 Dashboard / Watch List，讓首屏以 watch 狀態、價格與異動為主。
+3. 再依序重構 Watch Detail、Add Watch、Settings、Debug。
+4. UI 第一輪穩定後，再做人工 smoke test：啟動、列分頁、建立 watch、手動 check、通知測試、暫停 / 恢復。
+5. 若 smoke test 穩定，再進入 Packaging 或第二站 spike。
 
 ## 目前主要風險
 

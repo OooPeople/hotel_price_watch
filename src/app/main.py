@@ -31,7 +31,7 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
 
     app = FastAPI(title="hotel_price_watch", version="0.1.0", lifespan=lifespan)
     app.state.container = container
-    app.include_router(build_debug_router())
+    app.include_router(build_debug_router(container))
     app.include_router(build_settings_router(container))
     app.include_router(build_watch_creation_router(container))
     app.include_router(build_watch_router(container))

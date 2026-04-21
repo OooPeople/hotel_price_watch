@@ -15,3 +15,10 @@ class NotificationChannelSettings:
     ntfy_topic: str | None = None
     discord_enabled: bool = False
     discord_webhook_url: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DisplaySettings:
+    """表示本機 GUI 的顯示偏好設定。"""
+
+    use_24_hour_time: bool = True

@@ -5,18 +5,22 @@ from __future__ import annotations
 from decimal import Decimal
 from html import escape
 
-from app.config.models import NotificationChannelSettings
+from app.config.models import DisplaySettings, NotificationChannelSettings
 from app.domain.entities import WatchItem
 from app.domain.enums import NotificationLeafKind
-from app.web.view_helpers import (
-    CARD_STYLE,
-    ERROR_STYLE,
-    SUCCESS_STYLE,
-    input_style,
+from app.web.ui_components import (
+    card,
+    form_card,
     page_layout,
-    primary_button_style,
-    secondary_button_style,
+    submit_button,
+    text_link,
+    unsaved_changes_indicator,
+    unsaved_changes_script,
 )
+from app.web.ui_components import (
+    flash_message as render_flash_message,
+)
+from app.web.ui_styles import input_style
 
 
 def render_notification_settings_page(
@@ -43,36 +47,24 @@ def render_notification_settings_page(
             if stored_target_price is not None
             else ""
         )
-    error_html = (
-        f'<p style="{ERROR_STYLE}">{escape(error_message)}</p>'
-        if error_message
-        else ""
-    )
-    flash_html = (
-        f'<p style="{SUCCESS_STYLE}">{escape(flash_message)}</p>'
-        if flash_message
-        else ""
-    )
+    error_html = render_flash_message(error_message, kind="error")
+    flash_html = render_flash_message(flash_message)
     target_price_wrapper_style = _notification_target_price_wrapper_style(selected_kind)
     return page_layout(
         title=f"通知設定 - {watch_item.hotel_name}",
         body=f"""
         <section style="display:grid;gap:24px;">
           <div>
-            <a href="/watches/{escape(watch_item.id)}" style="color:#0f766e;text-decoration:none;">
-              ← 回 watch 詳細頁
-            </a>
+            {text_link(href=f"/watches/{watch_item.id}", label="← 回 watch 詳細頁")}
             <h1>通知設定</h1>
             <p>{escape(watch_item.hotel_name)} / {escape(watch_item.room_name)}</p>
             <p>{escape(watch_item.plan_name)}</p>
           </div>
           {error_html}
           {flash_html}
-          <form
-            action="/watches/{escape(watch_item.id)}/notification-settings"
-            method="post"
-            style="{CARD_STYLE}"
-          >
+          {form_card(
+              action=f"/watches/{watch_item.id}/notification-settings",
+              body=f'''
             <label>通知條件</label>
             <select
               id="notification-rule-kind"
@@ -103,8 +95,9 @@ def render_notification_settings_page(
               >
               {_render_notification_target_price_hint(selected_kind)}
             </div>
-            <button type="submit" style="{primary_button_style()}">儲存通知設定</button>
-          </form>
+            {submit_button(label="儲存通知設定", kind="primary")}
+              ''',
+          )}
           {_render_notification_rule_toggle_script(
               select_id="notification-rule-kind",
               wrapper_id="notification-target-price-wrapper",
@@ -117,12 +110,14 @@ def render_notification_settings_page(
 def render_notification_channel_settings_page(
     *,
     settings: NotificationChannelSettings,
+    display_settings: DisplaySettings | None = None,
     error_message: str | None = None,
     flash_message: str | None = None,
     test_result_message: str | None = None,
     form_values: dict[str, str] | None = None,
 ) -> str:
-    """渲染主頁層級的全域通知通道設定頁。"""
+    """渲染主頁層級的全域設定頁。"""
+    display_settings = display_settings or DisplaySettings()
     form_values = form_values or {}
     desktop_enabled = _form_checkbox_value(
         form_values,
@@ -139,6 +134,10 @@ def render_notification_channel_settings_page(
         key="discord_enabled",
         fallback=settings.discord_enabled,
     )
+    use_24_hour_time = _form_time_format_value(
+        form_values,
+        fallback=display_settings.use_24_hour_time,
+    )
     ntfy_server_url = escape(
         form_values.get("ntfy_server_url", settings.ntfy_server_url)
     )
@@ -146,30 +145,48 @@ def render_notification_channel_settings_page(
     discord_webhook_url = escape(
         form_values.get("discord_webhook_url", settings.discord_webhook_url or "")
     )
-    error_html = (
-        f'<p style="{ERROR_STYLE}">{escape(error_message)}</p>'
-        if error_message
-        else ""
-    )
-    flash_html = (
-        f'<p style="{SUCCESS_STYLE}">{escape(flash_message)}</p>'
-        if flash_message
-        else ""
-    )
+    error_html = render_flash_message(error_message, kind="error")
+    flash_html = render_flash_message(flash_message)
     test_result_html = _render_notification_test_result_section(test_result_message)
     return page_layout(
-        title="全域通知設定",
+        title="設定",
         body=f"""
         <section style="display:grid;gap:24px;">
           <div>
-            <a href="/" style="color:#0f766e;text-decoration:none;">← 回列表</a>
-            <h1>全域通知設定</h1>
-            <p>這裡設定通知要送到哪些通道；單一 watch 頁面只負責通知規則，不負責 webhook/topic。</p>
+            {text_link(href="/", label="← 回列表")}
+            <h1>設定</h1>
+            <p>這裡集中管理全域偏好；單一 watch 頁面只負責該 watch 的通知規則。</p>
           </div>
           {error_html}
           {flash_html}
           {test_result_html}
-          <form action="/settings/notifications" method="post" style="{CARD_STYLE}">
+          {form_card(
+              action="/settings",
+              form_id="global-settings-form",
+              body=f'''
+            <h2 style="margin:0;">顯示設定</h2>
+            <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+              <label style="display:flex;gap:8px;align-items:center;">
+                <input
+                  id="time-format-12h"
+                  type="checkbox"
+                  name="time_format_12h"
+                  {"checked" if not use_24_hour_time else ""}
+                >
+                12 小時制
+              </label>
+              <label style="display:flex;gap:8px;align-items:center;">
+                <input
+                  id="time-format-24h"
+                  type="checkbox"
+                  name="time_format_24h"
+                  {"checked" if use_24_hour_time else ""}
+                >
+                24 小時制
+              </label>
+            </div>
+            <hr style="width:100%;border:none;border-top:1px solid #d7e2df;">
+            <h2 style="margin:0;">通知通道</h2>
             <label style="display:flex;gap:8px;align-items:center;">
               <input type="checkbox" name="desktop_enabled" {"checked" if desktop_enabled else ""}>
               啟用本機桌面通知
@@ -226,15 +243,22 @@ def render_notification_channel_settings_page(
                 style="{input_style()}"
               >
             </div>
-            <button type="submit" style="{primary_button_style()}">儲存全域通知設定</button>
-          </form>
-          <form action="/settings/notifications/test" method="post" style="{CARD_STYLE}">
-            <h2 style="margin:0;">測試通知</h2>
-            <p style="margin:0;">
-              會使用目前已保存的全域通知設定，走正式 notifier / dispatcher 路徑送出一則測試訊息。
-            </p>
-            <button type="submit" style="{secondary_button_style()}">發送測試通知</button>
-          </form>
+            <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+              {submit_button(label="儲存設定", kind="primary")}
+              {unsaved_changes_indicator()}
+            </div>
+              ''',
+          )}
+          {form_card(
+              action="/settings/test-notification",
+              body=f'''
+              <h2 style="margin:0;">測試通知</h2>
+              <p style="margin:0;">
+                會使用目前已保存的通知通道設定，走正式 notifier / dispatcher 路徑送出一則測試訊息。
+              </p>
+              {submit_button(label="發送測試通知", kind="secondary")}
+              ''',
+          )}
           {_render_checkbox_toggle_script(
               checkbox_id="global-ntfy-enabled",
               wrapper_id="global-ntfy-settings",
@@ -243,6 +267,11 @@ def render_notification_channel_settings_page(
               checkbox_id="global-discord-enabled",
               wrapper_id="global-discord-settings",
           )}
+          {_render_exclusive_checkbox_script(
+              first_checkbox_id="time-format-12h",
+              second_checkbox_id="time-format-24h",
+          )}
+          {unsaved_changes_script(form_id="global-settings-form")}
         </section>
         """,
     )
@@ -279,15 +308,15 @@ def _render_notification_test_result_section(test_result_message: str | None) ->
     throttled_text = _extract_test_result_segment(test_result_message, "throttled")
     failed_text = _extract_test_result_segment(test_result_message, "failed")
     details_text = _extract_test_result_segment(test_result_message, "details")
-    return f"""
-    <section style="{CARD_STYLE}">
-      <h2 style="margin:0;">測試通知結果</h2>
-      <p style="margin:0;">成功通道：{escape(sent_text or "none")}</p>
-      <p style="margin:0;">節流通道：{escape(throttled_text or "none")}</p>
-      <p style="margin:0;">失敗通道：{escape(failed_text or "none")}</p>
-      <p style="margin:0;">失敗原因：{escape(details_text or "none")}</p>
-    </section>
-    """
+    return card(
+        title="測試通知結果",
+        body=f"""
+        <p style="margin:0;">成功通道：{escape(sent_text or "none")}</p>
+        <p style="margin:0;">節流通道：{escape(throttled_text or "none")}</p>
+        <p style="margin:0;">失敗通道：{escape(failed_text or "none")}</p>
+        <p style="margin:0;">失敗原因：{escape(details_text or "none")}</p>
+        """,
+    )
 
 
 def _extract_test_result_segment(message: str, key: str) -> str:
@@ -370,3 +399,50 @@ def _form_checkbox_value(
     if key not in form_values:
         return fallback
     return form_values[key] == "on"
+
+
+def _form_time_format_value(
+    form_values: dict[str, str],
+    *,
+    fallback: bool,
+) -> bool:
+    """依表單回填資料或既有設定決定時間格式是否為 24 小時制。"""
+    has_12h = "time_format_12h" in form_values
+    has_24h = "time_format_24h" in form_values
+    if not has_12h and not has_24h and "use_24_hour_time" in form_values:
+        return form_values["use_24_hour_time"] == "on"
+    if not has_12h and not has_24h:
+        return fallback
+    return has_24h
+
+
+def _render_exclusive_checkbox_script(
+    *,
+    first_checkbox_id: str,
+    second_checkbox_id: str,
+) -> str:
+    """渲染兩個 checkbox 互斥且至少保留一個勾選的腳本。"""
+    return f"""
+    <script>
+      (() => {{
+        const first = document.getElementById("{escape(first_checkbox_id)}");
+        const second = document.getElementById("{escape(second_checkbox_id)}");
+        if (!first || !second) {{
+          return;
+        }}
+
+        const bindExclusivePair = (changed, other) => {{
+          changed.addEventListener("change", () => {{
+            if (changed.checked) {{
+              other.checked = false;
+              return;
+            }}
+            other.checked = true;
+          }});
+        }};
+
+        bindExclusivePair(first, second);
+        bindExclusivePair(second, first);
+      }})();
+    </script>
+    """

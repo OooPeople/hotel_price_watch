@@ -19,11 +19,13 @@ def build_settings_router(container: AppContainer) -> APIRouter:
     """建立全域與單一 watch 通知設定使用的 router。"""
     router = APIRouter(tags=["web"])
 
+    @router.get("/settings", response_class=HTMLResponse)
     @router.get("/settings/notifications", response_class=HTMLResponse)
     def notification_channel_settings_page(request: Request) -> HTMLResponse:
-        """顯示全域通知通道設定頁。"""
+        """顯示全域設定頁。"""
         html = render_notification_channel_settings_page(
             settings=container.app_settings_service.get_notification_channel_settings(),
+            display_settings=container.app_settings_service.get_display_settings(),
             test_result_message=request.query_params.get("test_message"),
             flash_message=request.query_params.get("message"),
         )
@@ -100,12 +102,14 @@ def build_settings_router(container: AppContainer) -> APIRouter:
             status_code=303,
         )
 
+    @router.post("/settings", response_class=HTMLResponse)
     @router.post("/settings/notifications", response_class=HTMLResponse)
     async def update_notification_channel_settings(request: Request) -> Response:
-        """更新全域通知通道設定。"""
+        """更新全域設定。"""
         request_helpers.ensure_local_request_origin(request)
         form = await request_helpers.read_form_data(request)
         try:
+            use_24_hour_time = _parse_time_format_selection(form)
             await run_in_threadpool(
                 container.app_settings_service.update_notification_channel_settings,
                 desktop_enabled=request_helpers.parse_checkbox(form.get("desktop_enabled")),
@@ -115,10 +119,15 @@ def build_settings_router(container: AppContainer) -> APIRouter:
                 discord_enabled=request_helpers.parse_checkbox(form.get("discord_enabled")),
                 discord_webhook_url=form.get("discord_webhook_url"),
             )
+            await run_in_threadpool(
+                container.app_settings_service.update_display_settings,
+                use_24_hour_time=use_24_hour_time,
+            )
         except Exception as exc:
             return HTMLResponse(
                 render_notification_channel_settings_page(
                     settings=container.app_settings_service.get_notification_channel_settings(),
+                    display_settings=container.app_settings_service.get_display_settings(),
                     error_message=request_helpers.to_user_facing_error_message(exc),
                     form_values={
                         "desktop_enabled": form.get("desktop_enabled", ""),
@@ -127,18 +136,21 @@ def build_settings_router(container: AppContainer) -> APIRouter:
                         "ntfy_topic": form.get("ntfy_topic", ""),
                         "discord_enabled": form.get("discord_enabled", ""),
                         "discord_webhook_url": form.get("discord_webhook_url", ""),
+                        "time_format_12h": form.get("time_format_12h", ""),
+                        "time_format_24h": form.get("time_format_24h", ""),
                     },
                 ),
                 status_code=400,
             )
         return RedirectResponse(
             url=(
-                "/settings/notifications?"
-                "message=已更新%20通知通道設定"
+                "/settings?"
+                "message=已更新%20設定"
             ),
             status_code=303,
         )
 
+    @router.post("/settings/test-notification", response_class=HTMLResponse)
     @router.post("/settings/notifications/test", response_class=HTMLResponse)
     async def send_test_notification(request: Request) -> Response:
         """用目前已保存的全域設定送出測試通知。"""
@@ -151,6 +163,7 @@ def build_settings_router(container: AppContainer) -> APIRouter:
             return HTMLResponse(
                 render_notification_channel_settings_page(
                     settings=container.app_settings_service.get_notification_channel_settings(),
+                    display_settings=container.app_settings_service.get_display_settings(),
                     error_message=request_helpers.to_user_facing_error_message(exc),
                 ),
                 status_code=400,
@@ -168,7 +181,7 @@ def build_settings_router(container: AppContainer) -> APIRouter:
         )
         return RedirectResponse(
             url=(
-                "/settings/notifications?"
+                "/settings?"
                 f"test_message=測試通知結果：sent={sent_channels}；"
                 f"throttled={throttled_channels}；failed={failed_channels}；"
                 f"details={failure_details}"
@@ -177,3 +190,12 @@ def build_settings_router(container: AppContainer) -> APIRouter:
         )
 
     return router
+
+
+def _parse_time_format_selection(form: dict[str, str]) -> bool:
+    """解析時間格式 checkbox，並保證只能選擇 12 或 24 小時制其中之一。"""
+    has_12h = request_helpers.parse_checkbox(form.get("time_format_12h"))
+    has_24h = request_helpers.parse_checkbox(form.get("time_format_24h"))
+    if has_12h == has_24h:
+        raise ValueError("請選擇 12 小時制或 24 小時制其中一項。")
+    return has_24h

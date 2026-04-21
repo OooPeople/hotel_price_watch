@@ -5,6 +5,7 @@ __pycache__/
 .pytest_run*/
 .mypy_cache/
 .ruff_cache/
+.uv-cache/
 .venv/
 venv/
 build/

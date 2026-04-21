@@ -10,6 +10,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.application.watch_lifecycle import WatchLifecycleError
 from app.bootstrap.container import AppContainer
+from app.config.models import DisplaySettings
 from app.domain.entities import (
     CheckEvent,
     DebugArtifact,
@@ -36,6 +37,7 @@ class WatchListPageContext:
     watch_items: tuple[WatchItem, ...]
     latest_snapshots_by_watch_id: dict[str, LatestCheckSnapshot | None]
     runtime_status: MonitorRuntimeStatus | None
+    display_settings: DisplaySettings
 
 
 @dataclass(frozen=True)
@@ -48,6 +50,7 @@ class WatchDetailPageContext:
     notification_state: NotificationState | None
     debug_artifacts: tuple[DebugArtifact, ...]
     runtime_state_events: tuple[RuntimeStateEvent, ...]
+    display_settings: DisplaySettings
 
 
 def build_watch_router(container: AppContainer) -> APIRouter:
@@ -64,6 +67,7 @@ def build_watch_router(container: AppContainer) -> APIRouter:
             latest_snapshots_by_watch_id=context.latest_snapshots_by_watch_id,
             flash_message=flash_message,
             runtime_status=context.runtime_status,
+            use_24_hour_time=context.display_settings.use_24_hour_time,
         )
         return HTMLResponse(html)
 
@@ -87,6 +91,7 @@ def build_watch_router(container: AppContainer) -> APIRouter:
             debug_artifacts=context.debug_artifacts,
             runtime_state_events=context.runtime_state_events,
             flash_message=request.query_params.get("message"),
+            use_24_hour_time=context.display_settings.use_24_hour_time,
         )
         return HTMLResponse(html)
 
@@ -208,6 +213,7 @@ def _build_watch_list_context(container: AppContainer) -> WatchListPageContext:
             watch_items=watch_items,
         ),
         runtime_status=_get_runtime_status(container),
+        display_settings=container.app_settings_service.get_display_settings(),
     )
 
 
@@ -215,7 +221,10 @@ def _build_watch_list_fragments(container: AppContainer) -> dict[str, str]:
     """建立首頁局部更新所需的 runtime 與 watch 列表 HTML 片段。"""
     context = _build_watch_list_context(container)
     return {
-        "runtime_html": render_runtime_status_fragment(context.runtime_status),
+        "runtime_html": render_runtime_status_fragment(
+            context.runtime_status,
+            use_24_hour_time=context.display_settings.use_24_hour_time,
+        ),
         "table_body_html": render_watch_list_rows_fragment(
             context.watch_items,
             latest_snapshots_by_watch_id=context.latest_snapshots_by_watch_id,
@@ -238,6 +247,7 @@ def _build_watch_detail_context(
         runtime_state_events=tuple(
             container.runtime_repository.list_runtime_state_events(watch_item.id)
         ),
+        display_settings=container.app_settings_service.get_display_settings(),
     )
 
 
@@ -255,4 +265,5 @@ def _build_watch_detail_fragments(
         notification_state=context.notification_state,
         debug_artifacts=context.debug_artifacts,
         runtime_state_events=context.runtime_state_events,
+        use_24_hour_time=context.display_settings.use_24_hour_time,
     )

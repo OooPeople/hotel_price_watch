@@ -54,6 +54,9 @@
   - 先設定 `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8`
   - 再使用 `Get-Content -Encoding UTF8`
   - 避免因預設編碼造成亂碼判讀錯誤
+- 執行 `uv` 相關命令時，優先使用專案 wrapper：
+  - 例如 `.\scripts\uv.ps1 run pytest`
+  - wrapper 會把 `UV_CACHE_DIR` 指向專案內 `.uv-cache`，避免使用者全域 uv cache 權限或污染問題
 - 若某個問題已持續排查一段時間仍無法收斂，需及時停損並改用外部搜尋或官方資料確認
   - 避免長時間盲試或只在本地反覆猜測
   - 搜尋後若找到更直接的解法，應優先採用較省時且可驗證的方案

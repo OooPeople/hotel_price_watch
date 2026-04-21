@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import Callable
 
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 SQLITE_BUSY_TIMEOUT_MS = 5_000
 MIN_SUPPORTED_SCHEMA_VERSION = 2
 
@@ -178,6 +178,12 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
             updated_at_utc TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS display_settings (
+            singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+            use_24_hour_time INTEGER NOT NULL,
+            updated_at_utc TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE INDEX IF NOT EXISTS idx_check_events_watch_checked_at
         ON check_events(watch_item_id, checked_at_utc DESC, id DESC);
 
@@ -272,6 +278,7 @@ def _build_migration_chain() -> dict[int, Callable[[sqlite3.Connection], int]]:
         3: _migrate_3_to_4,
         4: _migrate_4_to_5,
         5: _migrate_5_to_6,
+        6: _migrate_6_to_7,
     }
 
 
@@ -327,6 +334,20 @@ def _migrate_5_to_6(connection: sqlite3.Connection) -> int:
     )
     _normalize_watch_item_runtime_columns(connection)
     return 6
+
+
+def _migrate_6_to_7(connection: sqlite3.Connection) -> int:
+    """執行 schema `6 -> 7` 升版。"""
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS display_settings (
+            singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+            use_24_hour_time INTEGER NOT NULL,
+            updated_at_utc TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    return 7
 
 
 def _normalize_watch_item_runtime_columns(connection: sqlite3.Connection) -> None:

@@ -6,27 +6,38 @@ from html import escape
 
 from app.application.debug_captures import DebugCaptureDetail, DebugCaptureSummary
 from app.sites.base import LookupDiagnostic
-from app.web.view_helpers import (
-    CARD_STYLE,
-    SUCCESS_STYLE,
-    cell_style,
-    danger_button_style,
-    format_datetime_for_display,
+from app.web.ui_components import (
+    card,
+    data_table,
+    empty_state_card,
+    link_button,
     page_layout,
-    pre_style,
-    primary_button_style,
+    submit_button,
+    table_row,
+    text_link,
 )
+from app.web.ui_components import (
+    flash_message as render_flash_message,
+)
+from app.web.ui_styles import (
+    pre_style,
+)
+from app.web.view_formatters import format_datetime_for_display
 
 
 def render_debug_capture_list_page(
     *,
     captures: tuple[DebugCaptureSummary, ...],
     flash_message: str | None = None,
+    use_24_hour_time: bool = True,
 ) -> str:
     """渲染 preview debug capture 列表頁。"""
     rows = []
     for capture in captures:
-        captured_at = format_datetime_for_display(capture.captured_at_utc)
+        captured_at = format_datetime_for_display(
+            capture.captured_at_utc,
+            use_24_hour_time=use_24_hour_time,
+        )
         latest_status = capture.diagnostics[-1].status if capture.diagnostics else "n/a"
         candidate_count = (
             str(capture.candidate_count)
@@ -34,37 +45,30 @@ def render_debug_capture_list_page(
             else "unknown"
         )
         rows.append(
-            f"""
-            <tr>
-              <td style="{cell_style(head=False)}">
-                <a href="/debug/captures/{escape(capture.capture_id)}" style="color:#0f766e;">
-                  {escape(capture.capture_id)}
-                </a>
-              </td>
-              <td style="{cell_style(head=False)}">{escape(captured_at)}</td>
-              <td style="{cell_style(head=False)}">{escape(capture.parsed_hotel_name)}</td>
-              <td style="{cell_style(head=False)}">{escape(candidate_count)}</td>
-              <td style="{cell_style(head=False)}">{escape(latest_status)}</td>
-              <td style="{cell_style(head=False)}">
-                <code>{escape(capture.seed_url)}</code>
-              </td>
-            </tr>
-            """
+            table_row(
+                (
+                    text_link(
+                        href=f"/debug/captures/{capture.capture_id}",
+                        label=capture.capture_id,
+                    ),
+                    escape(captured_at),
+                    escape(capture.parsed_hotel_name),
+                    escape(candidate_count),
+                    escape(latest_status),
+                    f"<code>{escape(capture.seed_url)}</code>",
+                )
+            )
         )
 
-    table_body = "\n".join(rows) or '<tr><td colspan="5">目前尚無 preview debug capture。</td></tr>'
-    flash_html = (
-        f'<p style="{SUCCESS_STYLE}">{escape(flash_message)}</p>'
-        if flash_message
-        else ""
-    )
+    table_body = "\n".join(rows) or '<tr><td colspan="6">目前尚無 preview debug capture。</td></tr>'
+    flash_html = render_flash_message(flash_message)
     return page_layout(
         title="Debug Captures",
         body=f"""
         <section style="display:grid;gap:20px;">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;">
             <div>
-              <a href="/" style="color:#0f766e;text-decoration:none;">← 回列表</a>
+              {text_link(href="/", label="← 回列表")}
               <h1>Debug Captures</h1>
               <p>
                 這裡只列出建立 watch / preview 流程保存的 capture，
@@ -76,26 +80,17 @@ def render_debug_capture_list_page(
               </p>
             </div>
             <div style="display:flex;gap:12px;align-items:center;">
-              <a href="/debug/captures/latest" style="{primary_button_style()}">查看最新一筆</a>
+              {link_button(href="/debug/captures/latest", label="查看最新一筆", kind="primary")}
               <form action="/debug/captures/clear" method="post" style="margin:0;">
-                <button type="submit" style="{danger_button_style()}">清空紀錄</button>
+                {submit_button(label="清空紀錄", kind="danger")}
               </form>
             </div>
           </div>
           {flash_html}
-          <table style="width:100%;border-collapse:collapse;">
-            <thead>
-              <tr>
-                <th style="{cell_style(head=True)}">Capture ID</th>
-                <th style="{cell_style(head=True)}">時間</th>
-                <th style="{cell_style(head=True)}">解析飯店名</th>
-                <th style="{cell_style(head=True)}">候選數</th>
-                <th style="{cell_style(head=True)}">最後狀態</th>
-                <th style="{cell_style(head=True)}">Seed URL</th>
-              </tr>
-            </thead>
-            <tbody>{table_body}</tbody>
-          </table>
+          {data_table(
+              headers=("Capture ID", "時間", "解析飯店名", "候選數", "最後狀態", "Seed URL"),
+              rows_html=table_body,
+          )}
         </section>
         """,
     )
@@ -104,9 +99,13 @@ def render_debug_capture_list_page(
 def render_debug_capture_detail_page(
     *,
     capture: DebugCaptureDetail,
+    use_24_hour_time: bool = True,
 ) -> str:
     """渲染單筆 preview debug capture 詳細內容頁。"""
-    captured_at = format_datetime_for_display(capture.summary.captured_at_utc)
+    captured_at = format_datetime_for_display(
+        capture.summary.captured_at_utc,
+        use_24_hour_time=use_24_hour_time,
+    )
     diagnostics_html = _render_diagnostics_section(capture.summary.diagnostics)
     html_preview = (
         escape(capture.html_content[:5000])
@@ -118,7 +117,7 @@ def render_debug_capture_detail_page(
         body=f"""
         <section style="display:grid;gap:20px;">
           <div>
-            <a href="/debug/captures" style="color:#0f766e;text-decoration:none;">← 回 captures</a>
+            {text_link(href="/debug/captures", label="← 回 captures")}
             <h1>{escape(capture.summary.capture_id)}</h1>
             <p>時間：{escape(captured_at)}</p>
             <p>Capture 類型：{escape(capture.summary.capture_scope)}</p>
@@ -133,10 +132,10 @@ def render_debug_capture_detail_page(
             {_render_capture_html_link(capture)}
           </div>
           {diagnostics_html}
-          <section style="{CARD_STYLE}">
-            <h2>Metadata JSON</h2>
-            <pre style="{pre_style()}">{escape(capture.metadata_json)}</pre>
-          </section>
+          {card(
+              title="Metadata JSON",
+              body=f'<pre style="{pre_style()}">{escape(capture.metadata_json)}</pre>',
+          )}
           {_render_html_preview_section(html_preview, capture)}
         </section>
         """,
@@ -156,65 +155,49 @@ def _render_diagnostics_section(diagnostics: tuple[LookupDiagnostic, ...]) -> st
             else ""
         )
         rows.append(
-            f"""
-            <tr>
-              <td style="{cell_style(head=False)}">{escape(diagnostic.stage)}</td>
-              <td style="{cell_style(head=False)}">{escape(diagnostic.status)}</td>
-              <td style="{cell_style(head=False)}">
-                {escape(diagnostic.detail)} {escape(cooldown_text)}
-              </td>
-            </tr>
-            """
+            table_row(
+                (
+                    escape(diagnostic.stage),
+                    escape(diagnostic.status),
+                    f"{escape(diagnostic.detail)} {escape(cooldown_text)}",
+                )
+            )
         )
 
-    return f"""
-    <section style="{CARD_STYLE}">
-      <div>
-        <h2>診斷資訊</h2>
+    return card(
+        title="診斷資訊",
+        body=f"""
         <p>顯示本次 preview 嘗試過的方法與各步驟結果。</p>
-      </div>
-      <table style="width:100%;border-collapse:collapse;">
-        <thead>
-          <tr>
-            <th style="{cell_style(head=True)}">階段</th>
-            <th style="{cell_style(head=True)}">結果</th>
-            <th style="{cell_style(head=True)}">說明</th>
-          </tr>
-        </thead>
-        <tbody>{''.join(rows)}</tbody>
-      </table>
-    </section>
-    """
+        {data_table(
+            headers=("階段", "結果", "說明"),
+            rows_html="".join(rows),
+        )}
+        """,
+    )
 
 
 def _render_capture_html_link(capture: DebugCaptureDetail) -> str:
     """依 capture 是否有保存 HTML，決定是否顯示完整 HTML 連結。"""
     if capture.summary.html_path is None:
         return "<p>本次為成功摘要紀錄，未保存完整 HTML。</p>"
-    return f"""
-    <p>
-      <a
-        href="/debug/captures/{escape(capture.summary.capture_id)}/html"
-        style="color:#0f766e;"
-      >
-        查看完整 HTML
-      </a>
-    </p>
-    """
+    return (
+        "<p>"
+        + text_link(
+            href=f"/debug/captures/{capture.summary.capture_id}/html",
+            label="查看完整 HTML",
+        )
+        + "</p>"
+    )
 
 
 def _render_html_preview_section(html_preview: str, capture: DebugCaptureDetail) -> str:
     """依 capture 是否有保存 HTML，決定是否顯示 HTML 摘要區塊。"""
     if capture.html_content is None:
-        return f"""
-        <section style="{CARD_STYLE}">
-          <h2>HTML 內容</h2>
-          <p>本次僅保存成功摘要，未額外保存完整 HTML。</p>
-        </section>
-        """
-    return f"""
-    <section style="{CARD_STYLE}">
-      <h2>HTML 前 5000 字</h2>
-      <pre style="{pre_style()}">{html_preview}</pre>
-    </section>
-    """
+        return empty_state_card(
+            title="HTML 內容",
+            message="本次僅保存成功摘要，未額外保存完整 HTML。",
+        )
+    return card(
+        title="HTML 前 5000 字",
+        body=f'<pre style="{pre_style()}">{html_preview}</pre>',
+    )

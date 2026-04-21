@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from sqlite3 import Connection, Row
 
-from app.config.models import NotificationChannelSettings
+from app.config.models import DisplaySettings, NotificationChannelSettings
 from app.domain.entities import (
     CheckEvent,
     DebugArtifact,
@@ -656,6 +656,37 @@ class SqliteAppSettingsRepository:
                     int(settings.discord_enabled),
                     settings.discord_webhook_url,
                 ),
+            )
+        return settings
+
+    def get_display_settings(self) -> DisplaySettings:
+        """讀出 GUI 顯示設定；若尚未保存則回預設值。"""
+        with self._database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM display_settings
+                WHERE singleton_id = 1
+                """
+            ).fetchone()
+        if row is None:
+            return DisplaySettings()
+        return DisplaySettings(
+            use_24_hour_time=bool(row["use_24_hour_time"]),
+        )
+
+    def save_display_settings(self, settings: DisplaySettings) -> DisplaySettings:
+        """保存 GUI 顯示設定。"""
+        with self._database.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO display_settings (
+                    singleton_id, use_24_hour_time, updated_at_utc
+                ) VALUES (1, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(singleton_id) DO UPDATE SET
+                    use_24_hour_time = excluded.use_24_hour_time,
+                    updated_at_utc = CURRENT_TIMESTAMP
+                """,
+                (int(settings.use_24_hour_time),),
             )
         return settings
 

@@ -18,7 +18,7 @@ from app.application.preview_guard import PreviewAttemptGuard
 from app.application.watch_editor import WatchCreationPreview, WatchEditorService
 from app.application.watch_lifecycle import WatchLifecycleCoordinator
 from app.bootstrap.container import AppContainer
-from app.config.models import NotificationChannelSettings
+from app.config.models import DisplaySettings, NotificationChannelSettings
 from app.domain.entities import LatestCheckSnapshot, NotificationDispatchResult, WatchItem
 from app.domain.enums import (
     Availability,
@@ -120,6 +120,8 @@ def test_create_app_registers_gui_routes(tmp_path) -> None:
     assert "/debug/captures/{capture_id}/html" in paths
     assert "/debug/captures/clear" in paths
     assert "/watches/{watch_item_id}/notification-settings" in paths
+    assert "/settings" in paths
+    assert "/settings/test-notification" in paths
     assert "/settings/notifications" in paths
     assert "/settings/notifications/test" in paths
 
@@ -218,7 +220,7 @@ def test_render_watch_list_page_shows_existing_watch_items() -> None:
     assert "暫停" in html
     assert "停用" in html
     assert "/watches/watch-list-1" in html
-    assert "/settings/notifications" in html
+    assert "/settings" in html
     assert "Background Monitor" in html
 
 
@@ -518,7 +520,7 @@ def test_render_notification_settings_page_shows_current_rule() -> None:
 
 
 def test_render_notification_channel_settings_page_shows_saved_values() -> None:
-    """全域通知設定頁應顯示目前已保存的通道設定。"""
+    """設定頁應顯示目前已保存的通道與顯示設定。"""
     html = render_notification_channel_settings_page(
         settings=NotificationChannelSettings(
             desktop_enabled=True,
@@ -531,11 +533,17 @@ def test_render_notification_channel_settings_page_shows_saved_values() -> None:
         flash_message="已更新 通知通道設定",
     )
 
-    assert "全域通知設定" in html
+    assert "設定" in html
     assert "hotel-watch" in html
     assert "https://discord.example.com/webhook" in html
     assert "已更新 通知通道設定" in html
     assert "發送測試通知" in html
+    assert "12 小時制" in html
+    assert "24 小時制" in html
+    assert 'name="time_format_24h"' in html
+    assert 'id="global-settings-form"' in html
+    assert "尚未儲存" in html
+    assert "beforeunload" in html
 
 
 def test_render_notification_channel_settings_page_shows_structured_test_result() -> None:
@@ -667,12 +675,12 @@ def test_post_notification_settings_preserves_invalid_form_value(tmp_path) -> No
 
 
 def test_post_global_notification_settings_updates_channels(tmp_path) -> None:
-    """全域通知設定頁應可保存 ntfy 與 Discord 通道設定。"""
+    """全域設定頁應可保存通知通道與顯示偏好。"""
     container = _build_test_container(tmp_path)
     client = TestClient(create_app(container))
 
     response = client.post(
-        "/settings/notifications",
+        "/settings",
         data={
             "desktop_enabled": "on",
             "ntfy_enabled": "on",
@@ -680,6 +688,7 @@ def test_post_global_notification_settings_updates_channels(tmp_path) -> None:
             "ntfy_topic": "hotel-watch",
             "discord_enabled": "on",
             "discord_webhook_url": "https://discord.example.com/webhook",
+            "time_format_24h": "on",
         },
         headers=_local_request_headers(),
         follow_redirects=False,
@@ -695,6 +704,51 @@ def test_post_global_notification_settings_updates_channels(tmp_path) -> None:
         discord_enabled=True,
         discord_webhook_url="https://discord.example.com/webhook",
     )
+    assert container.app_settings_service.get_display_settings() == DisplaySettings(
+        use_24_hour_time=True,
+    )
+
+
+def test_post_global_settings_can_switch_to_12_hour_time(tmp_path) -> None:
+    """取消 24 小時制 checkbox 後，應保存為 12 小時制偏好。"""
+    container = _build_test_container(tmp_path)
+    client = TestClient(create_app(container))
+
+    response = client.post(
+        "/settings",
+        data={
+            "desktop_enabled": "on",
+            "ntfy_server_url": "https://ntfy.sh",
+            "time_format_12h": "on",
+        },
+        headers=_local_request_headers(),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert container.app_settings_service.get_display_settings() == DisplaySettings(
+        use_24_hour_time=False,
+    )
+
+
+def test_post_global_settings_rejects_multiple_time_formats(tmp_path) -> None:
+    """時間格式設定若同時勾選兩項，後端應拒絕保存。"""
+    container = _build_test_container(tmp_path)
+    client = TestClient(create_app(container))
+
+    response = client.post(
+        "/settings",
+        data={
+            "desktop_enabled": "on",
+            "ntfy_server_url": "https://ntfy.sh",
+            "time_format_12h": "on",
+            "time_format_24h": "on",
+        },
+        headers=_local_request_headers(),
+    )
+
+    assert response.status_code == 400
+    assert "請選擇 12 小時制或 24 小時制其中一項" in response.text
 
 
 def test_post_global_notification_test_uses_saved_dispatch_path(tmp_path) -> None:
@@ -703,7 +757,7 @@ def test_post_global_notification_test_uses_saved_dispatch_path(tmp_path) -> Non
     client = TestClient(create_app(container))
 
     response = client.post(
-        "/settings/notifications/test",
+        "/settings/test-notification",
         headers=_local_request_headers(),
         follow_redirects=False,
     )
@@ -722,7 +776,7 @@ def test_post_global_notification_test_requires_enabled_channel(tmp_path) -> Non
     client = TestClient(create_app(container))
 
     response = client.post(
-        "/settings/notifications/test",
+        "/settings/test-notification",
         headers=_local_request_headers(),
     )
 
@@ -920,12 +974,12 @@ def test_state_changing_post_rejects_non_local_origin(tmp_path) -> None:
 
 
 def test_post_global_notification_settings_preserves_invalid_form_value(tmp_path) -> None:
-    """全域通知設定儲存失敗時應保留使用者剛輸入的值。"""
+    """設定儲存失敗時應保留使用者剛輸入的值。"""
     container = _build_test_container(tmp_path)
     client = TestClient(create_app(container))
 
     response = client.post(
-        "/settings/notifications",
+        "/settings",
         data={
             "desktop_enabled": "on",
             "ntfy_enabled": "on",
@@ -933,6 +987,7 @@ def test_post_global_notification_settings_preserves_invalid_form_value(tmp_path
             "ntfy_topic": "",
             "discord_enabled": "on",
             "discord_webhook_url": "https://discord.example.com/webhook",
+            "time_format_24h": "on",
         },
         headers=_local_request_headers(),
     )

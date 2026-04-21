@@ -11,14 +11,16 @@ from app.domain.enums import NotificationLeafKind
 from app.domain.pricing import calculate_price_per_person_per_night
 from app.infrastructure.browser import ChromeTabSummary
 from app.sites.base import LookupDiagnostic, SiteDescriptor
-from app.web.view_helpers import (
-    CARD_STYLE,
-    SUCCESS_STYLE,
-    cell_style,
-    input_style,
-    primary_button_style,
-    secondary_button_style,
+from app.web.ui_components import (
+    card,
+    data_table,
+    empty_state_card,
+    link_button,
+    submit_button,
+    table_row,
+    text_link,
 )
+from app.web.ui_styles import SUCCESS_STYLE, input_style
 
 
 def render_preview_section(preview: WatchCreationPreview) -> str:
@@ -51,28 +53,15 @@ def render_preview_section(preview: WatchCreationPreview) -> str:
     prefill_status = "預填選項仍有效" if preview.preselected_still_valid else "需重新選擇有效候選"
     prefill_color = "#166534" if preview.preselected_still_valid else "#92400e"
     existing_watch_html = ""
-    submit_html = (
-        f'<button type="submit" style="{primary_button_style()}">'
-        "建立 Watch Item"
-        "</button>"
-    )
+    submit_html = submit_button(label="建立 Watch Item", kind="primary")
     if preview.existing_watch_id is not None:
         existing_watch_html = f"""
         <p style="{SUCCESS_STYLE}">
           目前選定目標已建立 watch。
-          <a
-            href="/watches/{escape(preview.existing_watch_id)}"
-            style="color:#0f766e;"
-          >
-            查看既有 watch
-          </a>
+          {text_link(href=f"/watches/{preview.existing_watch_id}", label="查看既有 watch")}
         </p>
         """
-        submit_html = (
-            f'<button type="button" style="{_disabled_button_style()}" disabled>'
-            "已建立 watch"
-            "</button>"
-        )
+        submit_html = submit_button(label="已建立 watch", disabled=True)
     debug_capture_html = ""
     if preview.candidate_bundle.debug_artifact_paths:
         html_path, meta_path = preview.candidate_bundle.debug_artifact_paths
@@ -82,63 +71,63 @@ def render_preview_section(preview: WatchCreationPreview) -> str:
           HTML = <code>{escape(html_path)}</code>，
           Metadata = <code>{escape(meta_path)}</code>
         </p>
-        <p><a href="/debug/captures/latest" style="color:#0f766e;">查看最新 debug capture</a></p>
+        <p>{text_link(href="/debug/captures/latest", label="查看最新 debug capture")}</p>
         """
 
-    return f"""
-    <section style="{CARD_STYLE}">
-      <div>
-        <h2>{escape(preview.candidate_bundle.hotel_name)}</h2>
-        <p>日期：{preview.draft.check_in_date} - {preview.draft.check_out_date}</p>
-        <p>人數 / 房數：{preview.draft.people_count} / {preview.draft.room_count}</p>
-        {_render_preview_browser_source(preview)}
-        <p style="color:{prefill_color};">{prefill_status}</p>
-        {existing_watch_html}
-        {debug_capture_html}
-      </div>
-      {_render_preview_refresh_section(preview)}
-      <form action="/watches" method="post" style="display:grid;gap:12px;">
-        <input type="hidden" name="seed_url" value="{escape(preview.draft.seed_url)}">
-        {_render_preview_browser_tab_hidden_input(preview)}
-        <div>{''.join(options) or '<p>目前查無可建立的候選方案。</p>'}</div>
-        <label>輪詢秒數</label>
-        <input
-          type="number"
-          name="scheduler_interval_seconds"
-          min="60"
-          value="600"
-          style="{input_style()}"
-        >
-        <label>通知條件</label>
-        <select
-          id="create-watch-notification-rule-kind"
-          name="notification_rule_kind"
-          style="{input_style()}"
-        >
-          <option value="{NotificationLeafKind.ANY_DROP.value}">價格下降</option>
-          <option
-            value="{NotificationLeafKind.BELOW_TARGET_PRICE.value}"
-            selected
-          >
-            低於目標價
-          </option>
-        </select>
-        <div
-          id="create-watch-target-price-wrapper"
-          style="{_notification_target_price_wrapper_style(NotificationLeafKind.BELOW_TARGET_PRICE)}"
-        >
-          <label>目標價（僅低於目標價時使用）</label>
-          <input type="text" name="target_price" placeholder="例如 20000" style="{input_style()}">
-          {_render_notification_target_price_hint(NotificationLeafKind.BELOW_TARGET_PRICE)}
+    return card(
+        title=preview.candidate_bundle.hotel_name,
+        body=f"""
+        <div>
+          <p>日期：{preview.draft.check_in_date} - {preview.draft.check_out_date}</p>
+          <p>人數 / 房數：{preview.draft.people_count} / {preview.draft.room_count}</p>
+          {_render_preview_browser_source(preview)}
+          <p style="color:{prefill_color};">{prefill_status}</p>
+          {existing_watch_html}
+          {debug_capture_html}
         </div>
-        {submit_html}
-      </form>
-      {_render_notification_rule_toggle_script(
-          select_id="create-watch-notification-rule-kind",
-          wrapper_id="create-watch-target-price-wrapper",
-      )}
-    </section>
-    """
+        {_render_preview_refresh_section(preview)}
+        <form action="/watches" method="post" style="display:grid;gap:12px;">
+          <input type="hidden" name="seed_url" value="{escape(preview.draft.seed_url)}">
+          {_render_preview_browser_tab_hidden_input(preview)}
+          <div>{''.join(options) or '<p>目前查無可建立的候選方案。</p>'}</div>
+          <label>輪詢秒數</label>
+          <input
+            type="number"
+            name="scheduler_interval_seconds"
+            min="60"
+            value="600"
+            style="{input_style()}"
+          >
+          <label>通知條件</label>
+          <select
+            id="create-watch-notification-rule-kind"
+            name="notification_rule_kind"
+            style="{input_style()}"
+          >
+            <option value="{NotificationLeafKind.ANY_DROP.value}">價格下降</option>
+            <option
+              value="{NotificationLeafKind.BELOW_TARGET_PRICE.value}"
+              selected
+            >
+              低於目標價
+            </option>
+          </select>
+          <div
+            id="create-watch-target-price-wrapper"
+            style="{_notification_target_price_wrapper_style(NotificationLeafKind.BELOW_TARGET_PRICE)}"
+          >
+            <label>目標價（僅低於目標價時使用）</label>
+            <input type="text" name="target_price" placeholder="例如 20000" style="{input_style()}">
+            {_render_notification_target_price_hint(NotificationLeafKind.BELOW_TARGET_PRICE)}
+          </div>
+          {submit_html}
+        </form>
+        {_render_notification_rule_toggle_script(
+            select_id="create-watch-notification-rule-kind",
+            wrapper_id="create-watch-target-price-wrapper",
+        )}
+        """,
+    )
 
 
 def render_chrome_tab_cards(
@@ -162,15 +151,13 @@ def render_chrome_tab_cards(
             )
         )
 
-    return "".join(rows) or f"""
-    <section style="{CARD_STYLE}">
-      <p>目前找不到可用的 {escape(site_label_list)} Chrome 分頁。</p>
-      <p>
-        請先執行 <code>uv run python -m app.tools.dev_start</code>，
-        並在專用 Chrome 中打開 {escape(site_hint_list)} 頁面後再重試。
-      </p>
-    </section>
-    """
+    return "".join(rows) or empty_state_card(
+        title=f"目前找不到可用的 {site_label_list} Chrome 分頁",
+        message=(
+            "請先執行 uv run python -m app.tools.dev_start，"
+            f"並在專用 Chrome 中打開 {site_hint_list} 頁面後再重試。"
+        ),
+    )
 
 
 def render_diagnostics_section(diagnostics: tuple[LookupDiagnostic, ...]) -> str:
@@ -186,35 +173,25 @@ def render_diagnostics_section(diagnostics: tuple[LookupDiagnostic, ...]) -> str
             else ""
         )
         rows.append(
-            f"""
-            <tr>
-              <td style="{cell_style(head=False)}">{escape(diagnostic.stage)}</td>
-              <td style="{cell_style(head=False)}">{escape(diagnostic.status)}</td>
-              <td style="{cell_style(head=False)}">
-                {escape(diagnostic.detail)} {escape(cooldown_text)}
-              </td>
-            </tr>
-            """
+            table_row(
+                (
+                    escape(diagnostic.stage),
+                    escape(diagnostic.status),
+                    f"{escape(diagnostic.detail)} {escape(cooldown_text)}",
+                )
+            )
         )
 
-    return f"""
-    <section style="{CARD_STYLE}">
-      <div>
-        <h2>診斷資訊</h2>
+    return card(
+        title="診斷資訊",
+        body=f"""
         <p>顯示本次 preview 嘗試過的方法與各步驟結果。</p>
-      </div>
-      <table style="width:100%;border-collapse:collapse;">
-        <thead>
-          <tr>
-            <th style="{cell_style(head=True)}">階段</th>
-            <th style="{cell_style(head=True)}">結果</th>
-            <th style="{cell_style(head=True)}">說明</th>
-          </tr>
-        </thead>
-        <tbody>{''.join(rows)}</tbody>
-      </table>
-    </section>
-    """
+        {data_table(
+            headers=("階段", "結果", "說明"),
+            rows_html="".join(rows),
+        )}
+        """,
+    )
 
 
 def format_site_label_list(site_descriptors: tuple[SiteDescriptor, ...]) -> str:
@@ -245,7 +222,7 @@ def _render_chrome_tab_card(
     site_labels_by_tab_id: dict[str, str],
 ) -> str:
     """渲染單一 Chrome 分頁卡片與抓取操作。"""
-    row_style = CARD_STYLE
+    row_style = ""
     if tab.tab_id == selected_tab_id:
         row_style += "border-color:#0f766e;"
     throttling_text = "可能節流" if tab.possible_throttling else "正常"
@@ -261,37 +238,32 @@ def _render_chrome_tab_card(
         f"""
         <div style="display:grid;gap:8px;justify-items:start;">
           <span style="color:#92400e;font-weight:600;">已建立 watch</span>
-          <a href="/watches/{escape(linked_watch_id)}" style="{secondary_button_style()}">
-            查看既有 watch
-          </a>
-          <button
-            type="button"
-            style="{_disabled_button_style()}"
-            disabled
-          >
-            已建立 watch
-          </button>
+          {link_button(href=f"/watches/{linked_watch_id}", label="查看既有 watch")}
+          {submit_button(label="已建立 watch", disabled=True)}
         </div>
         """
         if linked_watch_id is not None
-        else f'<button type="submit" style="{primary_button_style()}">抓取此分頁</button>'
+        else submit_button(label="抓取此分頁", kind="primary")
     )
-    return f"""
-    <form action="/watches/chrome-tabs/preview" method="post" style="{row_style}">
-      <input type="hidden" name="tab_id" value="{escape(tab.tab_id)}">
-      <div style="display:grid;gap:8px;">
-        <strong>{escape(tab.title or "untitled tab")}</strong>
-        <code style="word-break:break-all;">{escape(tab.url)}</code>
-        <p style="margin:0;">
-          可見性：{escape(tab.visibility_state or "unknown")}，
-          焦點：{escape(_format_focus_text(tab.has_focus))}，
-          訊號：{escape(throttling_text + discarded_text)}
-        </p>
-        {site_label_html}
-      </div>
-      {action_html}
-    </form>
-    """
+    return card(
+        extra_style=row_style,
+        body=f"""
+        <form action="/watches/chrome-tabs/preview" method="post" style="display:grid;gap:12px;">
+          <input type="hidden" name="tab_id" value="{escape(tab.tab_id)}">
+          <div style="display:grid;gap:8px;">
+            <strong>{escape(tab.title or "untitled tab")}</strong>
+            <code style="word-break:break-all;">{escape(tab.url)}</code>
+            <p style="margin:0;">
+              可見性：{escape(tab.visibility_state or "unknown")}，
+              焦點：{escape(_format_focus_text(tab.has_focus))}，
+              訊號：{escape(throttling_text + discarded_text)}
+            </p>
+            {site_label_html}
+          </div>
+          {action_html}
+        </form>
+        """,
+    )
 
 
 def _render_preview_browser_source(preview: WatchCreationPreview) -> str:
@@ -318,9 +290,7 @@ def _render_preview_refresh_section(preview: WatchCreationPreview) -> str:
         return f"""
         <form action="/watches/chrome-tabs/preview" method="post" style="display:grid;gap:12px;">
           <input type="hidden" name="tab_id" value="{escape(preview.browser_tab_id)}">
-          <button type="submit" style="{secondary_button_style()}">
-            從同一個 Chrome 分頁重新抓取
-          </button>
+          {submit_button(label="從同一個 Chrome 分頁重新抓取", kind="secondary")}
         </form>
         """
     return f"""
@@ -328,9 +298,7 @@ def _render_preview_refresh_section(preview: WatchCreationPreview) -> str:
       <p style="margin:0;color:#4b635f;">
         若要以專用 Chrome 目前頁面為準重新抓取，請改用 Chrome 分頁選擇流程。
       </p>
-      <a href="/watches/chrome-tabs" style="{secondary_button_style()}">
-        從目前專用 Chrome 頁面抓取
-      </a>
+      {link_button(href="/watches/chrome-tabs", label="從目前專用 Chrome 頁面抓取")}
     </div>
     """
 
@@ -374,15 +342,6 @@ def _render_candidate_price(*, candidate: Any, preview: WatchCreationPreview) ->
         f"總價：{total_price_html}"
         f"{per_person_html}"
         "</span>"
-    )
-
-
-def _disabled_button_style() -> str:
-    """回傳不可操作按鈕的 inline style。"""
-    return (
-        "display:inline-block;padding:12px 18px;background:#e5e7eb;color:#6b7280;"
-        "text-decoration:none;border:1px solid #d1d5db;border-radius:8px;cursor:not-allowed;"
-        "opacity:0.85;"
     )
 
 

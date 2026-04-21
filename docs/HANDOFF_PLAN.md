@@ -4,8 +4,9 @@
 
 1. `docs/V1_SPEC.md`
 2. `docs/ARCHITECTURE_PLAN.md`
-3. `docs/TASK_BREAKDOWN.md`
-4. `docs/HANDOFF_PLAN.md`
+3. `docs/UI_REDESIGN_PLAN.md`
+4. `docs/TASK_BREAKDOWN.md`
+5. `docs/HANDOFF_PLAN.md`
 
 ## 1. 目前狀態
 
@@ -16,14 +17,15 @@
 - 從專用 Chrome 分頁建立 `ikyu` watch
 - watch 列表、詳情、歷史、debug、通知設定
 - watch 啟用 / 停用 / 暫停 / 恢復 / 手動立即檢查
-- 全域通知通道設定與測試通知
+- 通用設定頁：通知通道、測試通知、GUI 時間顯示格式
+- 設定頁提供未儲存提示與離頁前防呆
 - background runtime 定期刷新、寫入歷史並發送通知
 - 首頁與 watch 詳細頁局部 polling 更新
 
 最新驗證狀態：
 
 - `ruff check src tests` 通過
-- `pytest` 通過，`222 passed`
+- `pytest` 通過，`228 passed`
 
 ## 2. 正式主線
 
@@ -81,6 +83,10 @@ V1 正式主線是 Chrome-driven：
 - `src/app/infrastructure/browser/chrome_page_capture.py`：HTML capture 與 throttling / discard 訊號
 - `src/app/web/routes/`：本機 GUI routes
 - `src/app/web/*_views.py`：本機 GUI renderers
+- `src/app/web/ui_styles.py`：GUI style token 與語意化 style helper
+- `src/app/web/ui_components.py`：GUI 共用 layout、button、card、empty state、table 等 UI primitives
+- `src/app/web/view_formatters.py`：GUI 共用顯示格式化 helper
+- `src/app/web/view_helpers.py`：舊 renderer import 的相容匯出入口
 - `src/app/web/watch_view_partials.py`：watch list / detail 可替換區塊 partial
 - `src/app/web/watch_creation_partials.py`：新增 watch / Chrome tab selection 可替換區塊 partial
 - `src/app/sites/ikyu/`：`ikyu` adapter、parser、normalizer、browser strategy
@@ -110,11 +116,16 @@ V1 正式主線是 Chrome-driven：
 - 不要把 runtime 結果塞回 `watch_item`
 - 不要移除舊 403 enum / state
 - 不要為了抽象第二站而在沒有樣本時大改 DB schema
+- 不要在新 renderer 中把 `view_helpers.py` 當正式入口；應直接用 `ui_styles.py`、`ui_components.py`、`view_formatters.py`
+- 新全域設定連結應使用 `/settings`；舊 `/settings/notifications` 只作相容入口
 
 ## 7. 建議下一步
 
-1. 做人工 smoke test：啟動、列分頁、建立 watch、手動 check、通知測試、暫停 / 恢復。
-2. 若 smoke test 穩定，進入 Packaging；若要先做第二站，只做 spike，先驗證 target / candidate contract 是否足夠。
+1. 依 `docs/UI_REDESIGN_PLAN.md` 先建立 UI presentation layer 與 design system 第一輪元件。
+2. 重構 Dashboard / Watch List，讓首屏以 watch 狀態、價格與異動為主。
+3. 再依序重構 Watch Detail、Add Watch、Settings、Debug。
+4. UI 第一輪穩定後，做人工 smoke test：啟動、列分頁、建立 watch、手動 check、通知測試、暫停 / 恢復。
+5. 若 smoke test 穩定，進入 Packaging；若要先做第二站，只做 spike，先驗證 target / candidate contract 是否足夠。
 
 ## 8. 仍需觀察
 

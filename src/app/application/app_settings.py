@@ -5,11 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from app.config.models import NotificationChannelSettings
+from app.config.models import DisplaySettings, NotificationChannelSettings
 
 
-class NotificationChannelSettingsRepository:
-    """描述全域通知通道設定的最小持久化介面。"""
+class AppSettingsRepository:
+    """描述全域設定的最小持久化介面。"""
 
     def get_notification_channel_settings(self) -> NotificationChannelSettings:
         """讀取目前保存的全域通知通道設定。"""
@@ -22,16 +22,28 @@ class NotificationChannelSettingsRepository:
         """保存全域通知通道設定。"""
         raise NotImplementedError
 
+    def get_display_settings(self) -> DisplaySettings:
+        """讀取目前保存的 GUI 顯示設定。"""
+        raise NotImplementedError
+
+    def save_display_settings(self, settings: DisplaySettings) -> DisplaySettings:
+        """保存 GUI 顯示設定。"""
+        raise NotImplementedError
+
 
 @dataclass(slots=True)
 class AppSettingsService:
     """負責全域設定頁所需的讀寫與欄位驗證。"""
 
-    settings_repository: NotificationChannelSettingsRepository
+    settings_repository: AppSettingsRepository
 
     def get_notification_channel_settings(self) -> NotificationChannelSettings:
         """讀出目前已保存的全域通知通道設定。"""
         return self.settings_repository.get_notification_channel_settings()
+
+    def get_display_settings(self) -> DisplaySettings:
+        """讀出目前已保存的 GUI 顯示設定。"""
+        return self.settings_repository.get_display_settings()
 
     def update_notification_channel_settings(
         self,
@@ -71,6 +83,11 @@ class AppSettingsService:
             discord_webhook_url=normalized_discord_webhook_url,
         )
         return self.settings_repository.save_notification_channel_settings(settings)
+
+    def update_display_settings(self, *, use_24_hour_time: bool) -> DisplaySettings:
+        """保存 GUI 顯示偏好設定。"""
+        settings = DisplaySettings(use_24_hour_time=use_24_hour_time)
+        return self.settings_repository.save_display_settings(settings)
 
 
 def _normalize_optional_text(value: str | None) -> str | None:

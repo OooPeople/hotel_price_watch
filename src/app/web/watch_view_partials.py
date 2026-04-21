@@ -21,37 +21,59 @@ from app.domain.enums import (
     WatchRuntimeState,
 )
 from app.monitor.runtime import MonitorRuntimeStatus
-from app.web.view_helpers import (
-    CARD_STYLE,
-    cell_style,
-    danger_button_style,
-    format_datetime_for_display,
-    primary_button_style,
-    secondary_button_style,
+from app.web.ui_components import (
+    action_row,
+    card,
+    data_table,
+    empty_state_card,
+    notice_box,
+    submit_button,
+    table_row,
+    text_link,
 )
+from app.web.view_formatters import format_datetime_for_display
 
 
 def render_runtime_status_section(runtime_status: MonitorRuntimeStatus | None) -> str:
     """在首頁顯示 background monitor runtime 的狀態摘要。"""
+    return render_runtime_status_section_with_time_format(
+        runtime_status,
+        use_24_hour_time=True,
+    )
+
+
+def render_runtime_status_section_with_time_format(
+    runtime_status: MonitorRuntimeStatus | None,
+    *,
+    use_24_hour_time: bool,
+) -> str:
+    """依顯示設定渲染 background monitor runtime 的狀態摘要。"""
     if runtime_status is None:
         return ""
 
     running_text = "運行中" if runtime_status.is_running else "未啟動"
     chrome_text = "可附著" if runtime_status.chrome_debuggable else "不可附著"
-    last_tick_text = format_datetime_for_display(runtime_status.last_tick_at)
-    last_sync_text = format_datetime_for_display(runtime_status.last_watch_sync_at)
-    return f"""
-    <section style="{CARD_STYLE};margin-top:20px;">
-      <h2 style="margin:0;">Background Monitor</h2>
-      <p style="margin:0;">狀態：{escape(running_text)}</p>
-      <p style="margin:0;">Chrome session：{escape(chrome_text)}</p>
-      <p style="margin:0;">已啟用 watch：{runtime_status.enabled_watch_count}</p>
-      <p style="margin:0;">已註冊排程：{runtime_status.registered_watch_count}</p>
-      <p style="margin:0;">執行中 worker：{runtime_status.inflight_watch_count}</p>
-      <p style="margin:0;">最後 tick：{escape(last_tick_text)}</p>
-      <p style="margin:0;">最後同步 watch：{escape(last_sync_text)}</p>
-    </section>
-    """
+    last_tick_text = format_datetime_for_display(
+        runtime_status.last_tick_at,
+        use_24_hour_time=use_24_hour_time,
+    )
+    last_sync_text = format_datetime_for_display(
+        runtime_status.last_watch_sync_at,
+        use_24_hour_time=use_24_hour_time,
+    )
+    return card(
+        title="Background Monitor",
+        extra_style="margin-top:20px;",
+        body=f"""
+        <p style="margin:0;">狀態：{escape(running_text)}</p>
+        <p style="margin:0;">Chrome session：{escape(chrome_text)}</p>
+        <p style="margin:0;">已啟用 watch：{runtime_status.enabled_watch_count}</p>
+        <p style="margin:0;">已註冊排程：{runtime_status.registered_watch_count}</p>
+        <p style="margin:0;">執行中 worker：{runtime_status.inflight_watch_count}</p>
+        <p style="margin:0;">最後 tick：{escape(last_tick_text)}</p>
+        <p style="margin:0;">最後同步 watch：{escape(last_sync_text)}</p>
+        """,
+    )
 
 
 def render_watch_list_rows(
@@ -80,11 +102,7 @@ def render_watch_list_rows(
         rows.append(
             f"""
             <tr>
-              <td>
-                <a href="/watches/{escape(watch_item.id)}" style="color:#0f766e;">
-                  {escape(watch_item.hotel_name)}
-                </a>
-              </td>
+              <td>{text_link(href=f"/watches/{watch_item.id}", label=watch_item.hotel_name)}</td>
               <td>{escape(watch_item.room_name)}</td>
               <td>{escape(watch_item.plan_name)}</td>
               <td>{date_range}</td>
@@ -103,17 +121,16 @@ def render_latest_snapshot_section(
     latest_snapshot: LatestCheckSnapshot | None,
     notification_state: NotificationState | None,
     debug_artifacts: tuple[DebugArtifact, ...],
+    use_24_hour_time: bool = True,
 ) -> str:
     """渲染單一 watch item 的最近一次摘要與通知狀態。"""
     if latest_snapshot is None:
-        return f"""
-        <section style="{CARD_STYLE}">
-          <h2>最近摘要</h2>
-          <p>目前尚無任何檢查結果。</p>
-        </section>
-        """
+        return empty_state_card(title="最近摘要", message="目前尚無任何檢查結果。")
 
-    runtime_signal_html = _render_runtime_signal_summary(debug_artifacts)
+    runtime_signal_html = _render_runtime_signal_summary(
+        debug_artifacts,
+        use_24_hour_time=use_24_hour_time,
+    )
     latest_price = _format_optional_money(
         latest_snapshot.currency,
         latest_snapshot.normalized_price_amount,
@@ -132,46 +149,59 @@ def render_latest_snapshot_section(
         else "none"
     )
     last_notified_at = (
-        format_datetime_for_display(notification_state.last_notified_at)
+        format_datetime_for_display(
+            notification_state.last_notified_at,
+            use_24_hour_time=use_24_hour_time,
+        )
         if notification_state and notification_state.last_notified_at
         else "none"
     )
-    return f"""
-    <section style="{CARD_STYLE}">
-      <h2>最近摘要</h2>
-      <p>最近檢查：{escape(format_datetime_for_display(latest_snapshot.checked_at))}</p>
-      <p>Availability：{escape(latest_snapshot.availability.value)}</p>
-      <p>最近價格：{escape(latest_price)}</p>
-      <p>連續失敗次數：{latest_snapshot.consecutive_failures}</p>
-      <p>最後錯誤：{escape(latest_snapshot.last_error_code or "none")}</p>
-      <p>目前是否 degraded：{"是" if latest_snapshot.is_degraded else "否"}</p>
-      <p>最近通知價格：{escape(last_notified_price)}</p>
-      <p>
-        最近通知 availability：
-        {escape(last_notified_availability)}
-      </p>
-      <p>
-        最近通知時間：
-        {escape(last_notified_at)}
-      </p>
-      <p>
-        目前設定的通知規則：
-        {escape(_describe_notification_rule(watch_item))}
-      </p>
-      {runtime_signal_html}
-    </section>
-    """
+    return card(
+        title="最近摘要",
+        body=f"""
+        <p>最近檢查：{escape(format_datetime_for_display(
+            latest_snapshot.checked_at,
+            use_24_hour_time=use_24_hour_time,
+        ))}</p>
+        <p>Availability：{escape(latest_snapshot.availability.value)}</p>
+        <p>最近價格：{escape(latest_price)}</p>
+        <p>連續失敗次數：{latest_snapshot.consecutive_failures}</p>
+        <p>最後錯誤：{escape(latest_snapshot.last_error_code or "none")}</p>
+        <p>目前是否 degraded：{"是" if latest_snapshot.is_degraded else "否"}</p>
+        <p>最近通知價格：{escape(last_notified_price)}</p>
+        <p>
+          最近通知 availability：
+          {escape(last_notified_availability)}
+        </p>
+        <p>
+          最近通知時間：
+          {escape(last_notified_at)}
+        </p>
+        <p>
+          目前設定的通知規則：
+          {escape(_describe_notification_rule(watch_item))}
+        </p>
+        {runtime_signal_html}
+        """,
+    )
 
 
 def render_check_events_section(check_events: tuple[CheckEvent, ...]) -> str:
     """渲染檢查歷史與錯誤摘要。"""
+    return render_check_events_section_with_time_format(
+        check_events,
+        use_24_hour_time=True,
+    )
+
+
+def render_check_events_section_with_time_format(
+    check_events: tuple[CheckEvent, ...],
+    *,
+    use_24_hour_time: bool,
+) -> str:
+    """依顯示設定渲染檢查歷史與錯誤摘要。"""
     if not check_events:
-        return f"""
-        <section style="{CARD_STYLE}">
-          <h2>檢查歷史</h2>
-          <p>目前尚無檢查歷史。</p>
-        </section>
-        """
+        return empty_state_card(title="檢查歷史", message="目前尚無檢查歷史。")
 
     rows = []
     for event in sorted(check_events, key=lambda item: item.checked_at, reverse=True)[:20]:
@@ -181,104 +211,104 @@ def render_check_events_section(check_events: tuple[CheckEvent, ...]) -> str:
             event.normalized_price_amount,
         )
         rows.append(
-            f"""
-            <tr>
-              <td style="{cell_style(head=False)}">
-                {escape(format_datetime_for_display(event.checked_at))}
-              </td>
-              <td style="{cell_style(head=False)}">{escape(event.availability.value)}</td>
-              <td style="{cell_style(head=False)}">{escape(event_kind_text)}</td>
-              <td style="{cell_style(head=False)}">{escape(event_price_text)}</td>
-              <td style="{cell_style(head=False)}">{escape(event.error_code or "none")}</td>
-              <td style="{cell_style(head=False)}">{escape(event.notification_status.value)}</td>
-            </tr>
-            """
+            table_row(
+                (
+                    escape(
+                        format_datetime_for_display(
+                            event.checked_at,
+                            use_24_hour_time=use_24_hour_time,
+                        )
+                    ),
+                    escape(event.availability.value),
+                    escape(event_kind_text),
+                    escape(event_price_text),
+                    escape(event.error_code or "none"),
+                    escape(event.notification_status.value),
+                )
+            )
         )
 
-    return f"""
-    <section style="{CARD_STYLE}">
-      <h2>檢查歷史</h2>
-      <table style="width:100%;border-collapse:collapse;">
-        <thead>
-          <tr>
-            <th style="{cell_style(head=True)}">時間</th>
-            <th style="{cell_style(head=True)}">Availability</th>
-            <th style="{cell_style(head=True)}">事件</th>
-            <th style="{cell_style(head=True)}">價格</th>
-            <th style="{cell_style(head=True)}">錯誤</th>
-            <th style="{cell_style(head=True)}">通知結果</th>
-          </tr>
-        </thead>
-        <tbody>{"".join(rows)}</tbody>
-      </table>
-    </section>
-    """
+    return card(
+        title="檢查歷史",
+        body=data_table(
+            headers=("時間", "Availability", "事件", "價格", "錯誤", "通知結果"),
+            rows_html="".join(rows),
+        ),
+    )
 
 
 def render_runtime_state_events_section(
     runtime_state_events: tuple[RuntimeStateEvent, ...],
 ) -> str:
     """渲染 watch 狀態轉移事件摘要，避免只靠檢查事件推論狀態變化。"""
+    return render_runtime_state_events_section_with_time_format(
+        runtime_state_events,
+        use_24_hour_time=True,
+    )
+
+
+def render_runtime_state_events_section_with_time_format(
+    runtime_state_events: tuple[RuntimeStateEvent, ...],
+    *,
+    use_24_hour_time: bool,
+) -> str:
+    """依顯示設定渲染 watch 狀態轉移事件摘要。"""
     if not runtime_state_events:
-        return f"""
-        <section style="{CARD_STYLE}">
-          <h2>狀態事件</h2>
-          <p>目前尚無 blocked / paused / resumed / recovered 相關狀態事件。</p>
-        </section>
-        """
+        return empty_state_card(
+            title="狀態事件",
+            message="目前尚無 blocked / paused / resumed / recovered 相關狀態事件。",
+        )
 
     rows = []
     for event in runtime_state_events[:10]:
         rows.append(
-            f"""
-            <tr>
-              <td style="{cell_style(head=False)}">
-                {escape(format_datetime_for_display(event.occurred_at))}
-              </td>
-              <td style="{cell_style(head=False)}">
-                {escape(_describe_runtime_state_event_kind(event.event_kind))}
-              </td>
-              <td style="{cell_style(head=False)}">
-                {escape(_describe_optional_runtime_state(event.from_state))}
-              </td>
-              <td style="{cell_style(head=False)}">
-                {escape(_describe_optional_runtime_state(event.to_state))}
-              </td>
-              <td style="{cell_style(head=False)}">
-                {escape(event.detail_text or "none")}
-              </td>
-            </tr>
-            """
+            table_row(
+                (
+                    escape(
+                        format_datetime_for_display(
+                            event.occurred_at,
+                            use_24_hour_time=use_24_hour_time,
+                        )
+                    ),
+                    escape(_describe_runtime_state_event_kind(event.event_kind)),
+                    escape(_describe_optional_runtime_state(event.from_state)),
+                    escape(_describe_optional_runtime_state(event.to_state)),
+                    escape(event.detail_text or "none"),
+                )
+            )
         )
-    return f"""
-    <section style="{CARD_STYLE}">
-      <h2>狀態事件</h2>
-      <table style="width:100%;border-collapse:collapse;">
-        <thead>
-          <tr>
-            <th style="{cell_style(head=True)}">時間</th>
-            <th style="{cell_style(head=True)}">事件</th>
-            <th style="{cell_style(head=True)}">前狀態</th>
-            <th style="{cell_style(head=True)}">後狀態</th>
-            <th style="{cell_style(head=True)}">說明</th>
-          </tr>
-        </thead>
-        <tbody>{"".join(rows)}</tbody>
-      </table>
-    </section>
-    """
+    return card(
+        title="狀態事件",
+        body=data_table(
+            headers=("時間", "事件", "前狀態", "後狀態", "說明"),
+            rows_html="".join(rows),
+        ),
+    )
 
 
 def render_debug_artifacts_section(debug_artifacts: tuple[DebugArtifact, ...]) -> str:
     """渲染與單一 watch item 關聯的 debug artifact 摘要。"""
+    return render_debug_artifacts_section_with_time_format(
+        debug_artifacts,
+        use_24_hour_time=True,
+    )
+
+
+def render_debug_artifacts_section_with_time_format(
+    debug_artifacts: tuple[DebugArtifact, ...],
+    *,
+    use_24_hour_time: bool,
+) -> str:
+    """依顯示設定渲染與單一 watch item 關聯的 debug artifact 摘要。"""
     if not debug_artifacts:
-        return f"""
-        <section style="{CARD_STYLE}">
-          <h2>Debug Artifacts</h2>
-          <p>目前尚無 background runtime debug artifact。</p>
-          <p>若要看建立 watch / preview 過程的 debug capture，請到首頁的 Debug 區。</p>
-        </section>
-        """
+        return empty_state_card(
+            title="Debug Artifacts",
+            message="目前尚無 background runtime debug artifact。",
+            extra_html=(
+                "<p>若要看建立 watch / preview 過程的 debug capture，"
+                "請到首頁的 Debug 區。</p>"
+            ),
+        )
 
     rows = []
     for artifact in debug_artifacts[:10]:
@@ -287,39 +317,35 @@ def render_debug_artifacts_section(debug_artifacts: tuple[DebugArtifact, ...]) -
         )
         reason_text = _describe_debug_reason(artifact.reason)
         rows.append(
-            f"""
-            <tr>
-              <td style="{cell_style(head=False)}">
-                {escape(format_datetime_for_display(artifact.captured_at))}
-              </td>
-              <td style="{cell_style(head=False)}">{escape(reason_text)}</td>
-              <td style="{cell_style(head=False)}">{escape(artifact.source_url or "none")}</td>
-              <td style="{cell_style(head=False)}">{escape(http_status_text)}</td>
-            </tr>
-            """
+            table_row(
+                (
+                    escape(
+                        format_datetime_for_display(
+                            artifact.captured_at,
+                            use_24_hour_time=use_24_hour_time,
+                        )
+                    ),
+                    escape(reason_text),
+                    escape(artifact.source_url or "none"),
+                    escape(http_status_text),
+                )
+            )
         )
 
-    return f"""
-    <section style="{CARD_STYLE}">
-      <h2>Debug Artifacts</h2>
-      <p>
-        這裡只顯示 background runtime 寫入的 debug artifact，
-        例如節流、blocked page、tab discard。
-      </p>
-      <p>preview / parser 問題請到首頁的 Debug 區查看 preview captures。</p>
-      <table style="width:100%;border-collapse:collapse;">
-        <thead>
-          <tr>
-            <th style="{cell_style(head=True)}">時間</th>
-            <th style="{cell_style(head=True)}">原因</th>
-            <th style="{cell_style(head=True)}">來源 URL</th>
-            <th style="{cell_style(head=True)}">HTTP 狀態</th>
-          </tr>
-        </thead>
-        <tbody>{"".join(rows)}</tbody>
-      </table>
-    </section>
-    """
+    return card(
+        title="Debug Artifacts",
+        body=f"""
+        <p>
+          這裡只顯示 background runtime 寫入的 debug artifact，
+          例如節流、blocked page、tab discard。
+        </p>
+        <p>preview / parser 問題請到首頁的 Debug 區查看 preview captures。</p>
+        {data_table(
+            headers=("時間", "原因", "來源 URL", "HTTP 狀態"),
+            rows_html="".join(rows),
+        )}
+        """,
+    )
 
 
 def render_watch_action_controls(
@@ -342,7 +368,7 @@ def render_watch_action_controls(
                     watch_item_id=watch_item.id,
                     action="check-now",
                     label="立即檢查",
-                    button_style=primary_button_style(),
+                    button_kind="primary",
                 )
             )
         actions.append(
@@ -350,7 +376,7 @@ def render_watch_action_controls(
                 watch_item_id=watch_item.id,
                 action="pause",
                 label="暫停",
-                button_style=secondary_button_style(),
+                button_kind="secondary",
             )
         )
         actions.append(
@@ -358,7 +384,7 @@ def render_watch_action_controls(
                 watch_item_id=watch_item.id,
                 action="disable",
                 label="停用",
-                button_style=secondary_button_style(),
+                button_kind="secondary",
             )
         )
     elif runtime_state in {
@@ -372,7 +398,7 @@ def render_watch_action_controls(
                 watch_item_id=watch_item.id,
                 action="resume",
                 label="恢復",
-                button_style=primary_button_style(),
+                button_kind="primary",
             )
         )
         actions.append(
@@ -380,7 +406,7 @@ def render_watch_action_controls(
                 watch_item_id=watch_item.id,
                 action="disable",
                 label="停用",
-                button_style=secondary_button_style(),
+                button_kind="secondary",
             )
         )
     else:
@@ -389,7 +415,7 @@ def render_watch_action_controls(
                 watch_item_id=watch_item.id,
                 action="enable",
                 label="啟用",
-                button_style=primary_button_style(),
+                button_kind="primary",
             )
         )
     actions.append(
@@ -397,10 +423,10 @@ def render_watch_action_controls(
             watch_item_id=watch_item.id,
             action="delete",
             label="刪除",
-            button_style=danger_button_style(),
+            button_kind="danger",
         )
     )
-    return '<div style="display:flex;gap:8px;flex-wrap:wrap;">' + "".join(actions) + "</div>"
+    return action_row(body="".join(actions))
 
 
 def render_watch_list_polling_script() -> str:
@@ -489,7 +515,7 @@ def _render_watch_action_form(
     watch_item_id: str,
     action: str,
     label: str,
-    button_style: str,
+    button_kind: str,
 ) -> str:
     """渲染單一 watch 操作按鈕表單。"""
     return f"""
@@ -498,19 +524,24 @@ def _render_watch_action_form(
       method="post"
       style="margin:0;"
     >
-      <button type="submit" style="{button_style}">{escape(label)}</button>
+      {submit_button(label=label, kind=button_kind)}
     </form>
     """
 
 
-def _render_runtime_signal_summary(debug_artifacts: tuple[DebugArtifact, ...]) -> str:
+def _render_runtime_signal_summary(
+    debug_artifacts: tuple[DebugArtifact, ...],
+    *,
+    use_24_hour_time: bool,
+) -> str:
     """整理最近的 runtime 訊號，讓 watch 詳細頁可快速判讀背景狀態。"""
     if not debug_artifacts:
-        return """
-        <div style="padding:12px;border:1px solid #d7e2df;background:#f8fbfa;">
-          <strong>最近 runtime 訊號：</strong> 目前沒有 blocked page、節流或 tab discard 紀錄。
-        </div>
-        """
+        return notice_box(
+            body=(
+                "<strong>最近 runtime 訊號：</strong> "
+                "目前沒有 blocked page、節流或 tab discard 紀錄。"
+            )
+        )
 
     recent_artifacts = debug_artifacts[:10]
     counts: dict[str, int] = {}
@@ -519,19 +550,22 @@ def _render_runtime_signal_summary(debug_artifacts: tuple[DebugArtifact, ...]) -
 
     latest_artifact = recent_artifacts[0]
     latest_reason = _describe_debug_reason(latest_artifact.reason)
-    latest_at = format_datetime_for_display(latest_artifact.captured_at)
+    latest_at = format_datetime_for_display(
+        latest_artifact.captured_at,
+        use_24_hour_time=use_24_hour_time,
+    )
     summary_parts = [
         f"{_describe_debug_reason(reason)} {count} 次"
         for reason, count in sorted(counts.items())
     ]
     summary_text = "；".join(summary_parts)
-    return f"""
-    <div style="padding:12px;border:1px solid #d7e2df;background:#f8fbfa;">
-      <strong>最近 runtime 訊號：</strong>
-      最近一次為 {escape(latest_reason)}（{escape(latest_at)}）。
-      <span>{escape(summary_text)}</span>
-    </div>
-    """
+    return notice_box(
+        body=f"""
+        <strong>最近 runtime 訊號：</strong>
+        最近一次為 {escape(latest_reason)}（{escape(latest_at)}）。
+        <span>{escape(summary_text)}</span>
+        """,
+    )
 
 
 def _format_decimal_for_display(amount) -> str:

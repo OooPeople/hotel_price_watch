@@ -7,7 +7,7 @@ from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 
-from app.config.models import NotificationChannelSettings
+from app.config.models import DisplaySettings, NotificationChannelSettings
 from app.domain.entities import (
     CheckEvent,
     DebugArtifact,
@@ -670,6 +670,18 @@ def test_app_settings_repository_round_trip_notification_channels(tmp_path) -> N
     repository.save_notification_channel_settings(settings)
 
     assert repository.get_notification_channel_settings() == settings
+
+
+def test_app_settings_repository_round_trip_display_settings(tmp_path) -> None:
+    """驗證 GUI 顯示設定可正確往返保存。"""
+    database = SqliteDatabase(tmp_path / "watcher.db")
+    database.initialize()
+    repository = SqliteAppSettingsRepository(database)
+    settings = DisplaySettings(use_24_hour_time=False)
+
+    repository.save_display_settings(settings)
+
+    assert repository.get_display_settings() == settings
 
 
 def _build_watch_item() -> WatchItem:
