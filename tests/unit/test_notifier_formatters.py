@@ -20,7 +20,7 @@ from app.notifiers.formatters import build_notification_message
 
 
 def test_build_notification_message_formats_price_drop_content() -> None:
-    """驗證降價通知訊息會包含飯店、房型、價格與 dedupe key。"""
+    """驗證降價通知訊息只保留飯店、房型、價格與 dedupe key。"""
     message = build_notification_message(
         watch_item=_watch_item(),
         check_result=CheckResult(
@@ -41,6 +41,7 @@ def test_build_notification_message_formats_price_drop_content() -> None:
 
     assert message.title == "價格下降：Ocean Hotel"
     assert "房型：Standard Twin" in message.body
+    assert "方案：" not in message.body
     assert "價格：JPY 22000" in message.body
     assert message.tags == ("price-drop",)
     assert message.dedupe_key == "watch-1:price_drop:available:22000"

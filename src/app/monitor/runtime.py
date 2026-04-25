@@ -117,6 +117,7 @@ class ChromeDrivenMonitorRuntime:
         self._startup_restore_tabs = startup_restore_tabs
         self._restore_delay_seconds = restore_delay_seconds
         self._loop_task: asyncio.Task[None] | None = None
+        self._startup_restore_task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
         self._inflight_tasks: dict[str, asyncio.Task[None]] = {}
         self._assignment_tasks: set[asyncio.Task[None]] = set()
@@ -133,12 +134,20 @@ class ChromeDrivenMonitorRuntime:
         self._stop_event.clear()
         active_watch_items = await self._sync_watch_definitions(now=_utcnow())
         if self._startup_restore_tabs:
-            await self._restore_active_watch_tabs(active_watch_items)
+            self._startup_restore_task = asyncio.create_task(
+                self._restore_active_watch_tabs(active_watch_items)
+            )
         self._loop_task = asyncio.create_task(self._run_loop())
 
     async def stop(self) -> None:
         """停止 background monitor loop，並等待所有進行中的工作結束。"""
         self._stop_event.set()
+        if self._startup_restore_task is not None:
+            self._startup_restore_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._startup_restore_task
+        self._startup_restore_task = None
+
         if self._loop_task is not None:
             self._loop_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -523,14 +532,14 @@ class ChromeDrivenMonitorRuntime:
         for watch_item in active_watch_items.values():
             if self._stop_event.is_set():
                 break
-            draft = await asyncio.to_thread(
-                self._watch_item_repository.get_draft,
-                watch_item.id,
-            )
-            adapter = self._site_registry.for_url(
-                draft.seed_url if draft else watch_item.canonical_url
-            )
             try:
+                draft = await asyncio.to_thread(
+                    self._watch_item_repository.get_draft,
+                    watch_item.id,
+                )
+                adapter = self._site_registry.for_url(
+                    draft.seed_url if draft else watch_item.canonical_url
+                )
                 summary = await asyncio.to_thread(
                     self._chrome_fetcher.ensure_tab_for_url,
                     expected_url=watch_item.canonical_url,

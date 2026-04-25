@@ -350,6 +350,45 @@ class _FailingRestoreChromeFetcher(_FakeChromeFetcher):
         )
 
 
+class _BlockingRestoreChromeFetcher(_FakeChromeFetcher):
+    """模擬啟動恢復分頁時站台載入很慢的 Chrome fetcher。"""
+
+    def __init__(self) -> None:
+        """建立可由測試控制釋放時機的阻塞 fetcher。"""
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def ensure_tab_for_url(
+        self,
+        *,
+        expected_url: str,
+        fallback_url: str | None = None,
+        preferred_tab_id: str | None = None,
+        excluded_tab_ids: tuple[str, ...] = (),
+        page_strategy=None,
+    ) -> ChromeTabSummary:
+        """等測試釋放後才回傳分頁摘要，用來驗證 start 不會被卡住。"""
+        del page_strategy
+        self.ensure_calls.append(
+            (
+                expected_url,
+                fallback_url,
+                preferred_tab_id,
+                excluded_tab_ids,
+            )
+        )
+        self.started.set()
+        self.release.wait(timeout=5)
+        return ChromeTabSummary(
+            tab_id=preferred_tab_id or "restored-tab-blocking",
+            title="Dormy Inn",
+            url=fallback_url or expected_url,
+            visibility_state="visible",
+            has_focus=True,
+        )
+
+
 class _RecordingNotifier:
     """記錄 dispatcher 實際送出的通知訊息。"""
 
@@ -398,6 +437,13 @@ class _PausingNotifier(_RecordingNotifier):
         self._watch_repository.save(
             replace(watch_item, enabled=True, paused_reason="manually_paused")
         )
+
+
+async def _wait_for_startup_restore(runtime: ChromeDrivenMonitorRuntime) -> None:
+    """等待 runtime 背景啟動恢復任務完成，供測試檢查 restore 副作用。"""
+    task = runtime._startup_restore_task
+    if task is not None:
+        await task
 
 
 class _CountingNotifierFactory:
@@ -1734,6 +1780,62 @@ def test_runtime_start_restores_only_enabled_and_unpaused_watch_tabs(tmp_path) -
 
     async def _exercise_runtime() -> None:
         await runtime.start()
+        await _wait_for_startup_restore(runtime)
+        await runtime.stop()
+
+    asyncio.run(_exercise_runtime())
+
+    assert fetcher.ensure_calls == [
+        (
+            active_watch.canonical_url,
+            active_watch.canonical_url,
+            None,
+            (),
+        )
+    ]
+
+
+def test_runtime_start_does_not_wait_for_startup_tab_restore(tmp_path) -> None:
+    """runtime 啟動時應先讓 GUI startup 完成，再背景恢復 watch 分頁。"""
+    database = SqliteDatabase(tmp_path / "watcher.db")
+    database.initialize()
+    watch_repository = SqliteWatchItemRepository(database)
+    runtime_repository = SqliteRuntimeRepository(database)
+    settings_repository = SqliteAppSettingsRepository(database)
+    app_settings_service = AppSettingsService(settings_repository)
+
+    active_watch = _build_runtime_watch_item("watch-runtime-restore-nonblocking")
+    watch_repository.save(active_watch)
+    watch_repository.save_draft(
+        active_watch.id,
+        _build_runtime_draft(active_watch.canonical_url),
+    )
+
+    fetcher = _BlockingRestoreChromeFetcher()
+    site_registry = SiteRegistry()
+    site_registry.register(_FakeRuntimeAdapter())
+    runtime = ChromeDrivenMonitorRuntime(
+        watch_item_repository=watch_repository,
+        runtime_repository=runtime_repository,
+        site_registry=site_registry,
+        chrome_fetcher=fetcher,
+        app_settings_service=app_settings_service,
+        tick_seconds=60,
+        restore_delay_seconds=0,
+    )
+
+    import asyncio
+
+    async def _exercise_runtime() -> None:
+        await asyncio.wait_for(runtime.start(), timeout=0.5)
+        status = runtime.get_status()
+        assert status.is_running is True
+        assert runtime._startup_restore_task is not None
+        assert runtime._startup_restore_task.done() is False
+
+        await asyncio.to_thread(fetcher.started.wait, 1)
+        fetcher.release.set()
+        await _wait_for_startup_restore(runtime)
         await runtime.stop()
 
     asyncio.run(_exercise_runtime())
@@ -1800,6 +1902,7 @@ def test_runtime_start_continues_when_single_tab_restore_fails(tmp_path) -> None
 
     async def _exercise_runtime() -> None:
         await runtime.start()
+        await _wait_for_startup_restore(runtime)
         status = runtime.get_status()
         assert status.is_running is True
         await runtime.stop()
@@ -1862,6 +1965,7 @@ def test_runtime_start_excludes_already_restored_tabs_from_later_watches(tmp_pat
 
     async def _exercise_runtime() -> None:
         await runtime.start()
+        await _wait_for_startup_restore(runtime)
         await runtime.stop()
 
     asyncio.run(_exercise_runtime())

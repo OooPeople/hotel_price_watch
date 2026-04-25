@@ -111,6 +111,7 @@ def test_parse_candidate_bundle_falls_back_to_hotel_json_ld() -> None:
     assert bundle.candidates[0].room_id == "10191605"
     assert bundle.candidates[0].plan_id == "11035620"
     assert bundle.candidates[0].room_name == "禁菸 標準雙人房"
+    assert bundle.candidates[0].plan_name == "禁菸 標準雙人房"
     assert bundle.candidates[0].display_price_text == "JPY 22990"
     assert bundle.candidates[0].normalized_price_amount == Decimal("22990")
     assert bundle.candidates[0].currency == "JPY"

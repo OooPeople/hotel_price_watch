@@ -22,6 +22,7 @@ from app.domain.entities import (
 from app.monitor.runtime import MonitorRuntimeStatus
 from app.web import request_helpers
 from app.web.views import (
+    render_dashboard_summary_fragment,
     render_runtime_status_fragment,
     render_watch_detail_page,
     render_watch_detail_sections,
@@ -112,7 +113,7 @@ def build_watch_router(container: AppContainer) -> APIRouter:
             watch_item_id,
         )
         return RedirectResponse(
-            url="/?message=已刪除%20watch%20item",
+            url="/?message=已刪除%20監視",
             status_code=303,
         )
 
@@ -125,7 +126,7 @@ def build_watch_router(container: AppContainer) -> APIRouter:
             watch_item_id,
         )
         return RedirectResponse(
-            url=f"/watches/{watch_item.id}?message=已啟用%20watch",
+            url=f"/watches/{watch_item.id}?message=已啟用%20監視",
             status_code=303,
         )
 
@@ -138,7 +139,7 @@ def build_watch_router(container: AppContainer) -> APIRouter:
             watch_item_id,
         )
         return RedirectResponse(
-            url=f"/watches/{watch_item.id}?message=已停用%20watch",
+            url=f"/watches/{watch_item.id}?message=已停用%20監視",
             status_code=303,
         )
 
@@ -151,7 +152,7 @@ def build_watch_router(container: AppContainer) -> APIRouter:
             watch_item_id,
         )
         return RedirectResponse(
-            url=f"/watches/{watch_item.id}?message=已暫停%20watch",
+            url=f"/watches/{watch_item.id}?message=已暫停%20監視",
             status_code=303,
         )
 
@@ -164,7 +165,7 @@ def build_watch_router(container: AppContainer) -> APIRouter:
             watch_item_id,
         )
         return RedirectResponse(
-            url=f"/watches/{watch_item.id}?message=已恢復%20watch",
+            url=f"/watches/{watch_item.id}?message=已恢復%20監視",
             status_code=303,
         )
 
@@ -221,6 +222,12 @@ def _build_watch_list_fragments(container: AppContainer) -> dict[str, str]:
     """建立首頁局部更新所需的 runtime 與 watch 列表 HTML 片段。"""
     context = _build_watch_list_context(container)
     return {
+        "summary_html": render_dashboard_summary_fragment(
+            context.watch_items,
+            latest_snapshots_by_watch_id=context.latest_snapshots_by_watch_id,
+            runtime_status=context.runtime_status,
+            use_24_hour_time=context.display_settings.use_24_hour_time,
+        ),
         "runtime_html": render_runtime_status_fragment(
             context.runtime_status,
             use_24_hour_time=context.display_settings.use_24_hour_time,
@@ -228,6 +235,7 @@ def _build_watch_list_fragments(container: AppContainer) -> dict[str, str]:
         "table_body_html": render_watch_list_rows_fragment(
             context.watch_items,
             latest_snapshots_by_watch_id=context.latest_snapshots_by_watch_id,
+            use_24_hour_time=context.display_settings.use_24_hour_time,
         ),
     }
 

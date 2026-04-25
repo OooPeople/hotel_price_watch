@@ -21,12 +21,12 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         """在 app 啟停時接上目前已實作的 background monitor runtime。"""
-        if container.monitor_runtime is not None:
+        if _should_auto_start_monitor_runtime(container):
             await container.monitor_runtime.start()
         try:
             yield
         finally:
-            if container.monitor_runtime is not None:
+            if _should_auto_start_monitor_runtime(container):
                 await container.monitor_runtime.stop()
 
     app = FastAPI(title="hotel_price_watch", version="0.1.0", lifespan=lifespan)
@@ -42,16 +42,26 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         overall_status = (
             "ok"
             if runtime_status is None
+            or not container.monitor_runtime_auto_start_enabled
             or (runtime_status.is_running and runtime_status.chrome_debuggable)
             else "degraded"
         )
         return {
             "status": overall_status,
             "instance_id": container.instance_id,
+            "runtime_auto_start_enabled": container.monitor_runtime_auto_start_enabled,
             "runtime": _serialize_runtime_status(runtime_status),
         }
 
     return app
+
+
+def _should_auto_start_monitor_runtime(container: AppContainer) -> bool:
+    """判斷 app lifespan 是否應自動啟動 background monitor runtime。"""
+    return (
+        container.monitor_runtime is not None
+        and container.monitor_runtime_auto_start_enabled
+    )
 
 
 def _get_runtime_status(container: AppContainer) -> MonitorRuntimeStatus | None:

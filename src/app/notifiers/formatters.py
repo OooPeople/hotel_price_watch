@@ -52,11 +52,10 @@ def _build_body(
     check_result: CheckResult,
     event_kinds: tuple[NotificationEventKind, ...],
 ) -> str:
-    """組合通知本文，帶出方案與價格狀態。"""
+    """組合通知本文，只保留使用者真正需要的房型與價格狀態。"""
     snapshot = check_result.current_snapshot
     lines = [
         f"房型：{watch_item.room_name}",
-        f"方案：{watch_item.plan_name}",
         f"事件：{'、'.join(_event_title(event_kind) for event_kind in event_kinds) or '檢查完成'}",
     ]
 

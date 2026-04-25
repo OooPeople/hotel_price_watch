@@ -11,16 +11,27 @@ from app.domain.enums import NotificationLeafKind
 from app.web.ui_components import (
     card,
     form_card,
+    page_header,
     page_layout,
+    section_header,
+    status_badge,
     submit_button,
-    text_link,
     unsaved_changes_indicator,
     unsaved_changes_script,
 )
 from app.web.ui_components import (
     flash_message as render_flash_message,
 )
-from app.web.ui_styles import input_style
+from app.web.ui_styles import (
+    card_title_style,
+    color_token,
+    input_style,
+    meta_paragraph_style,
+    muted_text_style,
+    responsive_grid_style,
+    stack_style,
+    surface_card_style,
+)
 
 
 def render_notification_settings_page(
@@ -53,13 +64,13 @@ def render_notification_settings_page(
     return page_layout(
         title=f"通知設定 - {watch_item.hotel_name}",
         body=f"""
-        <section style="display:grid;gap:24px;">
-          <div>
-            {text_link(href=f"/watches/{watch_item.id}", label="← 回 watch 詳細頁")}
-            <h1>通知設定</h1>
-            <p>{escape(watch_item.hotel_name)} / {escape(watch_item.room_name)}</p>
-            <p>{escape(watch_item.plan_name)}</p>
-          </div>
+        <section style="{stack_style(gap="xl")}">
+          {page_header(
+              title="通知設定",
+              subtitle=f"{escape(watch_item.hotel_name)} / {escape(watch_item.room_name)}",
+              back_href=f"/watches/{watch_item.id}",
+              back_label="回監視詳情",
+          )}
           {error_html}
           {flash_html}
           {form_card(
@@ -148,101 +159,43 @@ def render_notification_channel_settings_page(
     error_html = render_flash_message(error_message, kind="error")
     flash_html = render_flash_message(flash_message)
     test_result_html = _render_notification_test_result_section(test_result_message)
+    settings_summary_html = _render_global_settings_summary(
+        desktop_enabled=desktop_enabled,
+        ntfy_enabled=ntfy_enabled,
+        ntfy_server_url=ntfy_server_url,
+        ntfy_topic=ntfy_topic,
+        discord_enabled=discord_enabled,
+        discord_webhook_url=discord_webhook_url,
+        use_24_hour_time=use_24_hour_time,
+    )
     return page_layout(
         title="設定",
         body=f"""
-        <section style="display:grid;gap:24px;">
-          <div>
-            {text_link(href="/", label="← 回列表")}
-            <h1>設定</h1>
-            <p>這裡集中管理全域偏好；單一 watch 頁面只負責該 watch 的通知規則。</p>
-          </div>
+        <section style="{stack_style(gap="xl")}">
+          {page_header(
+              title="設定",
+              subtitle="集中管理顯示偏好與通知通道；單一監視的通知條件仍在監視詳情頁調整。",
+              back_href="/",
+              back_label="回列表",
+          )}
           {error_html}
           {flash_html}
           {test_result_html}
+          {settings_summary_html}
           {form_card(
               action="/settings",
               form_id="global-settings-form",
               body=f'''
-            <h2 style="margin:0;">顯示設定</h2>
-            <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
-              <label style="display:flex;gap:8px;align-items:center;">
-                <input
-                  id="time-format-12h"
-                  type="checkbox"
-                  name="time_format_12h"
-                  {"checked" if not use_24_hour_time else ""}
-                >
-                12 小時制
-              </label>
-              <label style="display:flex;gap:8px;align-items:center;">
-                <input
-                  id="time-format-24h"
-                  type="checkbox"
-                  name="time_format_24h"
-                  {"checked" if use_24_hour_time else ""}
-                >
-                24 小時制
-              </label>
-            </div>
-            <hr style="width:100%;border:none;border-top:1px solid #d7e2df;">
-            <h2 style="margin:0;">通知通道</h2>
-            <label style="display:flex;gap:8px;align-items:center;">
-              <input type="checkbox" name="desktop_enabled" {"checked" if desktop_enabled else ""}>
-              啟用本機桌面通知
-            </label>
-            <label style="display:flex;gap:8px;align-items:center;">
-              <input
-                id="global-ntfy-enabled"
-                type="checkbox"
-                name="ntfy_enabled"
-                {"checked" if ntfy_enabled else ""}
-              >
-              啟用 ntfy
-            </label>
-            <div
-              id="global-ntfy-settings"
-              style="{_channel_wrapper_style(ntfy_enabled)}"
-            >
-              <label>ntfy Server URL</label>
-              <input
-                type="text"
-                name="ntfy_server_url"
-                value="{ntfy_server_url}"
-                placeholder="https://ntfy.sh"
-                style="{input_style()}"
-              >
-              <label>ntfy Topic</label>
-              <input
-                type="text"
-                name="ntfy_topic"
-                value="{ntfy_topic}"
-                placeholder="例如 hotel-watch"
-                style="{input_style()}"
-              >
-            </div>
-            <label style="display:flex;gap:8px;align-items:center;">
-              <input
-                id="global-discord-enabled"
-                type="checkbox"
-                name="discord_enabled"
-                {"checked" if discord_enabled else ""}
-              >
-              啟用 Discord webhook
-            </label>
-            <div
-              id="global-discord-settings"
-              style="{_channel_wrapper_style(discord_enabled)}"
-            >
-              <label>Discord Webhook URL</label>
-              <input
-                type="text"
-                name="discord_webhook_url"
-                value="{discord_webhook_url}"
-                placeholder="https://discord.com/api/webhooks/..."
-                style="{input_style()}"
-              >
-            </div>
+            {section_header(title="編輯設定", subtitle="展開需要修改的區塊；摘要會在儲存後更新。")}
+            {_render_display_settings_editor(use_24_hour_time=use_24_hour_time)}
+            {_render_notification_channels_editor(
+                desktop_enabled=desktop_enabled,
+                ntfy_enabled=ntfy_enabled,
+                ntfy_server_url=ntfy_server_url,
+                ntfy_topic=ntfy_topic,
+                discord_enabled=discord_enabled,
+                discord_webhook_url=discord_webhook_url,
+            )}
             <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
               {submit_button(label="儲存設定", kind="primary")}
               {unsaved_changes_indicator()}
@@ -252,7 +205,7 @@ def render_notification_channel_settings_page(
           {form_card(
               action="/settings/test-notification",
               body=f'''
-              <h2 style="margin:0;">測試通知</h2>
+              <h2 style="{card_title_style()}">測試通知</h2>
               <p style="margin:0;">
                 會使用目前已保存的通知通道設定，走正式 notifier / dispatcher 路徑送出一則測試訊息。
               </p>
@@ -288,12 +241,12 @@ def _render_notification_target_price_hint(kind: NotificationLeafKind) -> str:
     """依目前選定的通知規則顯示目標價欄位提示。"""
     if kind is NotificationLeafKind.ANY_DROP:
         return (
-            '<p style="margin:0;color:#4b635f;">'
+            f'<p style="{meta_paragraph_style()}">'
             "目前為「價格下降」，目標價欄位會被忽略。"
             "</p>"
         )
     return (
-        '<p style="margin:0;color:#4b635f;">'
+        f'<p style="{meta_paragraph_style()}">'
         "只有當價格低於此門檻時才會通知。"
         "</p>"
     )
@@ -330,6 +283,199 @@ def _extract_test_result_segment(message: str, key: str) -> str:
         if separator in suffix:
             return suffix.split(separator, 1)[0].strip()
     return suffix.strip()
+
+
+def _render_global_settings_summary(
+    *,
+    desktop_enabled: bool,
+    ntfy_enabled: bool,
+    ntfy_server_url: str,
+    ntfy_topic: str,
+    discord_enabled: bool,
+    discord_webhook_url: str,
+    use_24_hour_time: bool,
+) -> str:
+    """渲染設定頁摘要卡，避免一進頁面就看到大量輸入欄位。"""
+    return f"""
+    <section style="{stack_style(gap="lg")}">
+      {section_header(title="設定摘要", subtitle="快速確認目前顯示偏好與通知通道狀態。")}
+      <div style="{responsive_grid_style(min_width="210px", gap="14px")}">
+        {_render_settings_summary_card(
+            title="時間顯示",
+            enabled=True,
+            body="24 小時制" if use_24_hour_time else "12 小時制",
+            helper="會套用到列表、詳情與 debug 時間。",
+        )}
+        {_render_settings_summary_card(
+            title="桌面通知",
+            enabled=desktop_enabled,
+            body="目前裝置的本機通知。",
+            helper="測試通知會走正式 dispatcher。",
+        )}
+        {_render_settings_summary_card(
+            title="ntfy",
+            enabled=ntfy_enabled,
+            body=f"Topic：{ntfy_topic or '未設定'}",
+            helper=f"Server：{ntfy_server_url or '未設定'}",
+        )}
+        {_render_settings_summary_card(
+            title="Discord",
+            enabled=discord_enabled,
+            body=_mask_sensitive_value(discord_webhook_url),
+            helper="Webhook URL 摘要已遮罩。",
+        )}
+      </div>
+    </section>
+    """
+
+
+def _render_settings_summary_card(
+    *,
+    title: str,
+    enabled: bool,
+    body: str,
+    helper: str,
+) -> str:
+    """渲染單張設定摘要卡。"""
+    badge = status_badge(
+        label="已啟用" if enabled else "未啟用",
+        kind="success" if enabled else "muted",
+    )
+    return card(
+        body=f"""
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:start;">
+          <h3 style="{card_title_style()}">{escape(title)}</h3>
+          {badge}
+        </div>
+        <p style="margin:0;color:{color_token("text")};">{escape(body)}</p>
+        <p style="margin:0;{muted_text_style(font_size="13px")}">{escape(helper)}</p>
+        """,
+    )
+
+
+def _render_display_settings_editor(*, use_24_hour_time: bool) -> str:
+    """渲染顯示偏好的展開編輯區。"""
+    details_style = surface_card_style(gap="12px", padding="16px")
+    return f"""
+    <details open style="{details_style}">
+      <summary style="cursor:pointer;font-weight:700;">顯示偏好</summary>
+      <div style="{stack_style(gap="md")}margin-top:12px;">
+        <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+          <label style="display:flex;gap:8px;align-items:center;">
+            <input
+              id="time-format-12h"
+              type="checkbox"
+              name="time_format_12h"
+              {"checked" if not use_24_hour_time else ""}
+            >
+            12 小時制
+          </label>
+          <label style="display:flex;gap:8px;align-items:center;">
+            <input
+              id="time-format-24h"
+              type="checkbox"
+              name="time_format_24h"
+              {"checked" if use_24_hour_time else ""}
+            >
+            24 小時制
+          </label>
+        </div>
+      </div>
+    </details>
+    """
+
+
+def _render_notification_channels_editor(
+    *,
+    desktop_enabled: bool,
+    ntfy_enabled: bool,
+    ntfy_server_url: str,
+    ntfy_topic: str,
+    discord_enabled: bool,
+    discord_webhook_url: str,
+) -> str:
+    """渲染通知通道的展開編輯區，保留既有欄位名稱。"""
+    details_style = surface_card_style(gap="12px", padding="16px")
+    channel_section_style = surface_card_style(gap="8px", padding="14px")
+    return f"""
+    <details open style="{details_style}">
+      <summary style="cursor:pointer;font-weight:700;">通知通道</summary>
+      <div style="{stack_style(gap="lg")}margin-top:12px;">
+        <label style="display:flex;gap:8px;align-items:center;">
+          <input type="checkbox" name="desktop_enabled" {"checked" if desktop_enabled else ""}>
+          啟用本機桌面通知
+        </label>
+        <section style="{channel_section_style}">
+          <label style="display:flex;gap:8px;align-items:center;">
+            <input
+              id="global-ntfy-enabled"
+              type="checkbox"
+              name="ntfy_enabled"
+              {"checked" if ntfy_enabled else ""}
+            >
+            啟用 ntfy
+          </label>
+          <div
+            id="global-ntfy-settings"
+            style="{_channel_wrapper_style(ntfy_enabled)}"
+          >
+            <label>ntfy Server URL</label>
+            <input
+              type="text"
+              name="ntfy_server_url"
+              value="{ntfy_server_url}"
+              placeholder="https://ntfy.sh"
+              style="{input_style()}"
+            >
+            <label>ntfy Topic</label>
+            <input
+              type="text"
+              name="ntfy_topic"
+              value="{ntfy_topic}"
+              placeholder="例如 hotel-watch"
+              style="{input_style()}"
+            >
+          </div>
+        </section>
+        <section style="{channel_section_style}">
+          <label style="display:flex;gap:8px;align-items:center;">
+            <input
+              id="global-discord-enabled"
+              type="checkbox"
+              name="discord_enabled"
+              {"checked" if discord_enabled else ""}
+            >
+            啟用 Discord webhook
+          </label>
+          <p style="margin:0;{muted_text_style(font_size="13px")}">
+            摘要會遮罩 webhook；展開編輯區才顯示完整輸入值。
+          </p>
+          <div
+            id="global-discord-settings"
+            style="{_channel_wrapper_style(discord_enabled)}"
+          >
+            <label>Discord Webhook URL</label>
+            <input
+              type="text"
+              name="discord_webhook_url"
+              value="{discord_webhook_url}"
+              placeholder="https://discord.com/api/webhooks/..."
+              style="{input_style()}"
+            >
+          </div>
+        </section>
+      </div>
+    </details>
+    """
+
+
+def _mask_sensitive_value(value: str) -> str:
+    """遮罩敏感設定摘要，避免 webhook 或 token 在摘要卡裸露。"""
+    if not value:
+        return "未設定"
+    if len(value) <= 12:
+        return "已設定"
+    return f"{value[:18]}...{value[-6:]}"
 
 
 def _notification_target_price_wrapper_style(kind: NotificationLeafKind) -> str:

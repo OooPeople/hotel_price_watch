@@ -1,206 +1,211 @@
 # UI Redesign Plan
 
-本文件是後續 UI 改版的正式工程計畫。根目錄 `UI.md` 保留為產品願景與設計方向，本文件負責把願景收斂成可分階段實作、可驗證、且不破壞既有 Chrome-driven workflow 的任務。
+本文件是根目錄 `UI.md` 的工程落地計畫。`UI.md` 保留產品觀察與設計方向；本文件負責把方向收斂成可分批實作、可測試、且不破壞既有 Chrome-driven workflow 的任務。
+
+目前第一輪 UI 已完成 AppShell、共用 UI primitives、Dashboard / Watch Detail / Add Watch / Settings / Debug 的基本產品化。
+
+2026-04-26 決策更新：Dashboard 第二輪中「hybrid list row、單層四段式卡片、刪除收進更多選單、summary cards 改為今日通知 / 最近有變動」的實作已撤回。首頁先維持第一輪版本；後續若要再改 Dashboard，必須先提出設計並確認，不直接實作。
 
 ## 1. 改版目標
 
-- 將目前偏工程工具的本機 GUI，重構為面向一般使用者的價格監視產品介面。
-- 首屏優先呈現價格、狀態、異動與通知結果。
-- Debug、runtime、parser、artifact、canonical URL 等技術資訊保留，但降權到進階區塊或 Debug 頁。
-- 保留既有後端契約、routes 與資料模型，第一輪不引入前端 build system 或重型 JavaScript framework。
+- 首頁一眼可判斷哪些 watch 有變動、異常、已達目標或值得注意。
+- 桌機版首頁預設適合掃描多筆 watch；手機版維持較容易閱讀的卡片節奏。
+- 每筆 watch 顯示價格意義：目前價格、與上次差異、與目標價距離、通知或異常狀態。
+- 系統資訊保留但降權；Chrome attach、runtime tick、debug artifact 不再主導首頁。
+- 設定、runtime state、watch identity、browser attach 與通知 domain contract 不因 UI 改版被重寫。
 
-## 2. 不在第一輪處理的範圍
+## 2. 範圍邊界
 
-- 不改回 `HTTP-first`，UI 仍以附著專用 Chrome profile 為正式主線。
+- 不改回 `HTTP-first`，V1 仍以附著專用 Chrome profile 為正式主線。
 - 不恢復手動 Seed URL 建立流程。
-- 不新增尚未有 domain support 的通知條件。
-- 不在第一輪做每個通知通道的獨立測試 API；目前測試通知仍走正式 dispatcher，測所有已啟用通道。
-- 不引入大型 chart library；價格趨勢先使用輕量 HTML / SVG / CSS 呈現。
-- 不做完整漢堡選單系統；第一輪先讓桌機與窄版自然可用。
-- 不為 UI 改版修改 watch identity、runtime lifecycle 或資料庫核心契約。
+- 不新增 domain 尚未支援的通知規則或價格條件。
+- 不宣稱可自動避開站方風控；只把 Chrome-driven 限制做適度降權與清楚提示。
+- 不引入前端 build system、重型 JavaScript framework 或大型 chart library。
+- 不做自動訂房、登入、搶房、點數最佳化或 Windows Service。
+- 不為視覺效果修改 watch identity、runtime lifecycle 或資料庫核心契約。
 
 ## 3. 設計原則
 
-- 產品資訊優先：飯店、房型、日期、目前價格、價格變動、監視狀態、通知狀態。
-- 系統資訊降權：Chrome attach、runtime tick、parser diagnostics、debug captures、artifacts。
-- 文字人話化：避免 raw enum 或工程術語直接暴露在主流程。
-- 操作分級：主要 CTA 明確，危險操作收斂，不與主要操作同等醒目。
-- 元件先行：頁面改版前先補足 presentation helpers 與 UI primitives，避免 renderer 堆疊業務判斷。
+- 判讀優先：首頁先顯示系統已整理出的結果，再顯示原始欄位。
+- 掃描優先：桌機主畫面以 list row 為預設，讓多筆 watch 可快速比較。
+- 分級操作：首頁保留既有直接刪除操作；不得未確認就改為收進更多選單。
+- 技術降權：系統狀態縮小為摘要或收合區塊，Debug 頁保留完整排錯資訊。
+- 不假造能力：如果 UI 需要上一筆有效價格、今日通知數、通道級測試等資料，必須先確認後端 context 可提供。
+- Renderer 減負：價格判讀、badge 文案與排序規則集中在 presentation helper 或 view model，不散落在 HTML 字串中。
 
-## 4. UI Presentation Layer
+## 4. Dashboard 後續重構暫緩
 
-第一階段需先建立或整理 UI 專用的 presentation helpers，避免各 renderer 直接散落 domain 判斷。
+### 4.1 已撤回方向
 
-### 必要 helper
+- 不把桌機預設改成清單模式。
+- 不把現有 table 清單改成 hybrid list row。
+- 不把卡片改成單層四段式。
+- 不把刪除收進更多選單。
+- 不把 summary cards 改成「最近有變動 / 今日通知次數」作為目前主線。
 
-- 狀態文案 mapping：例如 `checked` 顯示為 `已檢查`，`not_requested` 顯示為 `本次未通知`。
-- badge kind mapping：watch 狀態、availability、通知結果、錯誤狀態要有一致顏色語意。
-- 價格顯示 helper：目前價格、無價格、幣別、價格差異。
-- 時間顯示 helper：沿用設定頁的 12 / 24 小時制偏好。
-- watch summary view model：整理 card / hero summary 所需資料，避免 template 直接查多個 runtime object。
+### 4.2 保留項目
 
-### 邊界
+可以保留第一輪已完成且未被否定的項目：
 
-- presentation helper 只能做顯示轉換與排序輔助，不應改變 domain decision。
-- 若某個 UI 需求需要新的 domain 狀態，先補 domain / application 測試，再接 UI。
+- AppShell、PageHeader、共用 UI primitives。
+- Dashboard 現有 summary cards、watch card、table list 切換。
+- Watch Detail 的 hero summary、價格摘要與 MiniPriceChart。
+- Add Watch、Settings、Debug 的第一輪產品化。
 
-## 5. Design System 第一輪
+## 5. 需要新增或集中化的判讀欄位
 
-在 `src/app/web/ui_styles.py`、`src/app/web/ui_components.py`、`src/app/web/view_formatters.py` 基礎上擴充，不建立新的正式入口取代它們。
+首頁 watch presentation helper 至少要輸出：
 
-### 需要新增或強化的元件
+- `current_price_text`：目前價格或尚未檢查。
+- `price_change_text`：較上次下降 / 上升 / 無變動 / 尚無前次價格。
+- `price_change_kind`：success / warning / muted。
+- `target_distance_text`：已低於目標價 / 距目標價差多少 / 未設定目標價。
+- `target_distance_kind`：success / info / muted。
+- `attention_label`：已降價、已漲價、新空房、最近檢查失敗、正常監視中等。
+- `attention_kind`：success / warning / danger / info / muted。
 
-- AppShell：全站頁面框架與主要導覽。
-- PageHeader：頁面標題、副標、主要 CTA。
-- SectionHeader：區塊標題與輔助文字。
-- SummaryCard：首頁與 detail 的摘要數字卡。
-- StatusBadge：統一狀態顯示。
-- WatchCard：watch 列表核心元件。
-- PriceChangeLabel：價格變化顯示。
-- KeyValueGrid / InfoRow：hero summary 與設定摘要。
-- CollapsibleSection：進階診斷與 debug 收合區。
-- FormSection：設定頁與新增 watch 的表單區塊。
-- MoreActions：第一輪可用 `<details>` / `<summary>` 實作，不做複雜 JS menu。
-- MiniPriceChart：第一輪只做輕量容器或簡單 sparkline。
+第一批可用既有 `check_events` 與 `latest_snapshot` 推導；若資料不足，顯示保守文案，不能假造價格差異或通知結論。
 
-## 6. 頁面改版順序
+## 6. Phase Plan
 
-### Phase 1：Dashboard / Watch List
+### Phase 1：Dashboard 後續重構（暫緩）
 
-目標：首頁一打開就能看懂哪些 watch 需要注意。
+目標：暫不進行首頁結構重改。若要重新設計，需要先輸出方案並取得確認。
 
 任務：
 
-- 建立 AppShell 與 PageHeader。
-- 加入 summary cards：啟用中監視、最近價格異動、最近同步、通知狀態。
-- 將 Background Monitor 狀態降權為小型系統摘要。
-- 以 WatchCard 取代傳統表格主視覺。
-- 排序規則先明確化：最近已通知或價格下降、異常、最近價格變動、其他正常項目。
-- 首頁主要 CTA 使用 `新增監視`。
+- 不實作本文件上一版的 Dashboard 第二輪方案。
+- 若只做小修，需維持既有卡片 / 清單結構與刪除直接顯示。
+- 任何刪除操作位置調整都必須先確認。
 
 驗證：
 
-- 既有 watch list fragment polling 仍正常。
-- Debug / runtime 資訊不再主導首屏。
-- `tab_id`、canonical URL、seed URL 不出現在 watch card 主資訊。
+- `/fragments/watch-list` polling 仍回傳 summary、runtime 與 watch list HTML。
+- fragment 更新後仍套用目前顯示模式。
+- 首頁不顯示 canonical URL、tab id、seed URL。
+- 價格差異只在有上一筆有效價格時顯示明確差額。
+- `ruff`、Dashboard 相關 unit tests 通過。
 
-### Phase 2：Watch Detail
+### Phase 2：Add Watch 流程感補強
 
-目標：進入 detail 後立即知道此 watch 監視什麼、目前多少錢、狀態是否正常。
+目標：新增監視頁更像引導式流程，而不是大型表單。
 
 任務：
 
-- 建立 hero summary：飯店、房型、方案、日期、人數房數、目前價格、availability、最後檢查時間。
-- 建立價格摘要卡：目前價格、價格差異、連續失敗、通知條件。
-- 保留歷史表格，但使用人話化欄位與 event 文案。
-- 加入 MiniPriceChart 容器或輕量 sparkline。
-- Debug artifacts、runtime state events、technical details 移入預設收合的進階診斷。
+- Step 1~4 改成更明確的流程步驟條。
+- 建立完成前的 Step 4 顯示飯店、日期、房型、目前價格、通知條件、檢查頻率。
+- 桌機版評估加入右側固定 summary。
+- 保留 Chrome-driven 建立流程，不恢復 seed URL 主線。
 
 驗證：
 
-- detail fragment polling 仍正常。
-- 暫停、恢復、停用、刪除、立即檢查仍使用既有 routes。
-- 技術資訊可展開查看，但不干擾主流程。
+- Chrome tab preview、candidate 選擇、已建立 watch 判斷仍正常。
+- parser diagnostics 仍在收合區可查。
 
-### Phase 3：Add Watch
+### Phase 3：Chrome 分頁選擇頁
 
-目標：讓建立 watch 像建立價格提醒，而不是填工程表單。
+目標：選分頁時先看飯店與條件，不被長 URL 干擾。
 
 任務：
 
-- 保持單頁，不改 routes。
-- 分成四個步驟區塊：選擇來源、選擇方案、設定通知、確認建立。
-- Chrome tab selection 使用產品化卡片。
-- candidate 選項改為 selectable cards。
-- `輪詢秒數` 改為 `檢查頻率`。
-- `建立 Watch Item` 改為 `開始監視價格`。
-- 診斷資訊移到預設收合的抓取詳情。
+- 分頁卡優先顯示飯店名稱、日期區間、人數 / 房數、可抓取狀態、是否已建立 watch。
+- URL 截斷並降權顯示。
+- 若已取得候選方案數，顯示候選摘要。
 
 驗證：
 
-- 已建立 watch 的分頁仍在進入 preview 前標示不可重複建立。
-- 不恢復 Seed URL input。
-- candidate parser diagnostics 仍可在展開區看到。
+- 不主動刷新或操作 ikyu 分頁。
+- 分頁 timeout 與錯誤提示仍可用。
 
-### Phase 4：Settings
+### Phase 4：Settings 第二輪
 
-目標：集中管理設定，避免設定頁變成一整頁裸露 input。
+目標：設定頁從大型表單改成摘要 + 展開編輯。
 
 任務：
 
-- 主入口名稱維持 `設定`，不要改回 `通知設定`。
-- 設定頁分區：顯示偏好、通知通道、測試通知。
-- 通知通道用摘要卡呈現，展開後才編輯。
-- Discord webhook URL 等敏感資訊在摘要中遮罩。
-- 保留既有未儲存提示與離頁前防呆。
-
-延後：
-
-- 個別通道測試需要 application/service API 支援，列為後續功能，不混入第一輪 UI 改版。
+- 桌面通知、ntfy、Discord 各自成為通知通道卡片。
+- 預設顯示狀態與摘要，展開後才顯示完整設定欄位。
+- Discord webhook 預設遮罩，編輯時才輸入完整值。
+- 若後端尚未支援通道級測試，仍保留全通道測試，不新增假按鈕。
 
 驗證：
 
-- `/settings` 是正式入口。
-- `/settings/notifications` 只保留相容 redirect / alias 語意。
-- 保存設定與測試通知仍走既有後端流程。
+- 保存設定與測試通知仍走既有流程。
+- 未儲存提示與離頁防呆仍正常。
 
-### Phase 5：Debug / Diagnostics
+### Phase 5：Debug / Diagnostics 補強
 
-目標：Debug 頁與主產品共享 design system，但定位為進階工具。
+目標：進階診斷維持技術導向，但更容易篩選。
 
 任務：
 
-- 頁首標示為進階診斷。
-- Debug captures / artifacts 保留表格，但改善欄位命名與可讀性。
-- 增加返回 Dashboard 的明確入口。
-- 與主產品頁共享 card、table、badge、button style。
+- 增加 filter / tabs：全部、success、failed、blocked、parser issues。
+- 保留 debug captures、artifacts、下載 HTML 等既有能力。
+- 與主產品共享 badge、table、button style。
 
 驗證：
 
-- Debug capture list / detail / html download 仍可用。
-- 清除 debug capture 功能不變。
+- 清除 debug capture、詳情頁、HTML 下載功能不變。
 
-## 7. 文案替換規則
+### Phase 6：Renderer 拆分
 
-第一輪可直接替換：
+目標：降低 `watch_view_partials.py` 大型 renderer 的維護成本。
 
-- `輪詢秒數` -> `檢查頻率`
-- `建立 Watch Item` -> `開始監視價格`
-- `checked` -> `已檢查`
-- `price_changed` -> `價格變動`
-- `not_requested` -> `本次未通知`
-- `capture` -> `抓取結果` 或 `擷取紀錄`
-- `debug artifact` -> `診斷檔案`
+任務：
 
-不可直接新增承諾：
+- 補 `WatchRowViewModel`、`WatchCardViewModel`、`WatchDetailHeroViewModel`。
+- 拆出 WatchListRow、WatchCard、MiniPriceChart component-level renderer。
+- 將價格判讀與 badge 規則集中到 presenter / view model。
 
-- 不顯示尚未實作的通知規則。
-- 不宣稱程式能自動避開站方風控。
-- 不把 Chrome-driven 限制完全隱藏；只做降權與清楚說明。
+驗證：
+
+- 行為不變，snapshot 相關測試與 web tests 通過。
+- HTML polling contract 不變。
+
+### Phase 7：Smoke Test / 下一階段決策
+
+目標：用真機流程驗證 UI 與 Chrome-driven workflow 是否一致。
+
+任務：
+
+- 由使用者在一般 PowerShell 啟動安全模式 dev server 與專用 Chrome。
+- 從專用 Chrome 分頁建立 watch。
+- 檢查首頁 polling、detail polling、暫停 / 恢復、手動 check、通知測試。
+- 檢查 Debug 頁是否足夠排錯。
+
+完成後再決定：
+
+- 進入 Packaging。
+- 或先做第二站 spike，驗證目前 lodging-room-plan contract 是否足夠。
+
+## 7. 文件與進度同步規則
+
+- 更新本文件時，若有任務已實作，需同步更新 `docs/TASK_BREAKDOWN.md`。
+- `docs/TASK_BREAKDOWN.md` 完成項目使用 `- o ...`，未完成項目使用一般 `- ...`。
+- `刪除` 目前維持首頁直接顯示；不可在未確認下收進更多選單。
 
 ## 8. 驗證方式
 
-每個 phase 完成後至少執行：
+每個實作批次至少執行：
 
 - `.\scripts\uv.ps1 run ruff check src tests`
 - 與該頁相關的 unit tests
-- 全量 `.\scripts\uv.ps1 run pytest`
+
+較大批次完成後執行：
+
+- `.\scripts\uv.ps1 run pytest`
 
 若新增 UI helper，需補 unit test 檢查：
 
-- 主要文案存在
-- 技術資訊降權或收合
-- 既有 route / form action 沒有改壞
-- fragment endpoint 回傳仍符合前端 polling 需求
+- 主要文案存在。
+- 技術資訊已降權或收合。
+- 既有 route / form action 沒有改壞。
+- fragment endpoint 回傳仍符合前端 polling 需求。
 
-## 9. 完成定義
+## 9. 第二輪完成定義
 
-第一輪 UI 改版完成時，應符合：
-
-- Dashboard 首屏以 watch 狀態與價格為主，不以 runtime debug 為主。
-- Watch Detail 首屏可看懂監視目標、價格、通知條件與狀態。
-- Add Watch 流程具步驟感，且不需要手動 Seed URL。
-- Settings 是集中式設定入口，通知通道與顯示偏好清楚分區。
-- Debug 可用但降權。
+- Dashboard 維持第一輪卡片 / 清單結構。
+- 首頁刪除操作維持直接顯示。
+- 不保留已撤回的 hybrid list row 與四段式卡片改版。
 - 沒有新增後端不支援的 UI 承諾。
-- `ruff` 與全量 `pytest` 通過。
+- `ruff` 與相關測試通過。

@@ -43,11 +43,13 @@ class AppContainer:
     chrome_cdp_fetcher: ChromeCdpHtmlFetcher
     preview_attempt_guard: PreviewAttemptGuard
     monitor_runtime: ChromeDrivenMonitorRuntime | None = None
+    monitor_runtime_auto_start_enabled: bool = True
 
 
 def build_app_container(db_path: str | Path | None = None) -> AppContainer:
     """建立本機 app 的依賴容器，並初始化 SQLite。"""
     instance_id = os.getenv("HOTEL_PRICE_WATCH_INSTANCE_ID", "standalone")
+    runtime_auto_start_enabled = os.getenv("HOTEL_PRICE_WATCH_RUNTIME_ENABLED", "1") != "0"
     database = SqliteDatabase(db_path or Path("data") / "hotel_price_watch.db")
     database.initialize()
 
@@ -102,6 +104,7 @@ def build_app_container(db_path: str | Path | None = None) -> AppContainer:
         chrome_cdp_fetcher=chrome_cdp_fetcher,
         preview_attempt_guard=PreviewAttemptGuard(),
         monitor_runtime=monitor_runtime,
+        monitor_runtime_auto_start_enabled=runtime_auto_start_enabled,
     )
 
 

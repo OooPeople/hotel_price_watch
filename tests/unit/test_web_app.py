@@ -1,6 +1,7 @@
 import json
+import time
 from dataclasses import replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from urllib.parse import parse_qs, urlparse
 
@@ -17,7 +18,7 @@ from app.application.debug_captures import (
 from app.application.preview_guard import PreviewAttemptGuard
 from app.application.watch_editor import WatchCreationPreview, WatchEditorService
 from app.application.watch_lifecycle import WatchLifecycleCoordinator
-from app.bootstrap.container import AppContainer
+from app.bootstrap.container import AppContainer, build_app_container
 from app.config.models import DisplaySettings, NotificationChannelSettings
 from app.domain.entities import LatestCheckSnapshot, NotificationDispatchResult, WatchItem
 from app.domain.enums import (
@@ -41,6 +42,7 @@ from app.sites.base import CandidateBundle, LookupDiagnostic, OfferCandidate, Si
 from app.sites.ikyu import IkyuAdapter
 from app.sites.registry import SiteRegistry
 from app.web.routes import debug_routes as debug_routes_module
+from app.web.routes import watch_creation_routes as watch_creation_routes_module
 from app.web.views import (
     render_chrome_tab_selection_page,
     render_debug_capture_detail_page,
@@ -140,6 +142,36 @@ def test_create_app_lifespan_starts_and_stops_monitor_runtime(tmp_path) -> None:
     assert fake_runtime.stopped == 1
 
 
+def test_create_app_can_disable_monitor_runtime_auto_start(tmp_path) -> None:
+    """安全測試模式應保留 runtime 狀態讀取，但不自動啟動背景監看。"""
+    container = _build_test_container(tmp_path)
+    fake_runtime = _FakeMonitorRuntime()
+    container.monitor_runtime = fake_runtime
+    container.monitor_runtime_auto_start_enabled = False
+
+    with TestClient(create_app(container)) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["runtime_auto_start_enabled"] is False
+    assert payload["runtime"]["is_running"] is False
+    assert payload["runtime"]["chrome_debuggable"] is True
+    assert fake_runtime.started == 0
+    assert fake_runtime.stopped == 0
+
+
+def test_build_app_container_reads_runtime_enabled_env(tmp_path, monkeypatch) -> None:
+    """容器應可透過環境變數關閉背景 runtime 自動啟動。"""
+    monkeypatch.setenv("HOTEL_PRICE_WATCH_RUNTIME_ENABLED", "0")
+
+    container = build_app_container(tmp_path / "watcher.db")
+
+    assert container.monitor_runtime is not None
+    assert container.monitor_runtime_auto_start_enabled is False
+
+
 def test_health_includes_runtime_status(tmp_path) -> None:
     """health endpoint 會回傳 background monitor runtime 的狀態摘要。"""
     container = _build_test_container(tmp_path)
@@ -170,7 +202,8 @@ def test_watch_list_fragments_endpoint_returns_runtime_and_rows(tmp_path) -> Non
 
     assert response.status_code == 200
     payload = response.json()
-    assert "Background Monitor" in payload["runtime_html"]
+    assert "啟用中的監視" in payload["summary_html"]
+    assert "系統狀態" in payload["runtime_html"]
     assert "Ocean Hotel" in payload["table_body_html"]
 
 
@@ -192,15 +225,19 @@ def test_watch_detail_fragments_endpoint_returns_partial_sections(tmp_path) -> N
 
     assert response.status_code == 200
     payload = response.json()
-    assert "最近摘要" in payload["latest_section_html"]
+    assert "latest_section_html" not in payload
+    assert "Ocean Hotel" in payload["hero_section_html"]
+    assert "目前價格" in payload["price_summary_section_html"]
+    assert "價格趨勢" in payload["price_trend_section_html"]
     assert "檢查歷史" in payload["check_events_section_html"]
-    assert "Debug Artifacts" in payload["debug_artifacts_section_html"]
+    assert "診斷檔案" in payload["debug_artifacts_section_html"]
 
 
 def test_render_watch_list_page_shows_existing_watch_items() -> None:
     """驗證 watch 列表頁會顯示既有 watch item 與 runtime 摘要。"""
     html = render_watch_list_page(
         watch_items=(_build_watch_item(),),
+        latest_snapshots_by_watch_id={"watch-list-1": _build_latest_snapshot()},
         runtime_status=MonitorRuntimeStatus(
             is_running=True,
             enabled_watch_count=1,
@@ -210,18 +247,50 @@ def test_render_watch_list_page_shows_existing_watch_items() -> None:
             last_tick_at=datetime(2026, 4, 12, 12, 0, tzinfo=timezone.utc),
             last_watch_sync_at=datetime(2026, 4, 12, 12, 0, tzinfo=timezone.utc),
         ),
-        flash_message="已建立 watch",
+        flash_message="已建立監視",
     )
 
     assert "Ocean Hotel" in html
     assert "Standard Twin" in html
-    assert "已建立 watch" in html
+    assert "JPY 22990" in html
+    assert "最後檢查" in html
+    assert "價格下降時" in html
+    assert "更多" not in html
+    assert "已建立監視" in html
     assert "刪除" in html
     assert "暫停" in html
-    assert "停用" in html
+    assert "停用" not in html
     assert "/watches/watch-list-1" in html
     assert "/settings" in html
-    assert "Background Monitor" in html
+    assert "我的價格監視" in html
+    assert "系統狀態" in html
+    assert 'id="dashboard-summary-section"' in html
+    assert 'data-watch-list-view="cards"' in html
+    assert 'data-watch-list-view="list"' in html
+    assert 'data-watch-view-mode-button="cards"' in html
+    assert "房間資訊" in html
+    assert "Standard Twin<br>2 人 / 1 房" in html
+    assert "9/18 - 9/19，1 晚" in html
+    assert "9/18 - 9/19</span><br>" in html
+    assert ">1 晚</span>" in html
+    assert "white-space:nowrap" in html
+
+
+def test_render_watch_list_page_splits_latest_check_summary_time() -> None:
+    """首頁最近檢查摘要應把日期與上午 / 下午時間拆成兩行。"""
+    html = render_watch_list_page(
+        watch_items=(_build_watch_item(),),
+        latest_snapshots_by_watch_id={"watch-list-1": _build_latest_snapshot()},
+        use_24_hour_time=False,
+    )
+
+    assert '<span style="display:block;white-space:nowrap;">2026/04/12</span>' in html
+    assert (
+        '<span style="display:block;white-space:nowrap;">上午 ' in html
+        or '<span style="display:block;white-space:nowrap;">下午 ' in html
+    )
+    assert '<span style="display:block;white-space:nowrap;">2026/04/12 上午</span>' not in html
+    assert '<span style="display:block;white-space:nowrap;">2026/04/12 下午</span>' not in html
 
 
 def test_render_new_watch_page_shows_candidate_preview() -> None:
@@ -237,18 +306,20 @@ def test_render_new_watch_page_shows_candidate_preview() -> None:
 
     assert "Ocean Hotel" in html
     assert "Room Only" in html
-    assert "建立 Watch Item" in html
+    assert "開始監視價格" in html
     assert "總價：JPY 24000" in html
     assert "每人每晚：約 JPY 12000" in html
-    assert "從同一個 Chrome 分頁重新抓取" in html
-    assert "Dormy Tab" in html
+    assert "重新抓取此分頁" in html
+    assert "Dormy Tab" not in html
     assert "tab id:" not in html
-    assert "從專用 Chrome 建立 Watch" in html
+    assert "Step 2 選擇方案" in html
     assert (
-        f'value="{NotificationLeafKind.BELOW_TARGET_PRICE.value}"'
+        f'<option value="{NotificationLeafKind.ANY_DROP.value}" selected>'
         in html
     )
-    assert "selected" in html
+    assert f'value="{NotificationLeafKind.BELOW_TARGET_PRICE.value}"' in html
+    assert "目標價欄位會被忽略" in html
+    assert "display:none" in html
 
 
 def test_render_new_watch_page_disables_create_when_target_already_exists() -> None:
@@ -264,14 +335,39 @@ def test_render_new_watch_page_disables_create_when_target_already_exists() -> N
         )
     )
 
-    assert "目前選定目標已建立 watch" in html
+    assert "目前選定目標已建立監視" in html
     assert "/watches/watch-list-1" in html
-    assert "已建立 watch" in html
+    assert "已建立監視" in html
     assert "建立 Watch Item" not in html
 
 
-def test_render_new_watch_page_shows_debug_capture_paths() -> None:
-    """候選為空時若已保存 debug capture，頁面應顯示檔案路徑。"""
+def test_post_create_watch_defaults_to_any_drop_notification_rule(tmp_path) -> None:
+    """建立監視表單缺少通知條件時，後端預設應使用價格下降。"""
+    container = _build_test_container(tmp_path)
+    client = TestClient(create_app(container))
+
+    response = client.post(
+        "/watches",
+        data={
+            "seed_url": "https://www.ikyu.com/zh-tw/00082173/?top=rooms",
+            "candidate_key": "room-1::plan-1",
+            "scheduler_interval_seconds": "600",
+        },
+        headers=_local_request_headers(),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    saved_items = container.watch_item_repository.list_all()
+    assert len(saved_items) == 1
+    assert saved_items[0].notification_rule == RuleLeaf(
+        kind=NotificationLeafKind.ANY_DROP,
+        target_price=None,
+    )
+
+
+def test_render_new_watch_page_hides_preview_debug_capture_paths() -> None:
+    """建立頁不直接顯示 preview debug capture，避免干擾使用者流程。"""
     preview = WatchCreationPreview(
         draft=SearchDraft(
             seed_url="https://www.ikyu.com/zh-tw/00082173/?top=rooms",
@@ -301,8 +397,9 @@ def test_render_new_watch_page_shows_debug_capture_paths() -> None:
         preview=preview,
     )
 
-    assert "ikyu_preview_last.html" in html
-    assert "ikyu_preview_last_meta.json" in html
+    assert "ikyu_preview_last.html" not in html
+    assert "ikyu_preview_last_meta.json" not in html
+    assert "診斷檔案" not in html
 
 
 def test_render_new_watch_page_shows_diagnostics() -> None:
@@ -324,14 +421,14 @@ def test_render_new_watch_page_shows_diagnostics() -> None:
 
 
 def test_render_new_watch_page_shows_dedicated_profile_hint() -> None:
-    """新增頁應提示一鍵啟動命令，並保留專用 Chrome 的使用脈絡。"""
+    """新增頁應維持 Chrome-driven 入口，但不再顯示冗長啟動說明。"""
     html = render_new_watch_page(
         seed_url="https://www.ikyu.com/zh-tw/00082173/?top=rooms",
     )
 
-    assert "app.tools.dev_start" in html
-    assert "專用 Chrome profile" in html
-    assert "從目前專用 Chrome 頁面抓取" in html
+    assert "app.tools.dev_start" not in html
+    assert "專用 Chrome profile" not in html
+    assert "選擇 Chrome 分頁" in html
     assert 'name="seed_url"' not in html
     assert 'name="check_in_date"' not in html
     assert 'name="people_count"' not in html
@@ -367,7 +464,7 @@ def test_render_chrome_tab_selection_page_shows_tabs_and_throttling_signal() -> 
         selected_tab_id="0",
     )
 
-    assert "從目前專用 Chrome 頁面抓取" in html
+    assert "選擇 Chrome 分頁" in html
     assert "Dormy Inn" in html
     assert "可能節流" in html
     assert "曾被丟棄" in html
@@ -416,7 +513,7 @@ def test_render_chrome_tab_selection_page_marks_existing_watch_tabs() -> None:
         existing_watch_ids_by_tab_id={"0": "watch-list-1"},
     )
 
-    assert "已建立 watch" in html
+    assert "已建立監視" in html
     assert "/watches/watch-list-1" in html
     assert "抓取此分頁" not in html
 
@@ -502,8 +599,41 @@ def test_chrome_tab_list_page_marks_existing_watch_tabs_by_target_identity(tmp_p
         response = client.get("/watches/chrome-tabs")
 
     assert response.status_code == 200
-    assert response.text.count("已建立 watch") >= 2
+    assert response.text.count("已建立監視") >= 2
     assert "抓取此分頁" not in response.text
+
+
+def test_chrome_tab_list_page_times_out_when_tab_listing_hangs(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Chrome 分頁清單卡住時，GUI 應回逾時提示而不是讓頁面一直等待。"""
+    container = _build_test_container(tmp_path)
+    container.chrome_tab_preview_service = _SlowChromeTabPreviewService()
+    monkeypatch.setattr(
+        watch_creation_routes_module,
+        "CHROME_TAB_LIST_TIMEOUT_SECONDS",
+        0.01,
+    )
+
+    with TestClient(create_app(container)) as client:
+        response = client.get("/watches/chrome-tabs")
+
+    assert response.status_code == 504
+    assert "列出專用 Chrome 分頁逾時" in response.text
+
+
+def test_chrome_tab_list_page_shows_error_when_tab_listing_fails(tmp_path) -> None:
+    """列分頁失敗時錯誤頁不應再次呼叫 list_tabs 導致 500。"""
+    container = _build_test_container(tmp_path)
+    container.chrome_tab_preview_service = _FailingChromeTabPreviewService()
+
+    with TestClient(create_app(container)) as client:
+        response = client.get("/watches/chrome-tabs")
+
+    assert response.status_code == 400
+    assert "Chrome 分頁清單失敗" in response.text
+    assert "選擇 Chrome 分頁" in response.text
 
 
 def test_render_notification_settings_page_shows_current_rule() -> None:
@@ -517,6 +647,7 @@ def test_render_notification_settings_page_shows_current_rule() -> None:
     assert "低於目標價" in html
     assert 'value="20000"' in html
     assert "已更新 通知設定" in html
+    assert "Standard Twin / Room Only" not in html
 
 
 def test_render_notification_channel_settings_page_shows_saved_values() -> None:
@@ -535,6 +666,10 @@ def test_render_notification_channel_settings_page_shows_saved_values() -> None:
 
     assert "設定" in html
     assert "hotel-watch" in html
+    assert "設定摘要" in html
+    assert "編輯設定" in html
+    assert "Webhook URL 摘要已遮罩" in html
+    assert "https://discord.ex...ebhook" in html
     assert "https://discord.example.com/webhook" in html
     assert "已更新 通知通道設定" in html
     assert "發送測試通知" in html
@@ -1006,7 +1141,26 @@ def test_render_watch_list_page_shows_debug_link() -> None:
     )
 
     assert "/debug/captures" in html
-    assert "Debug 區" in html
+    assert "進階診斷" in html
+
+
+def test_render_watch_list_page_includes_app_shell_navigation() -> None:
+    """列表頁應透過 AppShell 顯示主要導覽，避免各頁導覽分歧。"""
+    html = render_watch_list_page(
+        watch_items=(_build_watch_item(),),
+        flash_message=None,
+    )
+
+    assert 'class="app-shell"' in html
+    assert 'id="sidebar-toggle"' in html
+    assert 'class="sidebar-toggle"' in html
+    assert ">‹</button>" in html
+    assert "收合選單" not in html
+    assert "hotelPriceWatch.sidebarCollapsed" in html
+    assert "Hotel Price Watch" in html
+    assert "/watches/new" in html
+    assert "/settings" in html
+    assert "/debug/captures" in html
 
 
 def test_render_watch_list_page_includes_polling_script() -> None:
@@ -1014,17 +1168,26 @@ def test_render_watch_list_page_includes_polling_script() -> None:
     html = render_watch_list_page(watch_items=(_build_watch_item(),))
 
     assert "/fragments/watch-list" in html
+    assert "dashboard-summary-section" in html
     assert "watch-list-table-body" in html
     assert "runtime-status-section" in html
+    assert "payload.summary_html" in html
+    assert "payload.runtime_html" in html
+    assert "payload.table_body_html" in html
     assert "setInterval(refresh, 15000)" in html
 
 
 def test_render_watch_detail_page_shows_runtime_sections() -> None:
     """watch 詳細頁應顯示歷史與 debug artifact 區塊。"""
+    previous_event = replace(
+        _build_check_event(),
+        checked_at=datetime(2026, 4, 12, 9, 0, tzinfo=timezone.utc),
+        normalized_price_amount=Decimal("24000"),
+    )
     html = render_watch_detail_page(
         watch_item=_build_watch_item(),
         latest_snapshot=_build_latest_snapshot(),
-        check_events=(_build_check_event(),),
+        check_events=(previous_event, _build_check_event()),
         notification_state=_build_notification_state(),
         runtime_state_events=(),
         debug_artifacts=(
@@ -1034,19 +1197,87 @@ def test_render_watch_detail_page_shows_runtime_sections() -> None:
         flash_message="已觸發 立即檢查",
     )
 
-    assert "最近摘要" in html
+    assert "最近摘要" not in html
+    assert "監視詳情" in html
+    assert "目前價格" in html
+    assert "價格趨勢" in html
+    assert "價格趨勢圖" in html
+    assert "text-anchor=\"end\"" in html
+    assert "· JPY 24000</title>" in html
+    assert "下降 JPY 1010" in html
+    assert "Room Only" not in html
+    assert "通知條件" in html
+    assert "連續失敗次數" not in html
+    assert "目前是否 degraded" not in html
+    assert "最近通知價格" not in html
+    assert "display:block;white-space:nowrap;" in html
+    assert "進階診斷" in html
     assert "檢查歷史" in html
-    assert "Debug Artifacts" in html
-    assert "background runtime 寫入的 debug artifact" in html
-    assert "preview captures" in html
-    assert "http_403" in html
-    assert "分頁曾被瀏覽器丟棄" in html
+    assert "診斷檔案" in html
+    assert "背景監視期間保存的診斷紀錄" in html
+    assert "進階診斷查看" in html
+    assert "站方阻擋" in html
+    assert "分頁被瀏覽器暫停" in html
     assert "通知設定" in html
-    assert "最近 runtime 訊號" in html
-    assert "解析失敗 1 次" in html
-    assert "分頁曾被瀏覽器丟棄 1 次" in html
+    assert "最近 runtime 訊號" not in html
+    assert "Debug Artifacts" not in html
+    assert "background runtime" not in html
+    assert "blocked page" not in html
+    assert "tab discard" not in html
     assert "立即檢查" in html
     assert "已觸發 立即檢查" in html
+
+
+def test_render_watch_detail_page_uses_single_axis_label_for_flat_price_trend() -> None:
+    """價格都相同時，趨勢圖 Y 軸只應顯示單一價格標籤。"""
+    first_event = replace(
+        _build_check_event(),
+        checked_at=datetime(2026, 4, 12, 9, 0, tzinfo=timezone.utc),
+        normalized_price_amount=Decimal("18434"),
+    )
+    second_event = replace(
+        _build_check_event(),
+        checked_at=datetime(2026, 4, 12, 10, 0, tzinfo=timezone.utc),
+        normalized_price_amount=Decimal("18434"),
+    )
+
+    html = render_watch_detail_page(
+        watch_item=_build_watch_item(),
+        latest_snapshot=replace(
+            _build_latest_snapshot(),
+            normalized_price_amount=Decimal("18434"),
+        ),
+        check_events=(first_event, second_event),
+        notification_state=_build_notification_state(),
+        runtime_state_events=(),
+        debug_artifacts=(),
+    )
+
+    assert html.count(">JPY 18434</text>") == 1
+    assert "價格：JPY 18434" in html
+    assert "區間：JPY 18434 - JPY 18434" not in html
+
+
+def test_render_watch_detail_page_shows_check_now_during_backoff() -> None:
+    """退避中仍應顯示立即檢查，讓使用者排除狀況後可手動更新。"""
+    latest_snapshot = replace(
+        _build_latest_snapshot(),
+        backoff_until=datetime.now(timezone.utc) + timedelta(hours=1),
+        last_error_code="target_missing",
+    )
+
+    html = render_watch_detail_page(
+        watch_item=_build_watch_item(),
+        latest_snapshot=latest_snapshot,
+        check_events=(_build_check_event(),),
+        notification_state=_build_notification_state(),
+        runtime_state_events=(),
+        debug_artifacts=(),
+    )
+
+    assert "退避中" in html
+    assert "立即檢查" in html
+    assert "暫停" in html
 
 
 def test_render_watch_detail_page_includes_polling_script() -> None:
@@ -1061,10 +1292,35 @@ def test_render_watch_detail_page_includes_polling_script() -> None:
     )
 
     assert "/watches/watch-list-1/fragments" in html
-    assert "watch-detail-latest-section" in html
+    assert "watch-detail-hero-section" in html
+    assert "watch-detail-price-summary-section" in html
+    assert "watch-detail-price-trend-section" in html
     assert "watch-detail-check-events-section" in html
     assert "watch-detail-debug-artifacts-section" in html
+    assert "payload.hero_section_html" in html
+    assert "payload.price_summary_section_html" in html
+    assert "payload.price_trend_section_html" in html
+    assert "payload.check_events_section_html" in html
+    assert "payload.debug_artifacts_section_html" in html
     assert "setInterval(refresh, 10000)" in html
+
+
+def test_page_layout_includes_responsive_layout_rules() -> None:
+    """頁面框架應包含窄版 layout 與表格捲動規則，避免手機寬度溢出。"""
+    html = render_watch_detail_page(
+        watch_item=_build_watch_item(),
+        latest_snapshot=_build_latest_snapshot(),
+        check_events=(_build_check_event(),),
+        notification_state=_build_notification_state(),
+        runtime_state_events=(),
+        debug_artifacts=(_build_debug_artifact(),),
+    )
+
+    assert '@media (max-width: 640px)' in html
+    assert 'class="page-header"' in html
+    assert 'class="table-scroll"' in html
+    assert 'class="watch-detail-hero"' in html
+    assert 'class="action-row"' in html
 
 
 def test_render_debug_capture_pages_show_capture_content(tmp_path) -> None:
@@ -1079,7 +1335,7 @@ def test_render_debug_capture_pages_show_capture_content(tmp_path) -> None:
     detail_html = render_debug_capture_detail_page(capture=loaded_capture)
 
     assert capture["capture_id"] in list_html
-    assert "這裡只列出建立 watch / preview 流程保存的 capture" in list_html
+    assert "這裡只列出建立監視 / preview 流程保存的 capture" in list_html
     assert "成功解析出 1 筆候選房型方案。" in detail_html
     assert "這裡只顯示 preview capture" in detail_html
     assert "Metadata JSON" in detail_html
@@ -1385,6 +1641,31 @@ class _StaticChromeTabPreviewService:
             browser_tab_id=tab.tab_id,
             browser_tab_title=tab.title,
         )
+
+
+class _SlowChromeTabPreviewService:
+    """模擬列出 Chrome 分頁時卡住的 preview service。"""
+
+    def list_tabs(self) -> tuple[ChromeTabSummary, ...]:
+        """刻意睡眠一段時間，驗證 route timeout 會先回應。"""
+        time.sleep(0.2)
+        return ()
+
+    def preview_from_tab_id(self, tab_id: str) -> WatchCreationPreview:
+        """此測試不會進入 preview 流程。"""
+        raise AssertionError(f"unexpected preview request: {tab_id}")
+
+
+class _FailingChromeTabPreviewService:
+    """模擬 Chrome 分頁列舉直接失敗的 preview service。"""
+
+    def list_tabs(self) -> tuple[ChromeTabSummary, ...]:
+        """丟出固定錯誤，驗證錯誤頁不會再次列分頁。"""
+        raise RuntimeError("Chrome 分頁清單失敗")
+
+    def preview_from_tab_id(self, tab_id: str) -> WatchCreationPreview:
+        """此測試不會進入 preview 流程。"""
+        raise AssertionError(f"unexpected preview request: {tab_id}")
 
 
 class _PreviewTestAdapter:

@@ -24,12 +24,16 @@ from app.monitor.single_instance import (
     write_lock_record,
 )
 
+NODE_DEP0169_SUPPRESSION_OPTION = "--disable-warning=DEP0169"
+SAFE_TEST_PROFILE_START_URL = "about:blank"
+
 
 def main() -> None:
     """先做單實例檢查與 Chrome 檢查，再啟動本機 GUI。"""
     host = os.getenv("HOTEL_PRICE_WATCH_HOST", "127.0.0.1")
     port = int(os.getenv("HOTEL_PRICE_WATCH_PORT", "8000"))
     reload_enabled = os.getenv("HOTEL_PRICE_WATCH_RELOAD", "1") != "0"
+    runtime_enabled = _is_runtime_auto_start_enabled()
     lock_path = Path(
         os.getenv("HOTEL_PRICE_WATCH_LOCK_PATH", str(Path("data") / "app_instance.lock"))
     )
@@ -92,17 +96,21 @@ def main() -> None:
             instance_id=instance_id,
         ),
     )
-    os.environ["HOTEL_PRICE_WATCH_INSTANCE_ID"] = instance_id
-
-    fetcher = ChromeCdpHtmlFetcher(page_strategy=build_default_browser_page_strategy())
-    if fetcher.is_debuggable_chrome_running():
-        print("已偵測到可附著的專用 Chrome，直接啟動 GUI。")
-    else:
-        print("尚未偵測到可附著的專用 Chrome，先啟動專用 Chrome profile。")
-        fetcher.open_profile_window()
-        print("已啟動專用 Chrome profile，接著啟動 GUI。")
 
     try:
+        os.environ["HOTEL_PRICE_WATCH_INSTANCE_ID"] = instance_id
+
+        _ensure_node_dep0169_warning_suppressed()
+        fetcher = ChromeCdpHtmlFetcher(page_strategy=build_default_browser_page_strategy())
+        if fetcher.is_debuggable_chrome_running():
+            print("已偵測到可附著的專用 Chrome，直接啟動 GUI。")
+        else:
+            print("尚未偵測到可附著的專用 Chrome，先啟動專用 Chrome profile。")
+            fetcher.open_profile_window(
+                start_url=_resolve_profile_start_url(runtime_enabled=runtime_enabled)
+            )
+            print("已啟動專用 Chrome profile，接著啟動 GUI。")
+
         uvicorn.run(
             "app.main:app",
             host=host,
@@ -111,6 +119,32 @@ def main() -> None:
         )
     finally:
         remove_lock_record(lock_path)
+
+
+def _ensure_node_dep0169_warning_suppressed() -> None:
+    """在本專案啟動流程內抑制 Playwright driver 觸發的 Node DEP0169 雜訊。"""
+    if os.getenv("HOTEL_PRICE_WATCH_SUPPRESS_NODE_DEP0169", "1") == "0":
+        return
+
+    existing_options = os.environ.get("NODE_OPTIONS", "")
+    option_parts = existing_options.split()
+    if NODE_DEP0169_SUPPRESSION_OPTION in option_parts:
+        return
+
+    option_parts.append(NODE_DEP0169_SUPPRESSION_OPTION)
+    os.environ["NODE_OPTIONS"] = " ".join(option_parts)
+
+
+def _is_runtime_auto_start_enabled() -> bool:
+    """讀取 background runtime 是否應在 app startup 自動啟動。"""
+    return os.getenv("HOTEL_PRICE_WATCH_RUNTIME_ENABLED", "1") != "0"
+
+
+def _resolve_profile_start_url(*, runtime_enabled: bool) -> str | None:
+    """依啟動模式決定專用 Chrome profile 的初始頁。"""
+    if runtime_enabled:
+        return None
+    return SAFE_TEST_PROFILE_START_URL
 
 
 def _is_port_in_use(*, host: str, port: int) -> bool:

@@ -81,6 +81,18 @@ def test_parse_failed_backoff_matches_short_retry_strategy() -> None:
     assert decision.should_pause is False
 
 
+def test_target_missing_uses_longer_backoff_strategy() -> None:
+    """目標房型方案消失時應進入較長退避，避免近入住日高頻重試。"""
+    decision = decide_error_handling(
+        checked_at=datetime(2026, 4, 12, 10, 0, 0),
+        error_code=CheckErrorCode.TARGET_MISSING,
+        consecutive_failures=4,
+    )
+
+    assert decision.backoff_until == datetime(2026, 4, 12, 14, 0, 0)
+    assert decision.should_pause is False
+
+
 def test_runtime_control_recommendation_pauses_for_forbidden() -> None:
     """runtime control recommendation 應把 forbidden 決策轉成暫停 watch。"""
     watch_item = _watch_item()

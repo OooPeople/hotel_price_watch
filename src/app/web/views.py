@@ -15,6 +15,7 @@ from app.web.watch_creation_views import (
     render_new_watch_page,
 )
 from app.web.watch_views import (
+    render_dashboard_summary_fragment,
     render_runtime_status_fragment,
     render_watch_detail_page,
     render_watch_detail_sections,
@@ -29,6 +30,7 @@ __all__ = [
     "render_new_watch_page",
     "render_notification_channel_settings_page",
     "render_notification_settings_page",
+    "render_dashboard_summary_fragment",
     "render_runtime_status_fragment",
     "render_watch_detail_page",
     "render_watch_detail_sections",

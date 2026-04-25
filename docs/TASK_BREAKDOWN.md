@@ -8,7 +8,7 @@
 - o `ikyu` watch 建立、背景輪詢、歷史、debug、通知與控制操作已可實際使用
 - o lifecycle owner、control command policy、site-aware browser strategy 已完成第一輪收斂
 - o `main.py`、web routes、web renderers、`ChromeCdpHtmlFetcher` 已完成第一輪拆分
-- o 目前已通過 `ruff check src tests` 與全量 `pytest`，目前測試數為 `228 passed`
+- o 目前已通過 `ruff check src tests` 與全量 `pytest`，目前測試數為 `249 passed`
 
 ## 已完成範圍
 
@@ -54,6 +54,25 @@
 - o UI primitives 已收斂：`ui_styles.py` 管理 style token，`ui_components.py` 管理 card、table、button/link，`view_helpers.py` 保留相容匯出
 - o web renderer 內部 import 已改用正式 UI 模組，`view_helpers.py` 僅作相容層，避免後續出入口混亂
 - o 設定頁正式入口已改為 `/settings`，舊 `/settings/notifications` 保留相容
+- o UI 改版第一步已建立 presentation helper，集中價格、空房、通知、錯誤與狀態文案
+- o UI components 第一輪已補 page header、section header、summary card、status badge、key-value grid 與 collapsible section
+- o Dashboard / Watch List 第一輪已改為 summary cards、watch cards 與降權系統狀態
+- o Watch Detail 第一輪已加入 hero summary、價格摘要卡與預設收合的進階診斷
+- o Add Watch 第一輪已改為單頁步驟區塊、方案卡與預設收合的抓取詳情
+- o Settings 第一輪已加入設定摘要卡、展開編輯區與 Discord webhook 摘要遮罩
+- o Debug 第一輪已套用進階診斷定位、摘要卡與收合式 raw metadata / HTML 預覽
+- UI 下一輪需重新評估；Dashboard 第二輪清單 / 卡片重構已撤回，先維持第一輪首頁版本
+- o Visual Theme / AppShell 第一段已完成：theme token、sidebar 導覽、窄版上方導覽與 AppShell 測試
+- o renderer 內常見 hard-coded color 已收斂到 `ui_styles.py` theme token 與 meta / card helper
+- o typography hierarchy 與主要 spacing 節奏已收斂到 `ui_styles.py` helper
+- o 頁首返回入口已收斂到 `page_header(back_href=...)`，主要 CTA 統一保留在 header actions 區
+- o Watch Card 第二輪第一段已完成：最後檢查、目前價格、通知條件、錯誤摘要；刪除維持直接顯示
+- o Watch Detail 第二輪已加入輕量 MiniPriceChart / sparkline，並接上 detail fragment polling
+- o Responsive pass 第一段已完成：頁首操作、AppShell 導覽、表格與 detail hero 已補窄版規則
+- o UI 一致性修正第一批已完成：文案統一為「監視」、按鈕尺寸分級、首頁卡片資訊重排、使用者層隱藏「停用」、新增監視流程降噪
+- o UI 一致性修正第二批已完成：左側 AppShell 可收合，首頁監視項目支援卡片 / 清單切換，且 fragment polling 會保留顯示模式
+- o UI 一致性修正第三批已完成：新增監視頁首說明降噪、watch detail 最近通知時間分行、價格趨勢補輕量座標軸與 hover 點位資訊
+- Dashboard 第二輪第一批已撤回：不採用 hybrid list row、單層四段式卡片、刪除收進更多選單與產品摘要替換
 
 ## 第二站前決策
 
@@ -72,11 +91,9 @@
 
 ## 下一步
 
-1. 依 `docs/UI_REDESIGN_PLAN.md` 先建立 UI presentation layer 與 design system 第一輪元件。
-2. 重構 Dashboard / Watch List，讓首屏以 watch 狀態、價格與異動為主。
-3. 再依序重構 Watch Detail、Add Watch、Settings、Debug。
-4. UI 第一輪穩定後，再做人工 smoke test：啟動、列分頁、建立 watch、手動 check、通知測試、暫停 / 恢復。
-5. 若 smoke test 穩定，再進入 Packaging 或第二站 spike。
+1. 依新版 UI 計畫補強新增監視頁流程感：步驟條、Step 4 確認摘要與桌機版 summary。
+2. UI 穩定後做人工 smoke test：啟動、列分頁、建立監視、手動 check、通知測試、暫停 / 恢復。
+3. 若 smoke test 穩定，再進入 Packaging 或第二站 spike。
 
 ## 目前主要風險
 

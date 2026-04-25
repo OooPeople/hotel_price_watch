@@ -25,7 +25,7 @@
 最新驗證狀態：
 
 - `ruff check src tests` 通過
-- `pytest` 通過，`228 passed`
+- `pytest` 通過，`233 passed`
 
 ## 2. 正式主線
 
@@ -84,11 +84,14 @@ V1 正式主線是 Chrome-driven：
 - `src/app/web/routes/`：本機 GUI routes
 - `src/app/web/*_views.py`：本機 GUI renderers
 - `src/app/web/ui_styles.py`：GUI style token 與語意化 style helper
-- `src/app/web/ui_components.py`：GUI 共用 layout、button、card、empty state、table 等 UI primitives
+- `src/app/web/ui_components.py`：GUI 共用 layout、button、card、empty state、table 等 UI primitives；含可收合 AppShell 與窄版 responsive 規則
+- `src/app/web/ui_presenters.py`：GUI presentation helper，集中價格、狀態、通知、錯誤與 badge 文案
 - `src/app/web/view_formatters.py`：GUI 共用顯示格式化 helper
 - `src/app/web/view_helpers.py`：舊 renderer import 的相容匯出入口
-- `src/app/web/watch_view_partials.py`：watch list / detail 可替換區塊 partial
+- `src/app/web/watch_view_partials.py`：watch list / detail 可替換區塊 partial；watch card 已顯示最後檢查、目前價格、通知條件與更多操作；首頁支援卡片 / 清單切換；detail 已有輕量價格趨勢圖
 - `src/app/web/watch_creation_partials.py`：新增 watch / Chrome tab selection 可替換區塊 partial
+- `src/app/web/debug_views.py`：進階診斷 / preview capture renderer，raw metadata 與 HTML 預覽預設收合
+- `src/app/tools/dev_start.py`：單一啟動入口；會在本專案流程內加入 `NODE_OPTIONS=--disable-warning=DEP0169`，抑制 Playwright driver 在 Node 24 觸發的 `url.parse()` deprecation warning
 - `src/app/sites/ikyu/`：`ikyu` adapter、parser、normalizer、browser strategy
 
 ## 5. 第二站前注意事項
@@ -121,11 +124,10 @@ V1 正式主線是 Chrome-driven：
 
 ## 7. 建議下一步
 
-1. 依 `docs/UI_REDESIGN_PLAN.md` 先建立 UI presentation layer 與 design system 第一輪元件。
-2. 重構 Dashboard / Watch List，讓首屏以 watch 狀態、價格與異動為主。
-3. 再依序重構 Watch Detail、Add Watch、Settings、Debug。
-4. UI 第一輪穩定後，做人工 smoke test：啟動、列分頁、建立 watch、手動 check、通知測試、暫停 / 恢復。
-5. 若 smoke test 穩定，進入 Packaging；若要先做第二站，只做 spike，先驗證 target / candidate contract 是否足夠。
+1. 若首頁要顯示價格差異，先補 watch list context 的上一筆有效價格或價格歷史資料，避免 UI 假造不存在的 domain 資訊。
+2. 再做人工 UI smoke test，確認 Dashboard、Detail、Add Watch、Settings、Debug 在實際瀏覽器寬窄版下都符合預期。
+3. UI 穩定後做人工 smoke test：啟動、列分頁、建立監視、手動 check、通知測試、暫停 / 恢復。
+4. 若 smoke test 穩定，進入 Packaging；若要先做第二站，只做 spike，先驗證 target / candidate contract 是否足夠。
 
 ## 8. 仍需觀察
 

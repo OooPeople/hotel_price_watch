@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 
 from app.tools import dev_start
@@ -14,6 +15,7 @@ class _FakeFetcher:
         """建立測試用 fetcher，並記錄是否已有可附著 Chrome。"""
         self.running = running
         self.opened = False
+        self.open_start_url: str | None = None
 
     def is_debuggable_chrome_running(self) -> bool:
         """回傳目前是否已有可附著 Chrome。"""
@@ -22,6 +24,16 @@ class _FakeFetcher:
     def open_profile_window(self, start_url: str | None = None) -> None:
         """記錄是否有嘗試喚醒專用 Chrome。"""
         self.opened = True
+        self.open_start_url = start_url
+
+
+class _FailingOpenFetcher(_FakeFetcher):
+    """模擬專用 Chrome profile 啟動失敗的 fetcher。"""
+
+    def open_profile_window(self, start_url: str | None = None) -> None:
+        """記錄啟動嘗試後丟出錯誤，驗證 lock 會被清理。"""
+        super().open_profile_window(start_url=start_url)
+        raise ValueError("chrome launch failed")
 
 
 def test_dev_start_uses_existing_debuggable_chrome(monkeypatch) -> None:
@@ -82,6 +94,7 @@ def test_dev_start_opens_profile_when_debuggable_chrome_missing(monkeypatch) -> 
     dev_start.main()
 
     assert fetcher.opened is True
+    assert fetcher.open_start_url is None
     assert uvicorn_calls == [
         {
             "args": ("app.main:app",),
@@ -92,6 +105,99 @@ def test_dev_start_opens_profile_when_debuggable_chrome_missing(monkeypatch) -> 
             },
         }
     ]
+
+
+def test_dev_start_opens_blank_profile_when_runtime_auto_start_disabled(
+    monkeypatch,
+) -> None:
+    """安全測試模式啟動專用 Chrome 時不應預設開啟站台頁面。"""
+    fetcher = _FakeFetcher(running=False)
+    uvicorn_calls: list[dict[str, object]] = []
+    monkeypatch.setenv("HOTEL_PRICE_WATCH_RUNTIME_ENABLED", "0")
+    monkeypatch.setattr(dev_start, "ChromeCdpHtmlFetcher", lambda **kwargs: fetcher)
+    monkeypatch.setattr(dev_start, "read_lock_record", lambda path: None)
+    monkeypatch.setattr(dev_start, "_is_port_in_use", lambda **kwargs: False)
+    monkeypatch.setattr(dev_start, "write_lock_record", lambda path, record: None)
+    monkeypatch.setattr(dev_start, "remove_lock_record", lambda path: None)
+    monkeypatch.setattr(
+        dev_start.uvicorn,
+        "run",
+        lambda *args, **kwargs: uvicorn_calls.append(
+            {
+                "args": args,
+                "kwargs": kwargs,
+            }
+        ),
+    )
+
+    dev_start.main()
+
+    assert fetcher.opened is True
+    assert fetcher.open_start_url == "about:blank"
+    assert len(uvicorn_calls) == 1
+
+
+def test_dev_start_cleans_lock_when_profile_launch_fails(monkeypatch) -> None:
+    """專用 Chrome 啟動失敗時也應清理本次寫入的 app lock。"""
+    fetcher = _FailingOpenFetcher(running=False)
+    removed_paths: list[object] = []
+    written_records: list[object] = []
+    uvicorn_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(dev_start, "ChromeCdpHtmlFetcher", lambda **kwargs: fetcher)
+    monkeypatch.setattr(dev_start, "read_lock_record", lambda path: None)
+    monkeypatch.setattr(dev_start, "_is_port_in_use", lambda **kwargs: False)
+    monkeypatch.setattr(
+        dev_start,
+        "write_lock_record",
+        lambda path, record: written_records.append((path, record)),
+    )
+    monkeypatch.setattr(
+        dev_start,
+        "remove_lock_record",
+        lambda path: removed_paths.append(path),
+    )
+    monkeypatch.setattr(
+        dev_start.uvicorn,
+        "run",
+        lambda *args, **kwargs: uvicorn_calls.append(
+            {
+                "args": args,
+                "kwargs": kwargs,
+            }
+        ),
+    )
+
+    try:
+        dev_start.main()
+    except ValueError as exc:
+        assert "chrome launch failed" in str(exc)
+    else:
+        raise AssertionError("expected Chrome launch failure to raise")
+
+    assert fetcher.opened is True
+    assert len(written_records) == 1
+    assert len(removed_paths) == 1
+    assert uvicorn_calls == []
+
+
+def test_dev_start_suppresses_node_dep0169_warning_for_playwright(monkeypatch) -> None:
+    """單一啟動入口應只抑制 DEP0169，避免 Playwright driver warning 干擾終端機。"""
+    monkeypatch.delenv("NODE_OPTIONS", raising=False)
+
+    dev_start._ensure_node_dep0169_warning_suppressed()
+
+    assert dev_start.NODE_DEP0169_SUPPRESSION_OPTION in os.environ["NODE_OPTIONS"]
+
+
+def test_dev_start_preserves_existing_node_options(monkeypatch) -> None:
+    """加入 DEP0169 抑制時應保留使用者既有 NODE_OPTIONS。"""
+    monkeypatch.setenv("NODE_OPTIONS", "--max-old-space-size=4096")
+
+    dev_start._ensure_node_dep0169_warning_suppressed()
+
+    assert os.environ["NODE_OPTIONS"] == (
+        f"--max-old-space-size=4096 {dev_start.NODE_DEP0169_SUPPRESSION_OPTION}"
+    )
 
 
 def test_dev_start_reuses_existing_instance_when_port_and_lock_exist(monkeypatch) -> None:

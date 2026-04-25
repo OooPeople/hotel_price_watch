@@ -170,6 +170,12 @@ def decide_error_handling(
             backoff_until=checked_at + timedelta(minutes=minutes),
         )
 
+    if error_code is CheckErrorCode.TARGET_MISSING:
+        minutes = min(30 * (2 ** max(consecutive_failures - 1, 0)), 240)
+        return ErrorHandlingDecision(
+            backoff_until=checked_at + timedelta(minutes=minutes),
+        )
+
     return ErrorHandlingDecision()
 
 

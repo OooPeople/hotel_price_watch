@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
@@ -18,6 +20,8 @@ from app.web.views import (
     render_chrome_tab_selection_page,
     render_new_watch_page,
 )
+
+CHROME_TAB_LIST_TIMEOUT_SECONDS = 8.0
 
 
 def build_watch_creation_router(container: AppContainer) -> APIRouter:
@@ -39,8 +43,19 @@ def build_watch_creation_router(container: AppContainer) -> APIRouter:
     async def chrome_tab_list_page() -> HTMLResponse:
         """顯示目前可用的專用 Chrome `ikyu` 分頁清單。"""
         try:
-            tabs = await run_in_threadpool(
-                container.chrome_tab_preview_service.list_tabs,
+            tabs = await asyncio.wait_for(
+                run_in_threadpool(
+                    container.chrome_tab_preview_service.list_tabs,
+                ),
+                timeout=CHROME_TAB_LIST_TIMEOUT_SECONDS,
+            )
+        except TimeoutError as exc:
+            return _chrome_tab_selection_response(
+                container=container,
+                tabs=(),
+                error_message="列出專用 Chrome 分頁逾時，請確認 Chrome 仍可附著後再重試。",
+                diagnostics=getattr(exc, "diagnostics", ()),
+                status_code=504,
             )
         except Exception as exc:
             return _chrome_tab_selection_response(
@@ -202,7 +217,7 @@ def build_watch_creation_router(container: AppContainer) -> APIRouter:
                 notification_rule_kind=NotificationLeafKind(
                     form.get(
                         "notification_rule_kind",
-                        NotificationLeafKind.BELOW_TARGET_PRICE.value,
+                        NotificationLeafKind.ANY_DROP.value,
                     )
                 ),
                 target_price=target_price,
@@ -222,7 +237,7 @@ def build_watch_creation_router(container: AppContainer) -> APIRouter:
             )
 
         return RedirectResponse(
-            url=f"/?message=已建立%20{watch_item.hotel_name}%20的監看項",
+            url=f"/?message=已建立%20{watch_item.hotel_name}%20的監視",
             status_code=303,
         )
 
@@ -280,7 +295,8 @@ def _existing_watch_ids_by_tab_id(
     chrome_tabs: tuple[ChromeTabSummary, ...] | None = None,
 ) -> dict[str, str]:
     """依既有 watch target 與已保存頁面資訊，標記哪些分頁已對應 watch。"""
-    chrome_tabs = chrome_tabs or container.chrome_tab_preview_service.list_tabs()
+    if chrome_tabs is None:
+        chrome_tabs = container.chrome_tab_preview_service.list_tabs()
     watch_items = tuple(container.watch_item_repository.list_all())
     drafts_by_watch_id = {
         watch_item.id: container.watch_item_repository.get_draft(watch_item.id)

@@ -11,7 +11,7 @@ from app.domain.entities import (
     RuntimeStateEvent,
     WatchItem,
 )
-from app.domain.enums import CheckErrorCode, RuntimeStateEventKind
+from app.domain.enums import CheckErrorCode, RuntimeStateEventKind, WatchRuntimeState
 from app.domain.watch_runtime_state import derive_watch_runtime_state
 
 
@@ -79,7 +79,7 @@ def decide_watch_lifecycle(
 ) -> WatchLifecycleDecision:
     """依目前 watch 狀態與 command 產生唯一 lifecycle transition 決策。"""
     if command is WatchLifecycleCommand.CHECK_NOW:
-        return _decide_check_now(context=context)
+        return _decide_check_now(context=context, occurred_at=occurred_at)
 
     if command is WatchLifecycleCommand.MANUAL_ENABLE:
         return _build_transition_decision(
@@ -269,13 +269,21 @@ def build_runtime_lifecycle_events(
 def _decide_check_now(
     *,
     context: WatchLifecycleContext,
+    occurred_at: datetime,
 ) -> WatchLifecycleDecision:
     """判斷目前 watch 是否允許立即檢查。"""
     current_state = derive_watch_runtime_state(
         watch_item=context.watch_item,
         latest_snapshot=context.latest_snapshot,
+        now=occurred_at,
     )
-    if not context.watch_item.enabled or context.watch_item.paused_reason is not None:
+    if current_state in {
+        WatchRuntimeState.MANUALLY_DISABLED,
+        WatchRuntimeState.MANUALLY_PAUSED,
+        WatchRuntimeState.PAUSED_BLOCKED,
+        WatchRuntimeState.PAUSED_BLOCKED_403,
+        WatchRuntimeState.PAUSED_OTHER,
+    }:
         return WatchLifecycleDecision(
             command=WatchLifecycleCommand.CHECK_NOW,
             allowed=False,

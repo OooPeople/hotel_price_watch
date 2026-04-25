@@ -62,6 +62,26 @@ def test_check_now_rejects_paused_watch() -> None:
     assert "manually_paused" in decision.rejection_reason
 
 
+def test_check_now_allows_backoff_active_watch() -> None:
+    """check-now 應允許退避中 watch 手動重試，供狀況排除後立即更新。"""
+    occurred_at = datetime(2026, 4, 14, 10, 0, tzinfo=UTC)
+    decision = decide_watch_lifecycle(
+        context=WatchLifecycleContext(
+            watch_item=_watch_item(),
+            latest_snapshot=_latest_snapshot(
+                checked_at=occurred_at,
+                last_error_code=CheckErrorCode.TARGET_MISSING.value,
+                backoff_until=occurred_at + timedelta(hours=1),
+            ),
+        ),
+        command=WatchLifecycleCommand.CHECK_NOW,
+        occurred_at=occurred_at,
+    )
+
+    assert decision.allowed is True
+    assert decision.rejection_reason is None
+
+
 def test_runtime_blocked_pause_builds_control_transition() -> None:
     """runtime blocked pause 應產生 watch 更新、event 與 scheduler 移除建議。"""
     occurred_at = datetime(2026, 4, 14, 10, 0, tzinfo=UTC)
@@ -150,6 +170,7 @@ def _latest_snapshot(
     checked_at: datetime,
     last_error_code: str | None,
     availability: Availability = Availability.UNKNOWN,
+    backoff_until: datetime | None = None,
 ) -> LatestCheckSnapshot:
     """建立 state machine 測試用的最新檢查摘要。"""
     return LatestCheckSnapshot(
@@ -158,6 +179,7 @@ def _latest_snapshot(
         availability=availability,
         normalized_price_amount=None,
         currency=None,
+        backoff_until=backoff_until,
         last_error_code=last_error_code,
     )
 

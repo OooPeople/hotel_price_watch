@@ -57,9 +57,34 @@
 - 執行 `uv` 相關命令時，優先使用專案 wrapper：
   - 例如 `.\scripts\uv.ps1 run pytest`
   - wrapper 會把 `UV_CACHE_DIR` 指向專案內 `.uv-cache`，避免使用者全域 uv cache 權限或污染問題
+- 執行 `pytest` 時不要用 parallel tool 同時跑多組 pytest
+  - 目前測試共用 `.pytest_tmp_active`，並行 pytest 可能互相刪除或鎖住 SQLite 暫存資料庫
+  - 若需要跑 targeted tests 與全量 tests，請依序執行
 - 若某個問題已持續排查一段時間仍無法收斂，需及時停損並改用外部搜尋或官方資料確認
   - 避免長時間盲試或只在本地反覆猜測
   - 搜尋後若找到更直接的解法，應優先採用較省時且可驗證的方案
 - review agent 可作為里程碑完成後的額外審查工具，但不可自行呼叫
   - 只有在使用者明確同意後，才可建立 review agent
   - 若判斷某個里程碑適合做 review，只能先提出建議，不可直接啟動
+
+## Chrome MCP 操作規則
+
+- 操作 Chrome 前需先用 `tool_search` 載入完整 Chrome DevTools MCP 工具
+  - 不可只依初始工具列表判斷功能是否缺失
+  - 至少確認 `click`、`fill`、`evaluate_script`、`navigate_page`、`select_page`、`wait_for` 是否可用
+- 測試一般 Chrome MCP 互動能力時，優先使用 `chrome-devtools`
+  - 可用無害的 `data:` 測試頁驗證 click、fill、evaluate 是否正常
+  - 不需要連到專用 Chrome profile 或 `127.0.0.1:8000`
+- 測試本專案 GUI、專用 profile、既有 ikyu session 時，優先使用 `chrome-devtools-dedicated`
+  - 使用前先檢查 `http://127.0.0.1:9222/json/version` 是否可連線
+  - 若 `9222` 不通，表示目前沒有可附著的專用 Chrome，需請使用者用一般 PowerShell 啟動
+- 目前 Codex shell 無法可靠自行啟動專用 Chrome
+  - 從 Codex shell 啟動 `app.tools.chrome_profile` 或直接呼叫 `chrome.exe` 可能因 Windows IPC / sandbox 權限失敗
+  - 需要專用 Chrome 時，請使用者先執行安全模式：
+    - `$env:HOTEL_PRICE_WATCH_RUNTIME_ENABLED="0"`
+    - `.\scripts\uv.ps1 run python -m app.tools.dev_start`
+- 安全測試本機 GUI 時，不可主動操作 ikyu 分頁
+  - 不重新整理 ikyu
+  - 不執行 preview
+  - 不按「立即檢查」
+  - 不建立、刪除或修改監視，除非使用者明確要求

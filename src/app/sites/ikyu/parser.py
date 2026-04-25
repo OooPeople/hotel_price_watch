@@ -238,7 +238,7 @@ def _parse_candidate_bundle_from_json_ld(html: str) -> CandidateBundle:
                 room_id=room_id,
                 room_name=room_name,
                 plan_id=plan_id,
-                plan_name=_optional_string(offer_schema.get("name")) or "已選方案",
+                plan_name=_optional_string(offer_schema.get("name")) or room_name,
                 display_price_text=_build_schema_price_display_text(offer_schema),
                 normalized_price_amount=_optional_decimal(offer_schema.get("price")),
                 currency=_optional_string(offer_schema.get("priceCurrency")),
