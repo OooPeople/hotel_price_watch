@@ -228,6 +228,344 @@ def test_get_page_by_tab_id_uses_stable_page_key(monkeypatch) -> None:
     assert page.url == "https://www.ikyu.com/"
 
 
+def test_preferred_tab_id_must_match_expected_room_plan(monkeypatch) -> None:
+    """preferred tab 只是短期 hint；URL 不符合精確目標時不可沿用。"""
+    fetcher = _build_ikyu_fetcher()
+    expected_url = (
+        "https://www.ikyu.com/zh-tw/00082173/"
+        "?adc=1&cid=20260918&pln=11035620&ppc=2&rc=1&rm=10191605&si=1&st=1"
+    )
+
+    class _Page:
+        def __init__(self, url: str, stable_id: str) -> None:
+            self.url = url
+            self.stable_id = stable_id
+
+        def is_closed(self) -> bool:
+            return False
+
+    class _Context:
+        def __init__(self) -> None:
+            self.pages = [
+                _Page(
+                    "https://www.ikyu.com/zh-tw/00082173/"
+                    "?adc=1&cid=20260918&pln=99999999&ppc=2&rc=1&rm=88888888",
+                    "stale-tab",
+                ),
+            ]
+
+    monkeypatch.setattr(
+        ChromeCdpHtmlFetcher,
+        "_get_page_stable_id",
+        lambda self, page: page.stable_id,
+    )
+
+    page = fetcher._get_confident_page_by_tab_id(
+        _Context(),
+        "stale-tab",
+        expected_url=expected_url,
+    )
+
+    assert page is None
+
+
+def test_ensure_page_is_on_target_navigates_wrong_room_plan() -> None:
+    """同飯店但 room/plan 不同時，應重新導到精確目標 URL。"""
+    fetcher = _build_ikyu_fetcher()
+    expected_url = (
+        "https://www.ikyu.com/zh-tw/00082173/"
+        "?adc=1&cid=20260918&pln=11035620&ppc=2&rc=1&rm=10191605&si=1&st=1"
+    )
+
+    class _Page:
+        def __init__(self) -> None:
+            self.url = (
+                "https://www.ikyu.com/zh-tw/00082173/"
+                "?adc=1&cid=20260918&pln=99999999&ppc=2&rc=1&rm=88888888"
+            )
+            self.goto_calls: list[str] = []
+
+        def goto(self, url: str, wait_until: str, timeout: int) -> None:
+            del wait_until, timeout
+            self.goto_calls.append(url)
+            self.url = url
+
+    page = _Page()
+
+    fetcher._ensure_page_is_on_target(
+        page=page,
+        expected_url=expected_url,
+        fallback_url=expected_url,
+    )
+
+    assert page.goto_calls == [expected_url]
+
+
+def test_ensure_tab_reuses_preferred_page_when_it_needs_renavigation(monkeypatch) -> None:
+    """preferred tab 屬於同一 watch 時，即使目前 URL 不吻合也應重導而非開新分頁。"""
+    fetcher = _build_ikyu_fetcher()
+    expected_url = (
+        "https://www.ikyu.com/zh-tw/00082173/"
+        "?cid=20260918&pln=11035620&ppc=2&rc=1&rm=10191605&si=1&top=rooms"
+    )
+
+    class _Page:
+        def __init__(self) -> None:
+            self.url = "https://www.ikyu.com/"
+            self.stable_id = "owned-tab"
+            self.goto_calls: list[str] = []
+
+        def is_closed(self) -> bool:
+            return False
+
+        def goto(self, url: str, wait_until: str, timeout: int) -> None:
+            del wait_until, timeout
+            self.goto_calls.append(url)
+            self.url = url
+
+        def title(self) -> str:
+            return "IKYU"
+
+        def evaluate(self, script: str):
+            del script
+            return None
+
+    class _Context:
+        def __init__(self, page: _Page) -> None:
+            self.pages = [page]
+            self.new_page_count = 0
+
+        def new_page(self):
+            self.new_page_count += 1
+            raise AssertionError("should reuse preferred tab")
+
+    class _Browser:
+        def __init__(self, context: _Context) -> None:
+            self.contexts = [context]
+
+    page = _Page()
+    context = _Context(page)
+
+    monkeypatch.setattr(
+        ChromeCdpHtmlFetcher,
+        "_get_page_stable_id",
+        lambda self, page: page.stable_id,
+    )
+    monkeypatch.setattr(
+        ChromeCdpHtmlFetcher,
+        "_connect_playwright_browser",
+        lambda self: (_Browser(context), type("P", (), {"stop": lambda self: None})()),
+    )
+
+    summary = fetcher.ensure_tab_for_url(
+        expected_url=expected_url,
+        fallback_url=expected_url,
+        preferred_tab_id="owned-tab",
+    )
+
+    assert page.goto_calls == [expected_url]
+    assert context.new_page_count == 0
+    assert summary.tab_id == "owned-tab"
+    assert summary.url == expected_url
+
+
+def test_capture_for_url_can_capture_without_reload_after_navigation(monkeypatch) -> None:
+    """啟動恢復後擷取應只導到目標 URL，不應再額外重新整理一次。"""
+    fetcher = _build_ikyu_fetcher()
+    expected_url = (
+        "https://www.ikyu.com/zh-tw/00082173/"
+        "?cid=20260918&pln=11035620&ppc=2&rc=1&rm=10191605&si=1&top=rooms"
+    )
+
+    class _Page:
+        def __init__(self) -> None:
+            self.url = "about:blank"
+            self.stable_id = "target-tab"
+            self.goto_calls: list[str] = []
+            self.reload_count = 0
+
+        def is_closed(self) -> bool:
+            return False
+
+        def goto(self, url: str, wait_until: str, timeout: int) -> None:
+            del wait_until, timeout
+            self.goto_calls.append(url)
+            self.url = url
+
+        def reload(self, wait_until: str, timeout: int) -> None:
+            del wait_until, timeout
+            self.reload_count += 1
+
+        def title(self) -> str:
+            return "IKYU"
+
+        def evaluate(self, script: str):
+            del script
+            return None
+
+        def content(self) -> str:
+            return "<html><body>ready</body></html>"
+
+    class _Context:
+        def __init__(self, page: _Page) -> None:
+            self.pages = [page]
+
+        def new_page(self):
+            return self.pages[0]
+
+    class _Browser:
+        def __init__(self, context: _Context) -> None:
+            self.contexts = [context]
+
+    page = _Page()
+    context = _Context(page)
+
+    monkeypatch.setattr(
+        ChromeCdpHtmlFetcher,
+        "_get_page_stable_id",
+        lambda self, page: page.stable_id,
+    )
+    monkeypatch.setattr(
+        ChromeCdpHtmlFetcher,
+        "_connect_playwright_browser",
+        lambda self: (_Browser(context), type("P", (), {"stop": lambda self: None})()),
+    )
+
+    capture = fetcher.capture_for_url(
+        expected_url=expected_url,
+        fallback_url=expected_url,
+        preferred_tab_id="target-tab",
+        reload=False,
+    )
+
+    assert page.goto_calls == [expected_url]
+    assert page.reload_count == 0
+    assert capture.tab.tab_id == "target-tab"
+    assert capture.tab.url == expected_url
+
+
+def test_refresh_capture_for_url_still_reload_after_navigation(monkeypatch) -> None:
+    """正式排程檢查仍應在導到目標 URL 後刷新頁面再擷取。"""
+    fetcher = _build_ikyu_fetcher()
+    expected_url = (
+        "https://www.ikyu.com/zh-tw/00082173/"
+        "?cid=20260918&pln=11035620&ppc=2&rc=1&rm=10191605&si=1&top=rooms"
+    )
+
+    class _Page:
+        def __init__(self) -> None:
+            self.url = "about:blank"
+            self.stable_id = "target-tab"
+            self.goto_calls: list[str] = []
+            self.reload_count = 0
+
+        def is_closed(self) -> bool:
+            return False
+
+        def goto(self, url: str, wait_until: str, timeout: int) -> None:
+            del wait_until, timeout
+            self.goto_calls.append(url)
+            self.url = url
+
+        def reload(self, wait_until: str, timeout: int) -> None:
+            del wait_until, timeout
+            self.reload_count += 1
+
+        def title(self) -> str:
+            return "IKYU"
+
+        def evaluate(self, script: str):
+            del script
+            return None
+
+        def content(self) -> str:
+            return "<html><body>ready</body></html>"
+
+    class _Context:
+        def __init__(self, page: _Page) -> None:
+            self.pages = [page]
+
+        def new_page(self):
+            return self.pages[0]
+
+    class _Browser:
+        def __init__(self, context: _Context) -> None:
+            self.contexts = [context]
+
+    page = _Page()
+    context = _Context(page)
+
+    monkeypatch.setattr(
+        ChromeCdpHtmlFetcher,
+        "_get_page_stable_id",
+        lambda self, page: page.stable_id,
+    )
+    monkeypatch.setattr(
+        ChromeCdpHtmlFetcher,
+        "_connect_playwright_browser",
+        lambda self: (_Browser(context), type("P", (), {"stop": lambda self: None})()),
+    )
+
+    capture = fetcher.refresh_capture_for_url(
+        expected_url=expected_url,
+        fallback_url=expected_url,
+        preferred_tab_id="target-tab",
+    )
+
+    assert page.goto_calls == [expected_url]
+    assert page.reload_count == 1
+    assert capture.tab.tab_id == "target-tab"
+    assert capture.tab.url == expected_url
+
+
+def test_list_tabs_uses_fast_cdp_target_list(monkeypatch) -> None:
+    """列分頁摘要應優先使用 CDP HTTP targets，避免只為列表頁啟動 Playwright。"""
+    fetcher = _build_ikyu_fetcher()
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                [
+                    {
+                        "id": "target-1",
+                        "type": "page",
+                        "title": "IKYU Hotel",
+                        "url": "https://www.ikyu.com/zh-tw/00082173/",
+                    },
+                    {
+                        "id": "worker-1",
+                        "type": "service_worker",
+                        "title": "ignored",
+                        "url": "https://www.ikyu.com/sw.js",
+                    },
+                ]
+            ).encode("utf-8")
+
+    monkeypatch.setattr(
+        "app.infrastructure.browser.chrome_cdp_fetcher.urlopen",
+        lambda url, timeout: _Response(),
+    )
+    monkeypatch.setattr(
+        ChromeCdpHtmlFetcher,
+        "_connect_playwright_browser",
+        lambda self: (_ for _ in ()).throw(AssertionError("unexpected Playwright attach")),
+    )
+
+    tabs = fetcher.list_tabs()
+
+    assert len(tabs) == 1
+    assert tabs[0].tab_id == "target-1"
+    assert tabs[0].title == "IKYU Hotel"
+    assert tabs[0].url == "https://www.ikyu.com/zh-tw/00082173/"
+    assert tabs[0].visibility_state is None
+
+
 def test_capture_page_uses_injected_page_strategy() -> None:
     """抓取分頁內容時，應透過注入的 strategy 判斷阻擋頁。"""
 

@@ -25,7 +25,7 @@ from app.sites.ikyu.browser_matching import (
     is_ikyu_page_url,
 )
 from app.sites.ikyu.browser_strategy import IkyuBrowserPageStrategy
-from app.sites.ikyu.client import HtmlFetchResult, IkyuHtmlClient
+from app.sites.ikyu.client import HtmlFetchResult, IkyuHtmlClient, _build_target_page_url
 from app.sites.ikyu.normalizer import (
     is_supported_ikyu_url,
     normalize_search_draft,
@@ -68,8 +68,18 @@ class IkyuAdapter(SiteAdapter):
         return is_supported_ikyu_url(url)
 
     def is_browser_page_url(self, url: str) -> bool:
-        """判斷 Chrome 分頁 URL 是否屬於可建立 `ikyu` preview 的頁面。"""
+        """判斷 Chrome 分頁 URL 是否屬於 `ikyu` 站點範圍。"""
         return is_ikyu_page_url(url)
+
+    def is_browser_preview_url(self, url: str) -> bool:
+        """判斷 Chrome 分頁 URL 是否足以建立 `ikyu` preview。"""
+        if not is_ikyu_page_url(url):
+            return False
+        try:
+            draft = self.parse_seed_url(url)
+        except ValueError:
+            return False
+        return draft.is_ready_for_candidate_lookup()
 
     def browser_tab_matches_watch(
         self,
@@ -98,6 +108,18 @@ class IkyuAdapter(SiteAdapter):
             signature=extract_ikyu_browser_page_signature(tab_url),
             target=watch_item.target,
         )
+
+    def build_browser_operation_url(
+        self,
+        *,
+        watch_item: WatchItem,
+        draft: SearchDraft | None,
+    ) -> str:
+        """依正式 watch target 建立穩定的 IKYU room-plan runtime URL。"""
+        del draft
+        if watch_item.target.site != self.site_name:
+            return watch_item.canonical_url
+        return _build_target_page_url(watch_item.target)
 
     def parse_seed_url(self, url: str) -> SearchDraft:
         """將原始 `ikyu` URL 轉成可供 editor 使用的查詢草稿。"""

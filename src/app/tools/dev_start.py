@@ -13,8 +13,12 @@ from uuid import uuid4
 
 import uvicorn
 
-from app.bootstrap.site_wiring import build_default_browser_page_strategy
+from app.bootstrap.site_wiring import (
+    build_default_browser_page_strategy,
+    register_default_sites,
+)
 from app.infrastructure.browser.chrome_cdp_fetcher import ChromeCdpHtmlFetcher
+from app.infrastructure.db import SqliteDatabase, SqliteWatchItemRepository
 from app.monitor.single_instance import (
     SingleInstanceAction,
     create_lock_record,
@@ -26,6 +30,7 @@ from app.monitor.single_instance import (
 
 NODE_DEP0169_SUPPRESSION_OPTION = "--disable-warning=DEP0169"
 SAFE_TEST_PROFILE_START_URL = "about:blank"
+DEFAULT_DATABASE_PATH = Path("data") / "hotel_price_watch.db"
 
 
 def main() -> None:
@@ -101,13 +106,17 @@ def main() -> None:
         os.environ["HOTEL_PRICE_WATCH_INSTANCE_ID"] = instance_id
 
         _ensure_node_dep0169_warning_suppressed()
+        _print_runtime_startup_mode(runtime_enabled=runtime_enabled)
         fetcher = ChromeCdpHtmlFetcher(page_strategy=build_default_browser_page_strategy())
         if fetcher.is_debuggable_chrome_running():
             print("已偵測到可附著的專用 Chrome，直接啟動 GUI。")
         else:
             print("尚未偵測到可附著的專用 Chrome，先啟動專用 Chrome profile。")
             fetcher.open_profile_window(
-                start_url=_resolve_profile_start_url(runtime_enabled=runtime_enabled)
+                start_url=_resolve_profile_start_url(
+                    runtime_enabled=runtime_enabled,
+                    chrome_fetcher=fetcher,
+                )
             )
             print("已啟動專用 Chrome profile，接著啟動 GUI。")
 
@@ -135,16 +144,74 @@ def _ensure_node_dep0169_warning_suppressed() -> None:
     os.environ["NODE_OPTIONS"] = " ".join(option_parts)
 
 
+def _print_runtime_startup_mode(*, runtime_enabled: bool) -> None:
+    """在啟動時明確提示目前是否會自動恢復既有監視分頁。"""
+    if runtime_enabled:
+        print("背景 runtime 自動啟動：已啟用，啟動後會嘗試恢復既有監視分頁。")
+        return
+    print(
+        "安全模式：背景 runtime 自動啟動已停用，專用 Chrome 只會開啟 about:blank，"
+        "不會自動恢復既有監視分頁。"
+    )
+
+
 def _is_runtime_auto_start_enabled() -> bool:
     """讀取 background runtime 是否應在 app startup 自動啟動。"""
     return os.getenv("HOTEL_PRICE_WATCH_RUNTIME_ENABLED", "1") != "0"
 
 
-def _resolve_profile_start_url(*, runtime_enabled: bool) -> str | None:
+def _resolve_profile_start_url(
+    *,
+    runtime_enabled: bool,
+    chrome_fetcher: ChromeCdpHtmlFetcher | None = None,
+) -> str | None:
     """依啟動模式決定專用 Chrome profile 的初始頁。"""
     if runtime_enabled:
-        return None
+        if chrome_fetcher is None:
+            return None
+        return _resolve_first_active_watch_start_url(chrome_fetcher=chrome_fetcher)
     return SAFE_TEST_PROFILE_START_URL
+
+
+def _resolve_first_active_watch_start_url(
+    *,
+    chrome_fetcher: ChromeCdpHtmlFetcher,
+) -> str | None:
+    """若已有 active watch，回傳第一筆 watch 的 browser operation URL。"""
+    db_path = _resolve_database_path()
+    if not db_path.exists():
+        return None
+
+    database = SqliteDatabase(db_path)
+    database.initialize()
+    watch_repository = SqliteWatchItemRepository(database)
+    site_registry = _build_startup_site_registry(chrome_fetcher=chrome_fetcher)
+    for watch_item in watch_repository.list_all():
+        if not watch_item.enabled or watch_item.paused_reason is not None:
+            continue
+        draft = watch_repository.get_draft(watch_item.id)
+        adapter = site_registry.for_url(
+            draft.seed_url if draft is not None else watch_item.canonical_url
+        )
+        return adapter.build_browser_operation_url(
+            watch_item=watch_item,
+            draft=draft,
+        )
+    return None
+
+
+def _build_startup_site_registry(*, chrome_fetcher: ChromeCdpHtmlFetcher):
+    """建立 dev_start 判斷啟動 URL 所需的站點 registry。"""
+    from app.sites.registry import SiteRegistry
+
+    site_registry = SiteRegistry()
+    register_default_sites(site_registry, browser_fallback=chrome_fetcher)
+    return site_registry
+
+
+def _resolve_database_path() -> Path:
+    """讀取本機 GUI 與 dev_start 共用的 SQLite 路徑。"""
+    return Path(os.getenv("HOTEL_PRICE_WATCH_DB_PATH", str(DEFAULT_DATABASE_PATH)))
 
 
 def _is_port_in_use(*, host: str, port: int) -> bool:

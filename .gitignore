@@ -33,5 +33,6 @@ data/browser_profiles/
 data/browser-profile-debug/
 data/browser-profile-stealth-debug/
 data/app_instance.lock
+docs/ui_reference
 UI.md
 review*

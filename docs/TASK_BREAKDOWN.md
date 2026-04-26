@@ -8,7 +8,7 @@
 - o `ikyu` watch 建立、背景輪詢、歷史、debug、通知與控制操作已可實際使用
 - o lifecycle owner、control command policy、site-aware browser strategy 已完成第一輪收斂
 - o `main.py`、web routes、web renderers、`ChromeCdpHtmlFetcher` 已完成第一輪拆分
-- o 目前已通過 `ruff check src tests` 與全量 `pytest`，目前測試數為 `249 passed`
+- o 目前已通過 `ruff check src tests` 與全量 `pytest`，目前測試數為 `257 passed`
 
 ## 已完成範圍
 
@@ -61,8 +61,9 @@
 - o Add Watch 第一輪已改為單頁步驟區塊、方案卡與預設收合的抓取詳情
 - o Settings 第一輪已加入設定摘要卡、展開編輯區與 Discord webhook 摘要遮罩
 - o Debug 第一輪已套用進階診斷定位、摘要卡與收合式 raw metadata / HTML 預覽
-- UI 下一輪需重新評估；Dashboard 第二輪清單 / 卡片重構已撤回，先維持第一輪首頁版本
+- UI 下一輪已重新收斂：飯店圖片與完整 icon polish 延後，Dashboard 改採目前清單式與參考稿之間的折衷清單方向
 - o Visual Theme / AppShell 第一段已完成：theme token、sidebar 導覽、窄版上方導覽與 AppShell 測試
+- o UI Phase 1 第一段已完成：AppShell 對齊參考圖的 IKYU 品牌、icon 導覽、專用 Chrome 狀態摘要與使用者區，並更新 design token 的 surface / border / shadow 基底
 - o renderer 內常見 hard-coded color 已收斂到 `ui_styles.py` theme token 與 meta / card helper
 - o typography hierarchy 與主要 spacing 節奏已收斂到 `ui_styles.py` helper
 - o 頁首返回入口已收斂到 `page_header(back_href=...)`，主要 CTA 統一保留在 header actions 區
@@ -72,7 +73,14 @@
 - o UI 一致性修正第一批已完成：文案統一為「監視」、按鈕尺寸分級、首頁卡片資訊重排、使用者層隱藏「停用」、新增監視流程降噪
 - o UI 一致性修正第二批已完成：左側 AppShell 可收合，首頁監視項目支援卡片 / 清單切換，且 fragment polling 會保留顯示模式
 - o UI 一致性修正第三批已完成：新增監視頁首說明降噪、watch detail 最近通知時間分行、價格趨勢補輕量座標軸與 hover 點位資訊
-- Dashboard 第二輪第一批已撤回：不採用 hybrid list row、單層四段式卡片、刪除收進更多選單與產品摘要替換
+- Dashboard 第二輪第一批已撤回：不採用資訊過密的 hybrid list row、單層四段式卡片、刪除收進更多選單與未確認資料來源的產品摘要替換
+- o UI 參考圖已整理到 `docs/ui_reference/`，後續 UI phase 實作前後需對照圖片避免偏離目標資訊架構
+- o UI Phase 2 第一段已完成：新增監視入口、Chrome 分頁選擇與建立確認頁已加入 3-step top wizard、來源提醒、Chrome 分頁說明、候選方案網格與建立前摘要
+- o 新增監視建立後會保存 preview 已抓到的初始價格摘要、檢查事件與價格歷史，首頁不再因剛建立就顯示「尚未檢查」
+- o Chrome 分頁建立流程已改用短期 preview cache：抓取分頁成功後，按建立不再重抓同一 IKYU 分頁，並補 timeout 避免畫面無限等待
+- o Chrome 分頁來源資格已拆成站點辨識與 preview eligibility；IKYU 首頁 / 缺日期人數條件頁不再出現在可抓取清單，但既有 watch 分頁比對仍維持寬鬆站點辨識
+- o Watch creation preview cache 已收斂為 application service 並掛入 AppContainer，route 不再使用全域 dict 保存 preview 狀態
+- o Dashboard Phase 3 第一段已完成：新增 `WatchRowPresentation` 集中首頁 row / card 判讀，清單與卡片共用價格、目標價距離、通知條件與狀態文案
 
 ## 第二站前決策
 
@@ -91,9 +99,11 @@
 
 ## 下一步
 
-1. 依新版 UI 計畫補強新增監視頁流程感：步驟條、Step 4 確認摘要與桌機版 summary。
-2. UI 穩定後做人工 smoke test：啟動、列分頁、建立監視、手動 check、通知測試、暫停 / 恢復。
-3. 若 smoke test 穩定，再進入 Packaging 或第二站 spike。
+1. 依新版 UI 計畫先做 Design Token / AppShell 對齊，讓後續頁面改版共用一致視覺基底。
+2. 請使用者啟動安全模式 GUI 後，對照 `01_add_watch_source.png`、`02_add_watch_chrome_tabs.png`、`03_add_watch_confirm.png` 做 Add Watch 視覺檢查。
+3. 以折衷清單方向重整 Dashboard：保留目前清單式可讀性，吸收參考稿的欄位分區與狀態提示。
+4. UI 穩定後做人工 smoke test：啟動、列分頁、建立監視、手動 check、通知測試、暫停 / 恢復。
+5. 若 smoke test 穩定，再進入 Packaging 或第二站 spike。
 
 ## 目前主要風險
 

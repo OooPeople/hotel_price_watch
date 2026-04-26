@@ -31,7 +31,7 @@ class ChromeTabPreviewService:
             tab
             for tab in tabs
             if any(
-                adapter.is_browser_page_url(tab.url)
+                adapter.is_browser_preview_url(tab.url)
                 for adapter in self._site_registry.adapters()
             )
         )

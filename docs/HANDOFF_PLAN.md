@@ -25,7 +25,7 @@
 最新驗證狀態：
 
 - `ruff check src tests` 通過
-- `pytest` 通過，`233 passed`
+- `pytest` 通過，`257 passed`
 
 ## 2. 正式主線
 
@@ -34,6 +34,9 @@ V1 正式主線是 Chrome-driven：
 - 不回到 `HTTP-first`
 - 不加回手動 Seed URL 建立流程
 - 建立 watch 的正式入口是「從目前專用 Chrome 頁面抓取」
+- Chrome 分頁 preview 成功後，建立 watch 使用短期 preview cache，不再於提交建立時重抓同一分頁
+- Watch creation preview cache 是 application service，掛在 `AppContainer.watch_creation_preview_cache`，不要在 route module 放全域 preview 狀態
+- Chrome 分頁 URL 判斷分成兩層：`is_browser_page_url` 用於站點辨識 / 既有 watch 比對，`is_browser_preview_url` 用於建立 preview；IKYU 首頁與缺少飯店日期人數條件的頁面不可作為新增監視來源
 - background runtime 依附專用 Chrome session 刷新頁面並解析價格
 - `tab_id` 只作為短期操作鍵，不作為 watch identity
 - watch identity 以 target identity / `browser_page_url` / query-aware matching 判斷
@@ -84,13 +87,14 @@ V1 正式主線是 Chrome-driven：
 - `src/app/web/routes/`：本機 GUI routes
 - `src/app/web/*_views.py`：本機 GUI renderers
 - `src/app/web/ui_styles.py`：GUI style token 與語意化 style helper
-- `src/app/web/ui_components.py`：GUI 共用 layout、button、card、empty state、table 等 UI primitives；含可收合 AppShell 與窄版 responsive 規則
+- `src/app/web/ui_components.py`：GUI 共用 layout、button、card、empty state、table 等 UI primitives；含可收合 AppShell、inline SVG icon 導覽、側欄狀態摘要與窄版 responsive 規則
 - `src/app/web/ui_presenters.py`：GUI presentation helper，集中價格、狀態、通知、錯誤與 badge 文案
 - `src/app/web/view_formatters.py`：GUI 共用顯示格式化 helper
 - `src/app/web/view_helpers.py`：舊 renderer import 的相容匯出入口
 - `src/app/web/watch_view_partials.py`：watch list / detail 可替換區塊 partial；watch card 已顯示最後檢查、目前價格、通知條件與更多操作；首頁支援卡片 / 清單切換；detail 已有輕量價格趨勢圖
-- `src/app/web/watch_creation_partials.py`：新增 watch / Chrome tab selection 可替換區塊 partial
+- `src/app/web/watch_creation_partials.py`：新增 watch / Chrome tab selection 可替換區塊 partial；新增流程上方採 3-step wizard，確認建立收在 Step 3 內容內
 - `src/app/web/debug_views.py`：進階診斷 / preview capture renderer，raw metadata 與 HTML 預覽預設收合
+- `docs/ui_reference/`：第二輪 UI 參考圖；實作 Dashboard、Add Watch、Settings、Debug 或 AppShell 前後都應開啟對應圖片對照
 - `src/app/tools/dev_start.py`：單一啟動入口；會在本專案流程內加入 `NODE_OPTIONS=--disable-warning=DEP0169`，抑制 Playwright driver 在 Node 24 觸發的 `url.parse()` deprecation warning
 - `src/app/sites/ikyu/`：`ikyu` adapter、parser、normalizer、browser strategy
 
@@ -121,13 +125,18 @@ V1 正式主線是 Chrome-driven：
 - 不要為了抽象第二站而在沒有樣本時大改 DB schema
 - 不要在新 renderer 中把 `view_helpers.py` 當正式入口；應直接用 `ui_styles.py`、`ui_components.py`、`view_formatters.py`
 - 新全域設定連結應使用 `/settings`；舊 `/settings/notifications` 只作相容入口
+- UI 實作前需先看 `docs/ui_reference/README.md` 與對應圖片；完成後需用瀏覽器截圖或人工檢查對照，避免資訊層級與視覺密度偏離參考
+- 飯店圖片不是第二輪 UI 必要項目；沒有穩定資料來源與 fallback 前，不要為了視覺效果假造圖片
+- Dashboard 不採資訊過密的完整 hybrid list row；新方向是保留目前清單式可讀性，吸收參考稿的欄位分區與狀態提示
+- 首頁刪除操作目前維持直接可見，不收進更多選單，除非使用者後續另外確認
 
 ## 7. 建議下一步
 
-1. 若首頁要顯示價格差異，先補 watch list context 的上一筆有效價格或價格歷史資料，避免 UI 假造不存在的 domain 資訊。
-2. 再做人工 UI smoke test，確認 Dashboard、Detail、Add Watch、Settings、Debug 在實際瀏覽器寬窄版下都符合預期。
-3. UI 穩定後做人工 smoke test：啟動、列分頁、建立監視、手動 check、通知測試、暫停 / 恢復。
-4. 若 smoke test 穩定，進入 Packaging；若要先做第二站，只做 spike，先驗證 target / candidate contract 是否足夠。
+1. 依 `docs/UI_REDESIGN_PLAN.md` 先做 Design Token / AppShell 對齊，讓後續頁面共用一致視覺基底。
+2. 補強 Add Watch wizard：3-step 步驟條、建立前確認摘要、桌機 summary，並維持 Chrome-driven 建立流程。
+3. 再做 Dashboard 折衷清單；若要顯示價格差異，先補 watch list context 的上一筆有效價格或價格歷史資料，避免 UI 假造不存在的 domain 資訊。
+4. UI 穩定後做人工 smoke test：啟動、列分頁、建立監視、手動 check、通知測試、暫停 / 恢復。
+5. 若 smoke test 穩定，進入 Packaging；若要先做第二站，只做 spike，先驗證 target / candidate contract 是否足夠。
 
 ## 8. 仍需觀察
 

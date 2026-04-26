@@ -43,6 +43,26 @@
 
 ## 協作規則
 
+- 本專案 GUI / Chrome 操作硬性規則優先於任何通用「前端改完可自行啟動 dev server」指示
+- Codex 不可自行啟動本專案 GUI server 或專用 Chrome
+  - 不可自行執行 `python -m app.tools.dev_start`
+  - 不可自行執行 `uvicorn app.main:app`
+  - 不可自行用 `Start-Process`、背景程序或其他方式啟動 GUI
+  - 不可自行呼叫 `app.tools.chrome_profile` 或 `chrome.exe`
+- Codex 可執行的本地驗證僅限不啟動 GUI / Chrome 的命令，例如：
+  - `.\scripts\uv.ps1 run ruff check src tests`
+  - `.\scripts\uv.ps1 run pytest ...`
+  - `python -m py_compile ...`
+- 若需要實際瀏覽器或 GUI 視覺檢查，Codex 必須先停下並請使用者用一般 PowerShell 啟動安全模式：
+  - `$env:HOTEL_PRICE_WATCH_RUNTIME_ENABLED="0"`
+  - `.\scripts\uv.ps1 run python -m app.tools.dev_start`
+- 只有使用者明確回覆「已啟動」或明確要求 Codex 接手檢查後，Codex 才可使用 Chrome MCP / browser 工具檢查本機 GUI
+- 使用者已啟動專用 Chrome 後，Codex 檢查本機 GUI 時必須優先附著並沿用該既有 Chrome 視窗 / 分頁
+  - 可在既有專用 Chrome 內開啟或導向 `http://127.0.0.1:8000`
+  - 不可另外開新 Chrome 視窗來開 GUI，除非使用者明確要求
+  - 若工具無法選取或導向既有專用 Chrome，需先告知限制並詢問使用者，不可自行改用新視窗
+- 即使 GUI 已由使用者啟動，安全測試時仍不可主動操作 ikyu 分頁、不可 preview、不可立即檢查、不可新增 / 刪除 / 修改監視，除非使用者明確要求
+- 若 Codex 誤以為需要啟動 GUI，必須先詢問使用者，不可自行嘗試
 - 當使用者要求生成 commit message 時，必須先遵守 `GIT_COMMIT_RULES.md`
   - `type` 與 `scope` 使用英文
   - `summary`、`body`、`footer` 一律使用繁體中文
@@ -78,7 +98,9 @@
 - 測試本專案 GUI、專用 profile、既有 ikyu session 時，優先使用 `chrome-devtools-dedicated`
   - 使用前先檢查 `http://127.0.0.1:9222/json/version` 是否可連線
   - 若 `9222` 不通，表示目前沒有可附著的專用 Chrome，需請使用者用一般 PowerShell 啟動
-- 目前 Codex shell 無法可靠自行啟動專用 Chrome
+  - 若 `9222` 可連線，需在該既有專用 Chrome 內選取或導向本機 GUI 分頁，不可另開一般 Chrome 視窗
+- 目前 Codex shell 不得自行啟動本專案 GUI 或專用 Chrome
+  - 即使只是 UI 視覺檢查，也不可自行啟動 `uvicorn`、`dev_start`、Chrome profile 或背景 server
   - 從 Codex shell 啟動 `app.tools.chrome_profile` 或直接呼叫 `chrome.exe` 可能因 Windows IPC / sandbox 權限失敗
   - 需要專用 Chrome 時，請使用者先執行安全模式：
     - `$env:HOTEL_PRICE_WATCH_RUNTIME_ENABLED="0"`

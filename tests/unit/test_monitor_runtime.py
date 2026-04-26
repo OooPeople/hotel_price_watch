@@ -45,6 +45,7 @@ from app.monitor.runtime import (
 from app.notifiers.base import Notifier
 from app.notifiers.models import NotificationMessage
 from app.sites.base import CandidateSelection, SiteAdapter
+from app.sites.ikyu.client import _build_target_page_url
 from app.sites.ikyu.page_guards import IkyuBlockedPageError
 from app.sites.registry import SiteRegistry
 
@@ -105,6 +106,37 @@ class _FakeChromeFetcher:
                 visibility_state="visible",
                 has_focus=True,
             ),
+            html="<html><body>browser snapshot</body></html>",
+        )
+
+    def capture_for_url(
+        self,
+        *,
+        expected_url: str,
+        fallback_url: str | None = None,
+        preferred_tab_id: str | None = None,
+        excluded_tab_ids: tuple[str, ...] = (),
+        page_strategy=None,
+        reload: bool = False,
+    ) -> ChromeTabCapture:
+        """依是否 reload 模擬正式檢查或啟動恢復後直接擷取。"""
+        if reload:
+            del excluded_tab_ids
+            return self.refresh_capture_for_url(
+                expected_url=expected_url,
+                fallback_url=fallback_url,
+                preferred_tab_id=preferred_tab_id,
+                page_strategy=page_strategy,
+            )
+        summary = self.ensure_tab_for_url(
+            expected_url=expected_url,
+            fallback_url=fallback_url,
+            preferred_tab_id=preferred_tab_id,
+            excluded_tab_ids=excluded_tab_ids,
+            page_strategy=page_strategy,
+        )
+        return ChromeTabCapture(
+            tab=summary,
             html="<html><body>browser snapshot</body></html>",
         )
 
@@ -512,6 +544,16 @@ class _FakeRuntimeAdapter(SiteAdapter):
             availability=Availability.AVAILABLE,
             source_kind=SourceKind.BROWSER,
         )
+
+    def build_browser_operation_url(
+        self,
+        *,
+        watch_item: WatchItem,
+        draft: SearchDraft | None,
+    ) -> str:
+        """測試 adapter 也使用正式 target URL，對齊 IKYU runtime 行為。"""
+        del draft
+        return _build_target_page_url(watch_item.target)
 
     def resolve_watch_target(
         self,
@@ -1284,7 +1326,7 @@ def test_runtime_records_possible_throttling_debug_artifact(tmp_path) -> None:
     debug_artifacts = runtime_repository.list_debug_artifacts(watch_item.id)
     assert len(debug_artifacts) == 1
     assert debug_artifacts[0].reason == "possible_throttling"
-    assert debug_artifacts[0].source_url == watch_item.canonical_url
+    assert debug_artifacts[0].source_url == _build_target_page_url(watch_item.target)
 
 
 def test_runtime_records_discarded_page_debug_artifact(tmp_path) -> None:
@@ -1421,13 +1463,69 @@ def test_runtime_prefers_saved_browser_tab_hint(tmp_path) -> None:
 
     asyncio.run(runtime.run_watch_check_once(watch_item.id))
 
+    operation_url = _build_target_page_url(watch_item.target)
     assert fetcher.calls == [
         (
-            watch_item.canonical_url,
-            "https://www.ikyu.com/zh-tw/00082173/?top=rooms",
+            operation_url,
+            operation_url,
             "target-keep-me",
         )
     ]
+    updated_draft = watch_repository.get_draft(watch_item.id)
+    assert updated_draft is not None
+    assert updated_draft.browser_tab_id == "tab-1"
+    assert updated_draft.browser_page_url == operation_url
+
+
+def test_runtime_check_uses_seed_url_when_canonical_url_is_hotel_root(tmp_path) -> None:
+    """正式 canonical 是飯店根頁時，browser refresh 仍應使用精確 seed URL。"""
+    database = SqliteDatabase(tmp_path / "watcher.db")
+    database.initialize()
+    watch_repository = SqliteWatchItemRepository(database)
+    runtime_repository = SqliteRuntimeRepository(database)
+    settings_repository = SqliteAppSettingsRepository(database)
+    app_settings_service = AppSettingsService(settings_repository)
+
+    precise_seed_url = (
+        "https://www.ikyu.com/zh-tw/00082173/"
+        "?adc=1&cid=20260918&discsort=1&lc=1&pln=11035620"
+        "&ppc=2&rc=1&rm=10191605&si=1&st=1"
+    )
+    watch_item = replace(
+        _build_runtime_watch_item("watch-runtime-check-precise-url"),
+        canonical_url="https://www.ikyu.com/zh-tw/00082173/",
+    )
+    watch_repository.save(watch_item)
+    watch_repository.save_draft(
+        watch_item.id,
+        replace(
+            _build_runtime_draft(precise_seed_url),
+            browser_tab_id="stale-tab",
+            browser_page_url="https://www.ikyu.com/zh-tw/00082173/?top=rooms",
+        ),
+    )
+
+    site_registry = SiteRegistry()
+    site_registry.register(_FakeRuntimeAdapter())
+    fetcher = _RecordingChromeFetcher()
+    runtime = ChromeDrivenMonitorRuntime(
+        watch_item_repository=watch_repository,
+        runtime_repository=runtime_repository,
+        site_registry=site_registry,
+        chrome_fetcher=fetcher,
+        app_settings_service=app_settings_service,
+    )
+
+    import asyncio
+
+    asyncio.run(runtime.run_watch_check_once(watch_item.id))
+
+    operation_url = _build_target_page_url(watch_item.target)
+    assert fetcher.calls == [(operation_url, operation_url, "stale-tab")]
+    updated_draft = watch_repository.get_draft(watch_item.id)
+    assert updated_draft is not None
+    assert updated_draft.browser_tab_id == "tab-1"
+    assert updated_draft.browser_page_url == operation_url
 
 
 def test_runtime_pauses_watch_when_chrome_refresh_hits_403(tmp_path) -> None:
@@ -1738,7 +1836,10 @@ def test_runtime_start_registers_only_active_watches_and_stop_clears_scheduler(
     asyncio.run(_exercise_runtime())
 
 
-def test_runtime_start_restores_only_enabled_and_unpaused_watch_tabs(tmp_path) -> None:
+def test_runtime_start_restores_only_enabled_and_unpaused_watch_tabs(
+    tmp_path,
+    capsys,
+) -> None:
     """runtime 啟動時只應低速恢復 enabled 且未 paused 的 watch 分頁。"""
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
@@ -1785,14 +1886,19 @@ def test_runtime_start_restores_only_enabled_and_unpaused_watch_tabs(tmp_path) -
 
     asyncio.run(_exercise_runtime())
 
+    operation_url = _build_target_page_url(active_watch.target)
     assert fetcher.ensure_calls == [
         (
-            active_watch.canonical_url,
-            active_watch.canonical_url,
+            operation_url,
+            operation_url,
             None,
             (),
         )
     ]
+    captured = capsys.readouterr()
+    assert "啟動恢復監視分頁：準備恢復 1 筆監視。" in captured.out
+    assert "啟動恢復監視分頁成功" in captured.out
+    assert active_watch.id in captured.out
 
 
 def test_runtime_start_does_not_wait_for_startup_tab_restore(tmp_path) -> None:
@@ -1834,23 +1940,144 @@ def test_runtime_start_does_not_wait_for_startup_tab_restore(tmp_path) -> None:
         assert runtime._startup_restore_task.done() is False
 
         await asyncio.to_thread(fetcher.started.wait, 1)
+        await asyncio.sleep(0.05)
+        assert runtime_repository.get_latest_check_snapshot(active_watch.id) is None
         fetcher.release.set()
         await _wait_for_startup_restore(runtime)
         await runtime.stop()
 
     asyncio.run(_exercise_runtime())
 
+    operation_url = _build_target_page_url(active_watch.target)
     assert fetcher.ensure_calls == [
         (
-            active_watch.canonical_url,
-            active_watch.canonical_url,
+            operation_url,
+            operation_url,
             None,
             (),
         )
     ]
 
 
-def test_runtime_start_continues_when_single_tab_restore_fails(tmp_path) -> None:
+def test_runtime_restore_uses_precise_seed_url_and_heals_tab_assignment(tmp_path) -> None:
+    """啟動恢復應用精確 seed URL 找分頁，成功後回寫新的 tab hint。"""
+    database = SqliteDatabase(tmp_path / "watcher.db")
+    database.initialize()
+    watch_repository = SqliteWatchItemRepository(database)
+    runtime_repository = SqliteRuntimeRepository(database)
+    settings_repository = SqliteAppSettingsRepository(database)
+    app_settings_service = AppSettingsService(settings_repository)
+
+    precise_seed_url = (
+        "https://www.ikyu.com/zh-tw/00082173/"
+        "?adc=1&cid=20260918&discsort=1&lc=1&pln=11035620"
+        "&ppc=2&rc=1&rm=10191605&si=1&st=1"
+    )
+    watch_item = replace(
+        _build_runtime_watch_item("watch-runtime-restore-precise-url"),
+        canonical_url="https://www.ikyu.com/zh-tw/00082173/",
+    )
+    watch_repository.save(watch_item)
+    watch_repository.save_draft(
+        watch_item.id,
+        replace(
+            _build_runtime_draft(precise_seed_url),
+            browser_tab_id="stale-tab",
+            browser_page_url=(
+                "https://www.ikyu.com/zh-tw/00082173/"
+                "?adc=1&cid=20260918&pln=99999999&ppc=2&rc=1&rm=88888888"
+            ),
+        ),
+    )
+
+    fetcher = _FakeChromeFetcher()
+    site_registry = SiteRegistry()
+    site_registry.register(_FakeRuntimeAdapter())
+    runtime = ChromeDrivenMonitorRuntime(
+        watch_item_repository=watch_repository,
+        runtime_repository=runtime_repository,
+        site_registry=site_registry,
+        chrome_fetcher=fetcher,
+        app_settings_service=app_settings_service,
+        tick_seconds=60,
+        restore_delay_seconds=0,
+    )
+
+    import asyncio
+
+    async def _exercise_runtime() -> None:
+        await runtime.start()
+        await _wait_for_startup_restore(runtime)
+        await runtime.stop()
+
+    asyncio.run(_exercise_runtime())
+
+    operation_url = _build_target_page_url(watch_item.target)
+    assert fetcher.ensure_calls == [(operation_url, operation_url, "stale-tab", ())]
+    updated_draft = watch_repository.get_draft(watch_item.id)
+    assert updated_draft is not None
+    assert updated_draft.browser_tab_id == "stale-tab"
+    assert updated_draft.browser_page_url == operation_url
+
+
+def test_runtime_restore_captures_without_scheduled_reload(tmp_path) -> None:
+    """啟動恢復分頁後應直接擷取並推進排程，避免立刻再刷新全部分頁。"""
+    database = SqliteDatabase(tmp_path / "watcher.db")
+    database.initialize()
+    watch_repository = SqliteWatchItemRepository(database)
+    runtime_repository = SqliteRuntimeRepository(database)
+    settings_repository = SqliteAppSettingsRepository(database)
+    app_settings_service = AppSettingsService(settings_repository)
+
+    watch_item = _build_runtime_watch_item("watch-runtime-restore-capture")
+    watch_repository.save(watch_item)
+    watch_repository.save_draft(
+        watch_item.id,
+        _build_runtime_draft(watch_item.canonical_url),
+    )
+
+    fetcher = _RecordingChromeFetcher()
+    site_registry = SiteRegistry()
+    site_registry.register(_FakeRuntimeAdapter())
+    runtime = ChromeDrivenMonitorRuntime(
+        watch_item_repository=watch_repository,
+        runtime_repository=runtime_repository,
+        site_registry=site_registry,
+        chrome_fetcher=fetcher,
+        app_settings_service=app_settings_service,
+        tick_seconds=60,
+        restore_delay_seconds=0,
+    )
+    registered_at = datetime.now(UTC)
+
+    import asyncio
+
+    async def _exercise_runtime() -> None:
+        active_watch_items = await runtime._sync_watch_definitions(now=registered_at)
+        assert runtime._scheduler.get_schedule(watch_item.id).next_run_at == registered_at
+        await runtime._restore_active_watch_tabs(active_watch_items)
+
+    asyncio.run(_exercise_runtime())
+
+    latest_snapshot = runtime_repository.get_latest_check_snapshot(watch_item.id)
+    assert latest_snapshot is not None
+    assert latest_snapshot.normalized_price_amount == Decimal("22990")
+    assert fetcher.calls == []
+    assert fetcher.ensure_calls == [
+        (
+            _build_target_page_url(watch_item.target),
+            _build_target_page_url(watch_item.target),
+            None,
+            (),
+        )
+    ]
+    assert runtime._scheduler.get_schedule(watch_item.id).next_run_at > registered_at
+
+
+def test_runtime_start_continues_when_single_tab_restore_fails(
+    tmp_path,
+    capsys,
+) -> None:
     """啟動恢復若單一 watch 分頁失敗，不應中止整體 runtime 啟動。"""
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
@@ -1910,7 +2137,16 @@ def test_runtime_start_continues_when_single_tab_restore_fails(tmp_path) -> None
     asyncio.run(_exercise_runtime())
 
     assert len(fetcher.ensure_calls) >= 2
-    assert any(call[0] == second_watch.canonical_url for call in fetcher.ensure_calls)
+    assert any(
+        call[0] == _build_target_page_url(second_watch.target)
+        for call in fetcher.ensure_calls
+    )
+    captured = capsys.readouterr()
+    assert "啟動恢復監視分頁失敗" in captured.out
+    assert first_watch.id in captured.out
+    assert "RuntimeError: restore failed" in captured.out
+    assert "啟動恢復監視分頁成功" in captured.out
+    assert second_watch.id in captured.out
 
 
 def test_runtime_start_excludes_already_restored_tabs_from_later_watches(tmp_path) -> None:
@@ -2064,7 +2300,8 @@ def test_runtime_loop_processes_multiple_active_watches(tmp_path) -> None:
         """啟動 background loop，等待多筆 watch 都被處理。"""
         await runtime.start()
         try:
-            for _ in range(50):
+            await _wait_for_startup_restore(runtime)
+            for _ in range(200):
                 if (
                     runtime_repository.get_latest_check_snapshot(watch_a.id) is not None
                     and runtime_repository.get_latest_check_snapshot(watch_b.id) is not None
@@ -2084,7 +2321,8 @@ def test_runtime_loop_processes_multiple_active_watches(tmp_path) -> None:
     assert latest_b is not None
     assert latest_a.normalized_price_amount == Decimal("22990")
     assert latest_b.normalized_price_amount == Decimal("24800")
-    assert len(fetcher.calls) >= 2
+    assert fetcher.calls == []
+    assert len(fetcher.ensure_calls) == 2
 
 
 def test_runtime_loop_syncs_watch_added_after_start(tmp_path) -> None:

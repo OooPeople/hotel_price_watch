@@ -31,13 +31,18 @@ from app.web.ui_styles import (
     meta_paragraph_style,
     muted_text_style,
     responsive_grid_style,
+    secondary_button_style,
     section_title_style,
     selectable_card_style,
     stack_style,
 )
 
 
-def render_preview_section(preview: WatchCreationPreview) -> str:
+def render_preview_section(
+    preview: WatchCreationPreview,
+    *,
+    preview_cache_key: str | None = None,
+) -> str:
     """渲染候選方案與建立 watch item 的第二段表單。"""
     options = []
     for candidate in preview.candidate_bundle.candidates:
@@ -87,10 +92,18 @@ def render_preview_section(preview: WatchCreationPreview) -> str:
         prefill_status=prefill_status,
         existing_watch_html=existing_watch_html,
     )
+    summary_panel_html = _render_create_summary_panel(preview=preview)
 
-    return card(
-        body=f"""
-        <section style="{stack_style(gap="xl")}">
+    return f"""
+    <div class="add-watch-preview-layout" style="
+      display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,340px);
+      gap:24px;align-items:start;
+    ">
+      <form action="/watches" method="post" style="{stack_style(gap="lg")}">
+        <input type="hidden" name="seed_url" value="{escape(preview.draft.seed_url)}">
+        {_render_preview_browser_tab_hidden_input(preview)}
+        {_render_preview_cache_key_hidden_input(preview_cache_key)}
+        <section style="{_wizard_panel_style()}">
           {section_header(
               title="Step 1 確認來源",
               subtitle="確認從專用 Chrome 擷取到的飯店與條件。",
@@ -98,69 +111,85 @@ def render_preview_section(preview: WatchCreationPreview) -> str:
           {source_summary_html}
           {_render_preview_refresh_section(preview)}
         </section>
-        <form action="/watches" method="post" style="{stack_style(gap="md")}">
-          <input type="hidden" name="seed_url" value="{escape(preview.draft.seed_url)}">
-          {_render_preview_browser_tab_hidden_input(preview)}
-          <section style="{stack_style(gap="md")}">
-            {section_header(
-                title="Step 2 選擇方案",
-                subtitle="選擇要追蹤的房型與方案。",
-            )}
-            <div style="{stack_style(gap="md")}">
-              {''.join(options) or '<p>目前查無可建立的候選方案。</p>'}
-            </div>
-          </section>
-          <section style="{stack_style(gap="md")}">
+        <section style="{_wizard_panel_style()}">
+          {section_header(
+              title="Step 2 選擇方案",
+              subtitle="選擇要追蹤的房型與方案。",
+          )}
+          <div style="{responsive_grid_style(min_width="220px", gap="14px")}">
+            {''.join(options) or '<p>目前查無可建立的候選方案。</p>'}
+          </div>
+        </section>
+        <section style="{_wizard_panel_style()}">
           {section_header(
               title="Step 3 設定通知",
               subtitle="設定檢查頻率與觸發通知的條件。",
           )}
-          <label>檢查頻率</label>
-          <input
-            type="number"
-            name="scheduler_interval_seconds"
-            min="60"
-            value="600"
-            style="{input_style()}"
-          >
-          <label>通知條件</label>
-          <select
-            id="create-watch-notification-rule-kind"
-            name="notification_rule_kind"
-            style="{input_style()}"
-          >
-            <option value="{NotificationLeafKind.ANY_DROP.value}" selected>價格下降</option>
-            <option
-              value="{NotificationLeafKind.BELOW_TARGET_PRICE.value}"
+          <div style="{responsive_grid_style(min_width="220px", gap="14px")}">
+            <label style="{stack_style(gap="sm")}">
+              <span>檢查頻率</span>
+              <input
+                type="number"
+                name="scheduler_interval_seconds"
+                min="60"
+                value="600"
+                style="{input_style()}"
+              >
+              <span style="{muted_text_style(font_size="13px")}">
+                系統會依此頻率檢查價格變化。
+              </span>
+            </label>
+            <label style="{stack_style(gap="sm")}">
+              <span>通知條件</span>
+              <select
+                id="create-watch-notification-rule-kind"
+                name="notification_rule_kind"
+                style="{input_style()}"
+              >
+                <option value="{NotificationLeafKind.ANY_DROP.value}" selected>價格下降</option>
+                <option value="{NotificationLeafKind.BELOW_TARGET_PRICE.value}">
+                  低於目標價
+                </option>
+              </select>
+              <span style="{muted_text_style(font_size="13px")}">
+                符合條件時才會通知。
+              </span>
+            </label>
+            <div
+              id="create-watch-target-price-wrapper"
+              style="{_notification_target_price_wrapper_style(NotificationLeafKind.ANY_DROP)}"
             >
-              低於目標價
-            </option>
-          </select>
-          <div
-            id="create-watch-target-price-wrapper"
-            style="{_notification_target_price_wrapper_style(NotificationLeafKind.ANY_DROP)}"
-          >
-            <label>目標價（僅低於目標價時使用）</label>
-            <input type="text" name="target_price" placeholder="例如 20000" style="{input_style()}">
-            {_render_notification_target_price_hint(NotificationLeafKind.ANY_DROP)}
+              <label>目標價（僅低於目標價時使用）</label>
+              <input
+                type="text"
+                name="target_price"
+                placeholder="例如 20000"
+                style="{input_style()}"
+              >
+              {_render_notification_target_price_hint(NotificationLeafKind.ANY_DROP)}
+            </div>
           </div>
-          </section>
-          <section style="{stack_style(gap="md")}">
-            {section_header(
-                title="Step 4 確認建立",
-                subtitle="確認後開始監視這個房型方案的價格。",
-            )}
+        </section>
+        <section style="{_wizard_confirm_panel_style()}">
+          <div>
+            <h2 style="{section_title_style()}">確認建立</h2>
+            <strong>設定完成後，我們將立即開始監視價格</strong>
+            <p style="{meta_paragraph_style()}">
+              您可隨時在「總覽」頁面查看監視狀態與價格變化。
+            </p>
+          </div>
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
             {submit_html}
           </div>
-          </section>
-        </form>
-        {_render_notification_rule_toggle_script(
-            select_id="create-watch-notification-rule-kind",
-            wrapper_id="create-watch-target-price-wrapper",
-        )}
-        """,
-    )
+        </section>
+      </form>
+      {summary_panel_html}
+    </div>
+    {_render_notification_rule_toggle_script(
+        select_id="create-watch-notification-rule-kind",
+        wrapper_id="create-watch-target-price-wrapper",
+    )}
+    """
 
 
 def render_chrome_tab_cards(
@@ -187,8 +216,8 @@ def render_chrome_tab_cards(
     return "".join(rows) or empty_state_card(
         title=f"目前找不到可用的 {site_label_list} Chrome 分頁",
         message=(
-            "請先執行 .\\scripts\\uv.ps1 run python -m app.tools.dev_start，"
-            f"並在專用 Chrome 中打開 {site_hint_list} 頁面後再重試。"
+            f"請在目前的專用 Chrome 中打開 {site_hint_list} 頁面，"
+            "確認頁面完整載入後再回來重新整理。"
         ),
     )
 
@@ -286,20 +315,36 @@ def _render_chrome_tab_card(
             "</div>"
         )
     )
+    status_kind = "warning" if linked_watch_id is not None else "success"
+    status_label = "已建立監視" if linked_watch_id is not None else "可抓取"
     return card(
         extra_style=row_style,
         body=f"""
-        <form action="/watches/chrome-tabs/preview" method="post" style="{stack_style(gap="md")}">
+        <form
+          action="/watches/chrome-tabs/preview"
+          method="post"
+          class="chrome-tab-card"
+          style="
+            display:grid;grid-template-columns:minmax(0,1fr) auto;
+            gap:18px;align-items:center;
+          "
+        >
           <input type="hidden" name="tab_id" value="{escape(tab.tab_id)}">
-          <div style="{stack_style(gap="sm")}">
-            <strong>{escape(tab.title or "untitled tab")}</strong>
-            <code style="word-break:break-all;">{escape(tab.url)}</code>
-            <p style="margin:0;">
-              可見性：{escape(tab.visibility_state or "unknown")}，
-              焦點：{escape(_format_focus_text(tab.has_focus))}，
+          <div style="display:grid;gap:8px;min-width:0;">
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+              <strong style="{card_title_style()}">{escape(tab.title or "untitled tab")}</strong>
+              {status_badge(label=status_label, kind=status_kind)}
+            </div>
+            <p style="{meta_paragraph_style()}">
+              可見性：{escape(tab.visibility_state or "unknown")} /
+              焦點：{escape(_format_focus_text(tab.has_focus))} /
               訊號：{escape(throttling_text + discarded_text)}
             </p>
             {site_label_html}
+            <code style="
+              display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;
+              white-space:nowrap;color:{color_token("muted")};
+            ">{escape(tab.url)}</code>
           </div>
           {action_html}
         </form>
@@ -329,10 +374,9 @@ def _render_preview_source_summary(
         if preview.draft.nights is not None
         else "晚數未確認"
     )
-    return card(
-        title=preview.candidate_bundle.hotel_name,
-        body=f"""
-        <div style="{source_grid_style}">
+    return f"""
+        <div style="{source_grid_style};padding:16px;border:1px solid {color_token("border")};
+          border-radius:12px;background:{color_token("surface_alt")};">
           <div>
             <span style="{meta_label_style()}">日期</span>
             <strong>{preview.draft.check_in_date} - {preview.draft.check_out_date}</strong>
@@ -349,8 +393,7 @@ def _render_preview_source_summary(
         </div>
         {prefill_status_html}
         {existing_watch_html}
-        """,
-    )
+    """
 
 
 def _render_preview_browser_source(preview: WatchCreationPreview) -> str:
@@ -371,14 +414,88 @@ def _render_preview_browser_tab_hidden_input(preview: WatchCreationPreview) -> s
     )
 
 
+def _render_preview_cache_key_hidden_input(preview_cache_key: str | None) -> str:
+    """在建立 watch 表單中保留本次 preview cache key，避免提交時重抓分頁。"""
+    if preview_cache_key is None:
+        return ""
+    return (
+        '<input type="hidden" name="preview_cache_key" '
+        f'value="{escape(preview_cache_key)}">'
+    )
+
+
+def _render_create_summary_panel(*, preview: WatchCreationPreview) -> str:
+    """渲染建立監視流程右側摘要，讓建立前設定可快速掃描。"""
+    first_candidate = next(iter(preview.candidate_bundle.candidates), None)
+    selected_candidate = next(
+        (
+            candidate
+            for candidate in preview.candidate_bundle.candidates
+            if candidate.room_id == preview.preselected_room_id
+            and candidate.plan_id == preview.preselected_plan_id
+        ),
+        first_candidate,
+    )
+    selected_room_text = selected_candidate.room_name if selected_candidate else "尚未選擇"
+    selected_price_text = (
+        selected_candidate.display_price_text
+        if selected_candidate and selected_candidate.display_price_text
+        else "依選取方案確認"
+    )
+    return f"""
+    <aside
+      class="add-watch-summary"
+      style="
+        position:sticky;top:24px;display:grid;gap:14px;padding:20px;
+        border:1px solid {color_token("border")};border-radius:16px;
+        background:{color_token("surface")};
+        box-shadow:0 10px 28px {color_token("shadow_soft")};
+      "
+    >
+      <h2 style="{card_title_style()}">本次監視摘要</h2>
+      {_summary_line(label="住宿設施", value=preview.candidate_bundle.hotel_name)}
+      {_summary_line(
+          label="入住日期",
+          value=f"{preview.draft.check_in_date} - {preview.draft.check_out_date}",
+      )}
+      {_summary_line(
+          label="人數 / 房數",
+          value=f"{preview.draft.people_count} 人 / {preview.draft.room_count} 房",
+      )}
+      {_summary_line(label="選擇方案", value=selected_room_text)}
+      {_summary_line(label="目前價格", value=selected_price_text)}
+      {_summary_line(label="通知條件", value="價格下降時")}
+      {_summary_line(label="檢查頻率", value="每 10 分鐘檢查一次")}
+    </aside>
+    """
+
+
+def _summary_line(*, label: str, value: str) -> str:
+    """渲染右側摘要中的單列 key-value 資訊。"""
+    row_style = (
+        "display:grid;gap:4px;padding-bottom:12px;"
+        f"border-bottom:1px solid {color_token('border')};"
+    )
+    return f"""
+    <div style="{row_style}">
+      <span style="{meta_label_style()}">{escape(label)}</span>
+      <strong>{escape(value)}</strong>
+    </div>
+    """
+
+
 def _render_preview_refresh_section(preview: WatchCreationPreview) -> str:
     """渲染從 Chrome 分頁重新抓取的操作區塊。"""
     if preview.browser_tab_id is not None:
         return f"""
-        <form action="/watches/chrome-tabs/preview" method="post" style="margin:0;">
-          <input type="hidden" name="tab_id" value="{escape(preview.browser_tab_id)}">
-          {submit_button(label="重新抓取此分頁", kind="secondary", size="sm")}
-        </form>
+        <button
+          type="submit"
+          name="tab_id"
+          value="{escape(preview.browser_tab_id)}"
+          formaction="/watches/chrome-tabs/preview"
+          formmethod="post"
+          style="{secondary_button_style(size='sm')}"
+        >重新抓取此分頁</button>
         """
     return f"""
     <div style="{stack_style(gap="md")}">
@@ -435,6 +552,28 @@ def _render_candidate_price(*, candidate: Any, preview: WatchCreationPreview) ->
 def _candidate_card_style(*, checked: bool) -> str:
     """回傳候選方案卡片樣式，讓已預選方案更容易辨識。"""
     return selectable_card_style(selected=checked)
+
+
+def _wizard_panel_style() -> str:
+    """回傳新增監視流程中一般步驟區塊的樣式。"""
+    return (
+        "display:grid;gap:14px;padding:18px;"
+        f"border:1px solid {color_token('border')};"
+        f"background:{color_token('surface')};"
+        "border-radius:16px;"
+        f"box-shadow:0 10px 28px {color_token('shadow_soft')};"
+    )
+
+
+def _wizard_confirm_panel_style() -> str:
+    """回傳新增監視流程中確認建立區塊的樣式。"""
+    return (
+        "display:flex;justify-content:space-between;gap:16px;align-items:center;"
+        "flex-wrap:wrap;padding:18px;"
+        f"border:1px solid {color_token('border_strong')};"
+        f"background:{color_token('primary_faint')};"
+        "border-radius:16px;"
+    )
 
 
 def _format_decimal_for_display(amount: Decimal) -> str:

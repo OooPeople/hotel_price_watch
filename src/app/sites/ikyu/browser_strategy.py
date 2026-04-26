@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 from app.sites.ikyu.browser_matching import (
     extract_ikyu_browser_page_signature,
+    ikyu_signatures_match_confidently,
     is_confident_ikyu_page_match,
     score_ikyu_browser_page,
 )
@@ -26,6 +27,8 @@ class IkyuBrowserPageStrategy:
         current = urlparse(current_url)
         expected = urlparse(expected_url)
         profile_start = urlparse(self.profile_start_url)
+        current_signature = extract_ikyu_browser_page_signature(current_url)
+        expected_signature = extract_ikyu_browser_page_signature(expected_url)
 
         if not current.scheme or not current.netloc:
             return False
@@ -33,6 +36,11 @@ class IkyuBrowserPageStrategy:
             return False
         if current.path.rstrip("/") == profile_start.path.rstrip("/"):
             return False
+        if expected_signature.room_id is not None or expected_signature.plan_id is not None:
+            return ikyu_signatures_match_confidently(
+                left=current_signature,
+                right=expected_signature,
+            )
         return current.path.rstrip("/").startswith(expected.path.rstrip("/"))
 
     def score_page(self, current_url: str, *, expected_url: str) -> int:

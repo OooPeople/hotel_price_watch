@@ -11,6 +11,7 @@ from app.domain.entities import (
     DebugArtifact,
     LatestCheckSnapshot,
     NotificationState,
+    PriceHistoryEntry,
     RuntimeStateEvent,
     WatchItem,
 )
@@ -27,6 +28,7 @@ from app.web.ui_components import (
 from app.web.ui_components import (
     flash_message as render_flash_message,
 )
+from app.web.ui_presenters import WatchActionSurface
 from app.web.ui_styles import meta_paragraph_style, stack_style
 from app.web.watch_view_partials import (
     render_check_events_section_with_time_format,
@@ -48,9 +50,12 @@ def render_watch_list_page(
     *,
     watch_items: Iterable[WatchItem],
     latest_snapshots_by_watch_id: dict[str, LatestCheckSnapshot | None] | None = None,
+    recent_price_history_by_watch_id: dict[str, tuple[PriceHistoryEntry, ...]] | None = None,
+    today_notification_count: int = 0,
     flash_message: str | None = None,
     runtime_status: MonitorRuntimeStatus | None = None,
     use_24_hour_time: bool = True,
+    initial_fragment_version: str | None = None,
 ) -> str:
     """渲染 watch item 列表頁。"""
     flash_html = render_flash_message(flash_message)
@@ -61,12 +66,15 @@ def render_watch_list_page(
     summary_html = render_dashboard_summary_cards(
         watch_items,
         latest_snapshots_by_watch_id=latest_snapshots_by_watch_id,
+        recent_price_history_by_watch_id=recent_price_history_by_watch_id,
+        today_notification_count=today_notification_count,
         runtime_status=runtime_status,
         use_24_hour_time=use_24_hour_time,
     )
     watch_cards_html = render_watch_list_rows(
         watch_items,
         latest_snapshots_by_watch_id=latest_snapshots_by_watch_id,
+        recent_price_history_by_watch_id=recent_price_history_by_watch_id,
         use_24_hour_time=use_24_hour_time,
     )
     watch_list_header_style = (
@@ -89,7 +97,7 @@ def render_watch_list_page(
                   extra_style="align-items:center;",
               ),
           )}
-          {flash_html}
+          <div id="dashboard-flash-section">{flash_html}</div>
           <div id="dashboard-summary-section">{summary_html}</div>
           <section style="{stack_style(gap="lg")}">
             <div style="{watch_list_header_style}">
@@ -108,7 +116,7 @@ def render_watch_list_page(
           </section>
           <div id="runtime-status-section">{runtime_html}</div>
         </section>
-        {render_watch_list_polling_script()}
+        {render_watch_list_polling_script(initial_fragment_version)}
         """,
     )
 
@@ -129,6 +137,8 @@ def render_dashboard_summary_fragment(
     watch_items: Iterable[WatchItem],
     *,
     latest_snapshots_by_watch_id: dict[str, LatestCheckSnapshot | None] | None = None,
+    recent_price_history_by_watch_id: dict[str, tuple[PriceHistoryEntry, ...]] | None = None,
+    today_notification_count: int = 0,
     runtime_status: MonitorRuntimeStatus | None = None,
     use_24_hour_time: bool = True,
 ) -> str:
@@ -136,6 +146,8 @@ def render_dashboard_summary_fragment(
     return render_dashboard_summary_cards(
         watch_items,
         latest_snapshots_by_watch_id=latest_snapshots_by_watch_id,
+        recent_price_history_by_watch_id=recent_price_history_by_watch_id,
+        today_notification_count=today_notification_count,
         runtime_status=runtime_status,
         use_24_hour_time=use_24_hour_time,
     )
@@ -145,12 +157,14 @@ def render_watch_list_rows_fragment(
     watch_items: Iterable[WatchItem],
     *,
     latest_snapshots_by_watch_id: dict[str, LatestCheckSnapshot | None] | None = None,
+    recent_price_history_by_watch_id: dict[str, tuple[PriceHistoryEntry, ...]] | None = None,
     use_24_hour_time: bool = True,
 ) -> str:
     """提供首頁 polling 使用的 watch 列表 tbody 片段。"""
     return render_watch_list_rows(
         watch_items,
         latest_snapshots_by_watch_id=latest_snapshots_by_watch_id,
+        recent_price_history_by_watch_id=recent_price_history_by_watch_id,
         use_24_hour_time=use_24_hour_time,
     )
 
@@ -165,6 +179,7 @@ def render_watch_detail_page(
     runtime_state_events: tuple[RuntimeStateEvent, ...],
     flash_message: str | None = None,
     use_24_hour_time: bool = True,
+    initial_fragment_version: str | None = None,
 ) -> str:
     """渲染單一 watch item 的詳細頁與歷史摘要。"""
     runtime_state = derive_watch_runtime_state(
@@ -202,7 +217,7 @@ def render_watch_detail_page(
     action_controls_html = render_watch_action_controls(
         watch_item=watch_item,
         runtime_state=runtime_state,
-        show_check_now=True,
+        surface=WatchActionSurface.DETAIL,
     )
     technical_info_html = card(
         title="技術資訊",
@@ -250,7 +265,10 @@ def render_watch_detail_page(
           <div id="watch-detail-check-events-section">{check_events_html}</div>
           {advanced_diagnostics_html}
         </section>
-        {render_watch_detail_polling_script(watch_item.id)}
+        {render_watch_detail_polling_script(
+            watch_item.id,
+            initial_fragment_version=initial_fragment_version,
+        )}
         """,
     )
 

@@ -117,6 +117,23 @@ class MonitorScheduler:
         self._scheduled[watch_item_id] = updated
         return updated
 
+    def mark_check_completed(
+        self,
+        *,
+        watch_item_id: str,
+        completed_at: datetime,
+        backoff_until: datetime | None = None,
+    ) -> ScheduledWatch:
+        """在非 worker 流程完成檢查後，依相同規則更新下一次執行時間。"""
+        scheduled = self._scheduled[watch_item_id]
+        next_run_at = backoff_until or self._next_due_time(
+            completed_at,
+            scheduled.interval_seconds,
+        )
+        updated = replace(scheduled, next_run_at=next_run_at)
+        self._scheduled[watch_item_id] = updated
+        return updated
+
     def reschedule_now(
         self,
         *,

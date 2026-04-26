@@ -10,6 +10,7 @@ from app.application.app_settings import AppSettingsService
 from app.application.chrome_tab_preview import ChromeTabPreviewService
 from app.application.notification_channel_test import NotificationChannelTestService
 from app.application.preview_guard import PreviewAttemptGuard
+from app.application.watch_creation_cache import WatchCreationPreviewCache
 from app.application.watch_editor import WatchEditorService
 from app.application.watch_lifecycle import WatchLifecycleCoordinator
 from app.bootstrap.site_wiring import register_default_sites
@@ -23,6 +24,8 @@ from app.infrastructure.db import (
 from app.monitor.runtime import ChromeDrivenMonitorRuntime
 from app.notifiers import DesktopNotifier, DiscordWebhookNotifier, NtfyNotifier
 from app.sites.registry import SiteRegistry
+
+DEFAULT_DATABASE_PATH = Path("data") / "hotel_price_watch.db"
 
 
 @dataclass(slots=True)
@@ -42,6 +45,7 @@ class AppContainer:
     chrome_tab_preview_service: ChromeTabPreviewService
     chrome_cdp_fetcher: ChromeCdpHtmlFetcher
     preview_attempt_guard: PreviewAttemptGuard
+    watch_creation_preview_cache: WatchCreationPreviewCache
     monitor_runtime: ChromeDrivenMonitorRuntime | None = None
     monitor_runtime_auto_start_enabled: bool = True
 
@@ -50,7 +54,7 @@ def build_app_container(db_path: str | Path | None = None) -> AppContainer:
     """建立本機 app 的依賴容器，並初始化 SQLite。"""
     instance_id = os.getenv("HOTEL_PRICE_WATCH_INSTANCE_ID", "standalone")
     runtime_auto_start_enabled = os.getenv("HOTEL_PRICE_WATCH_RUNTIME_ENABLED", "1") != "0"
-    database = SqliteDatabase(db_path or Path("data") / "hotel_price_watch.db")
+    database = SqliteDatabase(db_path or _resolve_database_path())
     database.initialize()
 
     app_settings_repository = SqliteAppSettingsRepository(database)
@@ -103,9 +107,15 @@ def build_app_container(db_path: str | Path | None = None) -> AppContainer:
         chrome_tab_preview_service=chrome_tab_preview_service,
         chrome_cdp_fetcher=chrome_cdp_fetcher,
         preview_attempt_guard=PreviewAttemptGuard(),
+        watch_creation_preview_cache=WatchCreationPreviewCache(),
         monitor_runtime=monitor_runtime,
         monitor_runtime_auto_start_enabled=runtime_auto_start_enabled,
     )
+
+
+def _resolve_database_path() -> Path:
+    """讀取本機 GUI 預設使用的 SQLite 路徑。"""
+    return Path(os.getenv("HOTEL_PRICE_WATCH_DB_PATH", str(DEFAULT_DATABASE_PATH)))
 
 
 def _build_enabled_notifiers(settings) -> tuple:

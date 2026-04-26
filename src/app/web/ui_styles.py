@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 THEME_COLORS = {
-    "primary": "#0f6f68",
-    "primary_hover": "#0a5f59",
-    "primary_soft": "#dff2ed",
-    "secondary": "#203a43",
-    "background": "#eef5f2",
-    "surface": "#fcfffe",
-    "surface_alt": "#f8fbfa",
-    "border": "#d7e2df",
-    "border_strong": "#9fd3c7",
-    "text": "#18322f",
-    "muted": "#4b635f",
-    "muted_soft": "#6b7f7b",
+    "primary": "#087a5f",
+    "primary_hover": "#066a53",
+    "primary_soft": "#e8f7f1",
+    "primary_faint": "#f3fbf8",
+    "secondary": "#102331",
+    "background": "#f7faf9",
+    "surface": "#ffffff",
+    "surface_alt": "#fbfdfc",
+    "border": "#dfe8e5",
+    "border_strong": "#9ed7c7",
+    "text": "#0f1f2e",
+    "muted": "#52616f",
+    "muted_soft": "#7b8794",
     "success_bg": "#dcfce7",
     "success_text": "#166534",
     "success_border": "#86efac",
@@ -30,6 +31,8 @@ THEME_COLORS = {
     "muted_bg": "#f1f5f9",
     "muted_text": "#475569",
     "muted_border": "#cbd5e1",
+    "shadow": "rgba(15, 23, 42, 0.08)",
+    "shadow_soft": "rgba(15, 23, 42, 0.04)",
 }
 
 SPACING = {
@@ -43,7 +46,7 @@ SPACING = {
 }
 
 TYPOGRAPHY = {
-    "page_title": "34px",
+    "page_title": "32px",
     "section_title": "24px",
     "hero_title": "28px",
     "card_title": "18px",
@@ -72,12 +75,14 @@ CARD_STYLE = (
     f"border:1px solid {THEME_COLORS['border']};"
     f"background:{THEME_COLORS['surface']};"
     f"border-radius:{RADIUS['lg']};"
+    f"box-shadow:0 10px 28px {THEME_COLORS['shadow_soft']};"
 )
 SUMMARY_CARD_STYLE = (
     "display:grid;gap:8px;padding:18px;"
     f"border:1px solid {THEME_COLORS['border']};"
     f"background:{THEME_COLORS['surface']};"
     f"border-radius:{RADIUS['lg']};"
+    f"box-shadow:0 10px 28px {THEME_COLORS['shadow_soft']};"
 )
 ERROR_STYLE = (
     "padding:12px;"
@@ -95,18 +100,23 @@ BODY_STYLE = (
 )
 TABLE_STYLE = "width:100%;border-collapse:collapse;"
 ACTION_ROW_STYLE = "display:flex;gap:8px;flex-wrap:wrap;"
-PAGE_MAIN_STYLE = "width:min(1120px,100%);margin:0 auto;padding:32px 20px 64px;"
-APP_SHELL_STYLE = "min-height:100vh;display:grid;grid-template-columns:220px minmax(0,1fr);"
+PAGE_MAIN_STYLE = "width:min(1320px,100%);margin:0 auto;padding:32px 28px 64px;"
+APP_SHELL_STYLE = (
+    "min-height:100vh;padding-left:var(--sidebar-width);"
+)
 SIDEBAR_STYLE = (
-    "display:grid;align-content:start;gap:18px;padding:28px 18px;"
+    "display:grid;align-content:space-between;gap:18px;padding:26px 14px;"
+    "position:fixed;left:0;top:0;bottom:0;z-index:60;"
+    "width:var(--sidebar-width);box-sizing:border-box;"
     f"border-right:1px solid {THEME_COLORS['border']};"
     f"background:{THEME_COLORS['surface']};"
 )
 SIDEBAR_BRAND_STYLE = (
+    "display:flex;align-items:center;gap:10px;"
     f"color:{THEME_COLORS['secondary']};font-weight:800;font-size:18px;"
-    "letter-spacing:0.02em;text-decoration:none;"
+    "letter-spacing:0;text-decoration:none;"
 )
-SIDEBAR_NAV_STYLE = "display:grid;gap:6px;"
+SIDEBAR_NAV_STYLE = "display:grid;gap:8px;"
 NOTICE_BOX_STYLE = (
     "padding:12px;"
     f"border:1px solid {THEME_COLORS['border']};"
@@ -196,6 +206,7 @@ def surface_card_style(*, gap: str = "14px", padding: str = "18px") -> str:
         f"border:1px solid {THEME_COLORS['border']};"
         f"background:{THEME_COLORS['surface']};"
         f"border-radius:{RADIUS['lg']};"
+        f"box-shadow:0 10px 28px {THEME_COLORS['shadow_soft']};"
     )
 
 
@@ -212,13 +223,18 @@ def selectable_card_style(*, selected: bool) -> str:
 
 def nav_link_style(*, active: bool = False) -> str:
     """回傳 AppShell sidebar 導覽連結樣式。"""
-    background = THEME_COLORS["primary_soft"] if active else "transparent"
-    color = THEME_COLORS["primary"] if active else THEME_COLORS["secondary"]
+    background = (
+        f"linear-gradient(135deg,{THEME_COLORS['primary']},{THEME_COLORS['primary_hover']})"
+        if active
+        else "transparent"
+    )
+    color = "#fff" if active else THEME_COLORS["secondary"]
     weight = "700" if active else "600"
     return (
-        "display:block;padding:10px 12px;text-decoration:none;"
+        "display:flex;align-items:center;gap:12px;padding:12px 14px;text-decoration:none;"
         f"border-radius:{RADIUS['md']};background:{background};"
         f"color:{color};font-weight:{weight};"
+        f"box-shadow:{'0 10px 20px rgba(8,122,95,0.18)' if active else 'none'};"
     )
 
 
@@ -264,9 +280,10 @@ def primary_button_style(*, size: str = "md") -> str:
     size_style = BUTTON_SIZES[size]
     return (
         f"display:inline-block;{size_style}color:#fff;"
-        f"background:{THEME_COLORS['primary']};"
+        f"background:linear-gradient(135deg,{THEME_COLORS['primary']},{THEME_COLORS['primary_hover']});"
         f"border-radius:{RADIUS['md']};"
-        "text-decoration:none;border:none;cursor:pointer;font-weight:700;"
+        "text-decoration:none;border:none;cursor:pointer;font-weight:700;white-space:nowrap;"
+        "box-shadow:0 10px 22px rgba(8,122,95,0.18);"
     )
 
 
@@ -278,7 +295,7 @@ def secondary_button_style(*, size: str = "md") -> str:
         f"background:{THEME_COLORS['primary_soft']};color:{THEME_COLORS['primary']};"
         f"border:1px solid {THEME_COLORS['border_strong']};"
         f"border-radius:{RADIUS['md']};"
-        "text-decoration:none;cursor:pointer;font-weight:700;"
+        "text-decoration:none;cursor:pointer;font-weight:700;white-space:nowrap;"
     )
 
 
@@ -289,7 +306,7 @@ def danger_button_style(*, size: str = "sm") -> str:
         f"display:inline-block;{size_style}"
         f"background:{THEME_COLORS['danger_bg']};color:{THEME_COLORS['danger_text']};"
         f"border:1px solid {THEME_COLORS['danger_border']};"
-        f"border-radius:{RADIUS['md']};cursor:pointer;"
+        f"border-radius:{RADIUS['md']};cursor:pointer;white-space:nowrap;"
     )
 
 
@@ -298,7 +315,8 @@ def disabled_button_style(*, size: str = "md") -> str:
     size_style = BUTTON_SIZES[size]
     return (
         f"display:inline-block;{size_style}background:#e5e7eb;color:#6b7280;"
-        "text-decoration:none;border:1px solid #d1d5db;border-radius:8px;cursor:not-allowed;"
+        "text-decoration:none;border:1px solid #d1d5db;border-radius:8px;"
+        "cursor:not-allowed;white-space:nowrap;"
         "opacity:0.85;"
     )
 

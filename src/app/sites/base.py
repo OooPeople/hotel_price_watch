@@ -150,6 +150,10 @@ class SiteAdapter(ABC):
         """判斷 Chrome 分頁 URL 是否屬於此站點可處理範圍。"""
         return self.match_url(url)
 
+    def is_browser_preview_url(self, url: str) -> bool:
+        """判斷 Chrome 分頁 URL 是否足以作為建立 preview 的來源。"""
+        return self.is_browser_page_url(url)
+
     def browser_tab_matches_watch(
         self,
         *,
@@ -163,3 +167,14 @@ class SiteAdapter(ABC):
         if draft is not None and draft.browser_page_url == tab_url:
             return True
         return watch_item.canonical_url == tab_url
+
+    def build_browser_operation_url(
+        self,
+        *,
+        watch_item: WatchItem,
+        draft: SearchDraft | None,
+    ) -> str:
+        """建立 runtime 操作瀏覽器時應導向與比對的 URL。"""
+        if draft is not None and draft.seed_url.strip():
+            return draft.seed_url
+        return watch_item.canonical_url

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.error import URLError
+from urllib.request import urlopen
 
 from app.infrastructure.browser.chrome_cdp_connection import ChromeCdpConnector
 from app.infrastructure.browser.chrome_models import ChromeTabCapture, ChromeTabSummary
@@ -110,6 +113,10 @@ class ChromeCdpHtmlFetcher:
 
     def list_tabs(self) -> tuple[ChromeTabSummary, ...]:
         """列出目前專用 Chrome session 中所有可附著分頁摘要。"""
+        quick_tabs = self._list_tabs_from_cdp_targets()
+        if quick_tabs is not None:
+            return quick_tabs
+
         browser, playwright = self._connect_playwright_browser()
         try:
             context = browser.contexts[0] if browser.contexts else browser.new_context()
@@ -122,6 +129,37 @@ class ChromeCdpHtmlFetcher:
             return tuple(tabs)
         finally:
             playwright.stop()
+
+    def _list_tabs_from_cdp_targets(self) -> tuple[ChromeTabSummary, ...] | None:
+        """用 CDP HTTP targets 快速列出分頁，避免摘要頁因 Playwright attach 卡住。"""
+        try:
+            with urlopen(f"{self.cdp_endpoint}/json/list", timeout=2.0) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (OSError, URLError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            return None
+        if not isinstance(payload, list):
+            return None
+
+        tabs: list[ChromeTabSummary] = []
+        for item in payload:
+            if not isinstance(item, dict) or item.get("type") != "page":
+                continue
+            tab_id = item.get("id")
+            url = item.get("url")
+            title = item.get("title", "")
+            if not isinstance(tab_id, str) or not isinstance(url, str):
+                continue
+            tabs.append(
+                ChromeTabSummary(
+                    tab_id=tab_id,
+                    title=title if isinstance(title, str) else "",
+                    url=url,
+                    visibility_state=None,
+                    has_focus=None,
+                    was_discarded=None,
+                )
+            )
+        return tuple(tabs)
 
     def fetch_tab_capture(
         self,
@@ -151,35 +189,40 @@ class ChromeCdpHtmlFetcher:
         page_strategy: BrowserPageStrategy | None = None,
     ) -> ChromeTabCapture:
         """找出最接近目標的頁面，刷新後抓回目前 HTML。"""
+        return self.capture_for_url(
+            expected_url=expected_url,
+            fallback_url=fallback_url,
+            preferred_tab_id=preferred_tab_id,
+            excluded_tab_ids=excluded_tab_ids,
+            page_strategy=page_strategy,
+            reload=True,
+        )
+
+    def capture_for_url(
+        self,
+        *,
+        expected_url: str,
+        fallback_url: str | None = None,
+        preferred_tab_id: str | None = None,
+        excluded_tab_ids: tuple[str, ...] = (),
+        page_strategy: BrowserPageStrategy | None = None,
+        reload: bool = False,
+    ) -> ChromeTabCapture:
+        """找出最接近目標的頁面，必要時導頁後擷取目前 HTML。"""
         resolved_strategy = self._resolve_page_strategy(page_strategy)
         browser, playwright = self._connect_playwright_browser()
         try:
             context = browser.contexts[0] if browser.contexts else browser.new_context()
-            page = None
-            if preferred_tab_id is not None and preferred_tab_id not in excluded_tab_ids:
-                page = self._get_page_by_tab_id(context, preferred_tab_id)
-            page = page or self._find_best_page(
-                context,
+            page = self._resolve_page_for_url(
+                context=context,
                 expected_url=expected_url,
+                fallback_url=fallback_url,
+                preferred_tab_id=preferred_tab_id,
                 excluded_tab_ids=excluded_tab_ids,
                 page_strategy=resolved_strategy,
             )
-            if page is None:
-                page = context.new_page()
-                page.goto(
-                    fallback_url or expected_url,
-                    wait_until="domcontentloaded",
-                    timeout=30000,
-                )
-            else:
-                self._ensure_page_is_on_target(
-                    page=page,
-                    expected_url=expected_url,
-                    fallback_url=fallback_url,
-                    page_strategy=resolved_strategy,
-                )
-
-            page.reload(wait_until="domcontentloaded", timeout=30000)
+            if reload:
+                page.reload(wait_until="domcontentloaded", timeout=30000)
             return self._capture_page(page=page, page_strategy=resolved_strategy)
         finally:
             playwright.stop()
@@ -198,29 +241,14 @@ class ChromeCdpHtmlFetcher:
         browser, playwright = self._connect_playwright_browser()
         try:
             context = browser.contexts[0] if browser.contexts else browser.new_context()
-            page = None
-            if preferred_tab_id is not None and preferred_tab_id not in excluded_tab_ids:
-                page = self._get_page_by_tab_id(context, preferred_tab_id)
-            page = page or self._find_best_page(
-                context,
+            page = self._resolve_page_for_url(
+                context=context,
                 expected_url=expected_url,
+                fallback_url=fallback_url,
+                preferred_tab_id=preferred_tab_id,
                 excluded_tab_ids=excluded_tab_ids,
                 page_strategy=resolved_strategy,
             )
-            if page is None:
-                page = context.new_page()
-                page.goto(
-                    fallback_url or expected_url,
-                    wait_until="domcontentloaded",
-                    timeout=30000,
-                )
-            else:
-                self._ensure_page_is_on_target(
-                    page=page,
-                    expected_url=expected_url,
-                    fallback_url=fallback_url,
-                    page_strategy=resolved_strategy,
-                )
             return self._build_tab_summary(page=page)
         finally:
             playwright.stop()
@@ -365,9 +393,72 @@ class ChromeCdpHtmlFetcher:
                 return page
         return None
 
+    def _get_confident_page_by_tab_id(
+        self,
+        context,
+        tab_id: str,
+        *,
+        expected_url: str,
+        page_strategy: BrowserPageStrategy | None = None,
+    ):
+        """依 tab id 找頁面，但僅在 URL 與目標足夠吻合時才沿用。"""
+        page = self._get_page_by_tab_id(context, tab_id)
+        if page is None:
+            return None
+        if self._is_page_confident_match(
+            current_url=page.url,
+            expected_url=expected_url,
+            page_strategy=page_strategy,
+        ):
+            return page
+        return None
+
     def _build_tab_summary(self, *, page) -> ChromeTabSummary:
         """讀出單一 Chrome 分頁的摘要與背景節流訊號。"""
         return self._build_page_capture_helper().build_tab_summary(page=page)
+
+    def _resolve_page_for_url(
+        self,
+        *,
+        context,
+        expected_url: str,
+        fallback_url: str | None,
+        preferred_tab_id: str | None,
+        excluded_tab_ids: tuple[str, ...],
+        page_strategy: BrowserPageStrategy | None = None,
+    ):
+        """依目標 URL、既有 hint 與排除清單，解析本次操作應使用的分頁。"""
+        resolved_strategy = self._resolve_page_strategy(page_strategy)
+        page = None
+        preferred_page = None
+        if preferred_tab_id is not None and preferred_tab_id not in excluded_tab_ids:
+            preferred_page = self._get_page_by_tab_id(context, preferred_tab_id)
+            if preferred_page is not None and self._is_page_confident_match(
+                current_url=preferred_page.url,
+                expected_url=expected_url,
+                page_strategy=resolved_strategy,
+            ):
+                page = preferred_page
+        page = page or self._find_best_page(
+            context,
+            expected_url=expected_url,
+            excluded_tab_ids=excluded_tab_ids,
+            page_strategy=resolved_strategy,
+        )
+        if page is None:
+            page = preferred_page or context.new_page()
+            self._navigate_page_to_target(
+                page=page,
+                target_url=fallback_url or expected_url,
+            )
+        else:
+            self._ensure_page_is_on_target(
+                page=page,
+                expected_url=expected_url,
+                fallback_url=fallback_url,
+                page_strategy=resolved_strategy,
+            )
+        return page
 
     def _capture_page(
         self,
@@ -419,16 +510,20 @@ class ChromeCdpHtmlFetcher:
     ) -> None:
         """確保要刷新的分頁已在目標飯店頁上下文中。"""
         resolved_strategy = self._resolve_page_strategy(page_strategy)
-        if resolved_strategy.is_ready_page(
+        if self._is_page_confident_match(
             current_url=page.url,
             expected_url=expected_url,
+            page_strategy=resolved_strategy,
         ):
             return
-        page.goto(
-            fallback_url or expected_url,
-            wait_until="domcontentloaded",
-            timeout=30000,
+        self._navigate_page_to_target(
+            page=page,
+            target_url=fallback_url or expected_url,
         )
+
+    def _navigate_page_to_target(self, *, page, target_url: str) -> None:
+        """把既有或新建分頁導到目標 URL，集中 browser navigation 參數。"""
+        page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
 
     def _score_page(
         self,
@@ -458,6 +553,29 @@ class ChromeCdpHtmlFetcher:
         return self._build_page_matcher().is_confident_page_match(
             current_signature=current_signature,
             expected_signature=expected_signature,
+            score=score,
+            page_strategy=resolved_strategy,
+        )
+
+    def _is_page_confident_match(
+        self,
+        *,
+        current_url: str,
+        expected_url: str,
+        page_strategy: BrowserPageStrategy | None = None,
+    ) -> bool:
+        """使用 page matcher 判斷目前 URL 是否可安全視為目標頁。"""
+        resolved_strategy = self._resolve_page_strategy(page_strategy)
+        score = self._score_page(
+            current_url,
+            expected_url=expected_url,
+            page_strategy=resolved_strategy,
+        )
+        if score <= 0:
+            return False
+        return self._is_confident_page_match(
+            current_signature=resolved_strategy.page_signature(current_url),
+            expected_signature=resolved_strategy.page_signature(expected_url),
             score=score,
             page_strategy=resolved_strategy,
         )

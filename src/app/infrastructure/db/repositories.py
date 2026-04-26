@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -61,6 +62,41 @@ class SqliteWatchItemRepository:
                 "SELECT * FROM watch_items ORDER BY created_at_utc, id",
             ).fetchall()
         return [_row_to_watch_item(row) for row in rows]
+
+    def get_collection_revision_token(self) -> str:
+        """回傳 watch item 集合目前內容的輕量版本 token。"""
+        with self._database.connect() as connection:
+            return _rows_revision_token(
+                connection,
+                """
+                SELECT
+                    id, site, hotel_id, room_id, plan_id, check_in_date,
+                    check_out_date, people_count, room_count, hotel_name,
+                    room_name, plan_name, canonical_url, notification_rule_json,
+                    scheduler_interval_seconds, enabled, paused_reason,
+                    created_at_utc, updated_at_utc
+                FROM watch_items
+                ORDER BY id
+                """,
+            )
+
+    def get_revision_token(self, watch_item_id: str) -> str:
+        """回傳單一 watch item 定義目前內容的輕量版本 token。"""
+        with self._database.connect() as connection:
+            return _rows_revision_token(
+                connection,
+                """
+                SELECT
+                    id, site, hotel_id, room_id, plan_id, check_in_date,
+                    check_out_date, people_count, room_count, hotel_name,
+                    room_name, plan_name, canonical_url, notification_rule_json,
+                    scheduler_interval_seconds, enabled, paused_reason,
+                    created_at_utc, updated_at_utc
+                FROM watch_items
+                WHERE id = ?
+                """,
+                (watch_item_id,),
+            )
 
     def delete(self, watch_item_id: str) -> None:
         """刪除 watch item，依 foreign key 一併清掉附屬資料。"""
@@ -276,6 +312,185 @@ class SqliteRuntimeRepository:
             )
             for row in rows
         ]
+
+    def list_price_history_since(
+        self,
+        *,
+        watch_item_ids: tuple[str, ...],
+        since: datetime,
+    ) -> dict[str, tuple[PriceHistoryEntry, ...]]:
+        """批次讀取多個 watch item 在指定時間後的成功價格歷史。"""
+        if not watch_item_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in watch_item_ids)
+        with self._database.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM price_history
+                WHERE watch_item_id IN ({placeholders})
+                  AND captured_at_utc >= ?
+                ORDER BY watch_item_id, captured_at_utc, id
+                """,
+                (*watch_item_ids, _datetime_to_text(since)),
+            ).fetchall()
+        grouped: dict[str, list[PriceHistoryEntry]] = {
+            watch_item_id: [] for watch_item_id in watch_item_ids
+        }
+        for row in rows:
+            grouped[row["watch_item_id"]].append(
+                PriceHistoryEntry(
+                    watch_item_id=row["watch_item_id"],
+                    captured_at=_text_to_datetime(row["captured_at_utc"]),
+                    display_price_text=row["display_price_text"],
+                    normalized_price_amount=Decimal(row["normalized_price_amount"]),
+                    currency=row["currency"],
+                    source_kind=SourceKind(row["source_kind"]),
+                )
+            )
+        return {
+            watch_item_id: tuple(entries)
+            for watch_item_id, entries in grouped.items()
+        }
+
+    def count_notifications_since(self, since: datetime) -> int:
+        """統計指定時間後已送出或部分成功的通知事件數。"""
+        with self._database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM check_events
+                WHERE checked_at_utc >= ?
+                  AND notification_status IN (?, ?)
+                """,
+                (
+                    _datetime_to_text(since),
+                    NotificationDeliveryStatus.SENT.value,
+                    NotificationDeliveryStatus.PARTIAL.value,
+                ),
+            ).fetchone()
+        return int(row["count"] if row is not None else 0)
+
+    def get_watch_list_revision_token(
+        self,
+        *,
+        price_history_since: datetime,
+        notification_since: datetime,
+    ) -> str:
+        """回傳首頁可見 runtime 資料目前內容的輕量版本 token。"""
+        with self._database.connect() as connection:
+            return _hash_revision_parts(
+                (
+                    _rows_revision_token(
+                        connection,
+                        """
+                        SELECT
+                            watch_item_id, checked_at_utc, availability,
+                            normalized_price_amount, currency, backoff_until_utc,
+                            is_degraded, consecutive_failures, last_error_code
+                        FROM latest_check_snapshots
+                        ORDER BY watch_item_id
+                        """,
+                    ),
+                    _rows_revision_token(
+                        connection,
+                        """
+                        SELECT
+                            watch_item_id, captured_at_utc, display_price_text,
+                            normalized_price_amount, currency, source_kind
+                        FROM price_history
+                        WHERE captured_at_utc >= ?
+                        ORDER BY watch_item_id, captured_at_utc, id
+                        """,
+                        (_datetime_to_text(price_history_since),),
+                    ),
+                    _rows_revision_token(
+                        connection,
+                        """
+                        SELECT
+                            checked_at_utc, notification_status
+                        FROM check_events
+                        WHERE checked_at_utc >= ?
+                          AND notification_status IN (?, ?)
+                        ORDER BY checked_at_utc, id
+                        """,
+                        (
+                            _datetime_to_text(notification_since),
+                            NotificationDeliveryStatus.SENT.value,
+                            NotificationDeliveryStatus.PARTIAL.value,
+                        ),
+                    ),
+                )
+            )
+
+    def get_watch_detail_revision_token(self, watch_item_id: str) -> str:
+        """回傳 watch 詳細頁可見 runtime 資料目前內容的輕量版本 token。"""
+        with self._database.connect() as connection:
+            return _hash_revision_parts(
+                (
+                    _rows_revision_token(
+                        connection,
+                        """
+                        SELECT
+                            watch_item_id, checked_at_utc, availability,
+                            normalized_price_amount, currency, backoff_until_utc,
+                            is_degraded, consecutive_failures, last_error_code
+                        FROM latest_check_snapshots
+                        WHERE watch_item_id = ?
+                        """,
+                        (watch_item_id,),
+                    ),
+                    _rows_revision_token(
+                        connection,
+                        """
+                        SELECT
+                            checked_at_utc, availability, event_kinds_json,
+                            normalized_price_amount, currency, error_code,
+                            notification_status, sent_channels_json,
+                            throttled_channels_json, failed_channels_json
+                        FROM check_events
+                        WHERE watch_item_id = ?
+                        ORDER BY checked_at_utc, id
+                        """,
+                        (watch_item_id,),
+                    ),
+                    _rows_revision_token(
+                        connection,
+                        """
+                        SELECT
+                            last_notified_price, last_notified_availability,
+                            last_notified_at_utc, consecutive_failures,
+                            consecutive_parse_failures, degraded_notified_at_utc
+                        FROM notification_states
+                        WHERE watch_item_id = ?
+                        """,
+                        (watch_item_id,),
+                    ),
+                    _rows_revision_token(
+                        connection,
+                        """
+                        SELECT
+                            captured_at_utc, reason, payload_text, source_url,
+                            http_status
+                        FROM debug_artifacts
+                        WHERE watch_item_id = ?
+                        ORDER BY captured_at_utc, id
+                        """,
+                        (watch_item_id,),
+                    ),
+                    _rows_revision_token(
+                        connection,
+                        """
+                        SELECT
+                            occurred_at_utc, event_kind, from_state, to_state,
+                            detail_text
+                        FROM runtime_state_events
+                        WHERE watch_item_id = ?
+                        ORDER BY occurred_at_utc, id
+                        """,
+                        (watch_item_id,),
+                    ),
+                )
+            )
 
     def save_notification_state(self, state: NotificationState) -> None:
         """新增或更新去重用的通知狀態。"""
@@ -674,6 +889,18 @@ class SqliteAppSettingsRepository:
             use_24_hour_time=bool(row["use_24_hour_time"]),
         )
 
+    def get_display_settings_revision_token(self) -> str:
+        """回傳會影響 GUI 時間格式的顯示設定版本 token。"""
+        with self._database.connect() as connection:
+            return _rows_revision_token(
+                connection,
+                """
+                SELECT use_24_hour_time, updated_at_utc
+                FROM display_settings
+                WHERE singleton_id = 1
+                """,
+            )
+
     def save_display_settings(self, settings: DisplaySettings) -> DisplaySettings:
         """保存 GUI 顯示設定。"""
         with self._database.connect() as connection:
@@ -792,6 +1019,34 @@ def _serialize_notification_rule(rule: NotificationRule) -> dict[str, object]:
         "operator": rule.operator.value,
         "children": [_serialize_notification_rule(child) for child in rule.children],
     }
+
+
+def _rows_revision_token(
+    connection: Connection,
+    query: str,
+    parameters: tuple[object, ...] = (),
+) -> str:
+    """把指定查詢結果轉成穩定 hash，供 web fragment 版本判斷。"""
+    rows = connection.execute(query, parameters).fetchall()
+    digest = hashlib.sha256()
+    for row in rows:
+        for key in row.keys():
+            value = row[key]
+            digest.update(str(key).encode("utf-8"))
+            digest.update(b"=")
+            digest.update(str(value if value is not None else "").encode("utf-8"))
+            digest.update(b"\x1f")
+        digest.update(b"\x1e")
+    return digest.hexdigest()
+
+
+def _hash_revision_parts(parts: tuple[str, ...]) -> str:
+    """合併多個子版本 token，避免上層知道各資料表細節。"""
+    digest = hashlib.sha256()
+    for part in parts:
+        digest.update(part.encode("utf-8"))
+        digest.update(b"\x1e")
+    return digest.hexdigest()
 
 
 def _deserialize_notification_rule(payload: dict[str, object]) -> NotificationRule:

@@ -65,14 +65,37 @@ def _render_app_shell(*, title: str, body: str) -> str:
           type="button"
           aria-label="收合側邊選單"
           aria-expanded="true"
-        >‹</button>
-        <div class="sidebar-content" style="display:grid;gap:18px;">
-          <a class="app-brand" href="/" style="{SIDEBAR_BRAND_STYLE}">Hotel Price Watch</a>
+        >
+          <span data-sidebar-expanded-icon>{icon_svg("chevron-left", size=18)}</span>
+          <span data-sidebar-collapsed-icon style="display:none;">
+            {icon_svg("chevron-right", size=18)}
+          </span>
+        </button>
+        <div class="sidebar-content" style="display:grid;gap:28px;align-content:start;">
+          <a
+            class="app-brand"
+            href="/"
+            aria-label="Hotel Price Watch"
+            style="{SIDEBAR_BRAND_STYLE}"
+          >
+            {_brand_mark()}
+            <span>IKYU 價格監視</span>
+          </a>
           <nav aria-label="主要導覽" style="{SIDEBAR_NAV_STYLE}">
-            {_render_nav_link(href="/", label="我的監視", title=title)}
-            {_render_nav_link(href="/watches/new", label="新增監視", title=title)}
-            {_render_nav_link(href="/settings", label="設定", title=title)}
-            {_render_nav_link(href="/debug/captures", label="進階診斷", title=title)}
+            {_render_nav_link(href="/", label="總覽", title=title, icon_name="home")}
+            {_render_nav_link(
+                href="/watches/new",
+                label="新增監視",
+                title=title,
+                icon_name="plus-circle",
+            )}
+            {_render_nav_link(href="/settings", label="通知設定", title=title, icon_name="bell")}
+            {_render_nav_link(
+                href="/debug/captures",
+                label="進階診斷",
+                title=title,
+                icon_name="activity",
+            )}
           </nav>
         </div>
       </aside>
@@ -81,6 +104,22 @@ def _render_app_shell(*, title: str, body: str) -> str:
       </main>
     </div>
     {_app_shell_script()}
+    """
+
+
+def _brand_mark() -> str:
+    """渲染 AppShell 品牌圖示，避免導覽只靠文字辨識。"""
+    return f"""
+    <span
+      aria-hidden="true"
+      style="
+        width:38px;height:38px;display:grid;place-items:center;border-radius:8px;
+        color:#fff;background:linear-gradient(135deg,{color_token("primary")},{color_token("primary_hover")});
+        box-shadow:0 10px 22px rgba(8,122,95,0.2);
+      "
+    >
+      {icon_svg("bell", size=20)}
+    </span>
     """
 
 
@@ -113,18 +152,73 @@ def _global_style() -> str:
         color: {color_token("primary")};
         border-color: {color_token("border_strong")};
       }}
-      .app-shell,
-      .app-sidebar {{
-        overflow: visible;
+      .app-shell {{
+        --sidebar-width: 248px;
+        --main-max-width: 1320px;
+        --main-gutter: 28px;
+        transition: padding-left 220ms ease;
+      }}
+      .app-shell > main {{
+        transition: padding 220ms ease;
+      }}
+      #runtime-status-section {{
+        min-height: 132px;
+      }}
+      .runtime-status-dock {{
+        position: fixed;
+        left: max(
+          var(--main-gutter),
+          calc(
+            var(--sidebar-width) +
+            ((100vw - var(--sidebar-width) - var(--main-max-width)) / 2) +
+            var(--main-gutter)
+          )
+        );
+        right: max(
+          var(--main-gutter),
+          calc(
+            ((100vw - var(--sidebar-width) - var(--main-max-width)) / 2) +
+            var(--main-gutter)
+          )
+        );
+        bottom: 18px;
+        z-index: 50;
+        transition: width 220ms ease, left 220ms ease, right 220ms ease;
+      }}
+      .runtime-status-dock.is-collapsed {{
+        left: auto;
+        width: min(260px, calc(100vw - 32px));
+      }}
+      .runtime-status-dock.is-collapsed .runtime-status-header {{
+        border-bottom: 0 !important;
+        padding: 10px 12px !important;
+      }}
+      .runtime-status-dock.is-collapsed .runtime-status-panel {{
+        display: none !important;
+      }}
+      .app-shell.sidebar-collapsed .runtime-status-dock.is-collapsed {{
+        left: auto;
       }}
       .app-sidebar {{
-        position: relative;
+        overflow: visible;
+        transition:
+          width 220ms ease,
+          padding 220ms ease,
+          background-color 220ms ease,
+          border-color 220ms ease;
+      }}
+      .sidebar-content {{
+        height: 100%;
+        align-content: space-between;
+        overflow-y: auto;
+        overflow-x: visible;
+        transition: opacity 160ms ease;
       }}
       .sidebar-toggle {{
         position: absolute;
         top: 28px;
         right: -15px;
-        z-index: 20;
+        z-index: 80;
         width: 30px;
         height: 30px;
         display: grid;
@@ -144,26 +238,48 @@ def _global_style() -> str:
         background: {color_token("primary_soft")};
       }}
       .app-shell.sidebar-collapsed {{
-        grid-template-columns: 0 minmax(0, 1fr) !important;
+        --sidebar-width: 40px;
+        padding-left: var(--sidebar-width) !important;
       }}
       .app-shell.sidebar-collapsed .app-sidebar {{
+        width: var(--sidebar-width) !important;
         padding: 0 !important;
-        border-right: none !important;
+        border-right: 1px solid {border_color} !important;
         background: transparent !important;
       }}
       .app-shell.sidebar-collapsed .sidebar-content {{
+        opacity: 0;
         display: none !important;
+      }}
+      .app-shell.sidebar-collapsed .sidebar-toggle {{
+        right: 5px;
+      }}
+      @media (prefers-reduced-motion: reduce) {{
+        .app-shell,
+        .app-shell > main,
+        .app-sidebar,
+        .sidebar-content,
+        .runtime-status-dock {{
+          transition: none !important;
+        }}
       }}
       @media (max-width: 820px) {{
         .app-shell {{
           display: block !important;
+          padding-left: 0 !important;
         }}
         .app-sidebar {{
-          position: sticky;
+          position: sticky !important;
           top: 0;
+          bottom: auto !important;
+          left: auto !important;
           z-index: 10;
+          width: auto !important;
           border-right: none !important;
           border-bottom: 1px solid {border_color};
+        }}
+        .sidebar-content {{
+          height: auto;
         }}
         .app-sidebar nav {{
           grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -174,13 +290,47 @@ def _global_style() -> str:
         }}
         .app-shell.sidebar-collapsed .app-sidebar {{
           min-height: 54px;
+          width: auto !important;
           border-bottom: 1px solid {border_color} !important;
           background: {color_token("surface")} !important;
+        }}
+        .app-shell.sidebar-collapsed .sidebar-toggle {{
+          right: 14px;
+        }}
+        .add-watch-stepper {{
+          grid-template-columns: 1fr 1fr !important;
+        }}
+        .add-watch-preview-layout,
+        .chrome-tab-selection-layout {{
+          grid-template-columns: 1fr !important;
+        }}
+        .add-watch-summary {{
+          position: static !important;
+        }}
+        #runtime-status-section {{
+          min-height: 112px;
+        }}
+        .runtime-status-dock {{
+          left: 14px !important;
+          right: 14px !important;
+          bottom: 12px;
+        }}
+        .runtime-status-dock.is-collapsed {{
+          left: auto !important;
+          width: min(220px, calc(100vw - 28px));
+        }}
+        .runtime-status-panel {{
+          grid-template-columns: 1fr !important;
+        }}
+        .runtime-status-panel > div {{
+          border-right: none !important;
+          border-bottom: 1px solid {border_color};
+          padding: 8px 0 !important;
         }}
       }}
       @media (max-width: 640px) {{
         main {{
-          padding: 20px 14px 48px !important;
+          padding: 20px 14px 144px !important;
         }}
         .page-header {{
           display: grid !important;
@@ -212,6 +362,12 @@ def _global_style() -> str:
         .watch-card-footer {{
           display: grid !important;
         }}
+        .add-watch-stepper {{
+          grid-template-columns: 1fr !important;
+        }}
+        .chrome-tab-card {{
+          grid-template-columns: 1fr !important;
+        }}
       }}
     </style>
     """
@@ -230,8 +386,13 @@ def _app_shell_script() -> str:
 
         const storageKey = "hotelPriceWatch.sidebarCollapsed";
         const applyCollapsedState = (collapsed) => {
+          const expandedIcon = toggle.querySelector("[data-sidebar-expanded-icon]");
+          const collapsedIcon = toggle.querySelector("[data-sidebar-collapsed-icon]");
           shell.classList.toggle("sidebar-collapsed", collapsed);
-          toggle.textContent = collapsed ? "›" : "‹";
+          if (expandedIcon && collapsedIcon) {
+            expandedIcon.style.display = collapsed ? "none" : "";
+            collapsedIcon.style.display = collapsed ? "" : "none";
+          }
           toggle.setAttribute("aria-label", collapsed ? "展開側邊選單" : "收合側邊選單");
           toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
         };
@@ -247,26 +408,79 @@ def _app_shell_script() -> str:
     """
 
 
-def _render_nav_link(*, href: str, label: str, title: str) -> str:
+def _render_nav_link(*, href: str, label: str, title: str, icon_name: str) -> str:
     """依目前頁面標題渲染 sidebar 導覽連結。"""
     active = _nav_link_is_active(label=label, title=title)
+    icon_html = icon_svg(icon_name, size=19)
     return (
         f'<a href="{escape(href)}" style="{nav_link_style(active=active)}">'
-        f"{escape(label)}</a>"
+        f'<span aria-hidden="true" style="display:grid;place-items:center;">{icon_html}</span>'
+        f"<span>{escape(label)}</span></a>"
     )
 
 
 def _nav_link_is_active(*, label: str, title: str) -> bool:
     """用頁面標題推斷目前導覽位置，避免每個 renderer 額外傳 context。"""
-    if label == "我的監視":
+    if label == "總覽":
         return title.startswith("我的價格監視") or title.startswith("監視詳情")
     if label == "新增監視":
         return "新增監視" in title or "選擇 Chrome 分頁" in title
-    if label == "設定":
+    if label == "通知設定":
         return title == "設定" or title == "通知設定"
     if label == "進階診斷":
         return "進階診斷" in title
     return False
+
+
+def icon_svg(name: str, *, size: int = 18) -> str:
+    """渲染少量 inline SVG icon，避免為 AppShell 引入前端打包工具。"""
+    common_attrs = (
+        f'width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" '
+        'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+        'stroke-linejoin="round"'
+    )
+    paths = {
+        "activity": '<path d="M22 12h-4l-3 8-6-16-3 8H2"/>',
+        "alert-circle": (
+            '<circle cx="12" cy="12" r="10"/>'
+            '<path d="M12 8v4"/><path d="M12 16h.01"/>'
+        ),
+        "arrow-up-down": (
+            '<path d="m21 16-4 4-4-4"/><path d="M17 20V4"/>'
+            '<path d="m3 8 4-4 4 4"/><path d="M7 4v16"/>'
+        ),
+        "bell": (
+            '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/>'
+            '<path d="M13.73 21a2 2 0 0 1-3.46 0"/>'
+        ),
+        "calendar": (
+            '<path d="M8 2v4"/><path d="M16 2v4"/>'
+            '<rect width="18" height="18" x="3" y="4" rx="2"/>'
+            '<path d="M3 10h18"/>'
+        ),
+        "check-circle": '<path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/>',
+        "chevron-down": '<path d="m6 9 6 6 6-6"/>',
+        "chevron-left": '<path d="m15 18-6-6 6-6"/>',
+        "chevron-right": '<path d="m9 18 6-6-6-6"/>',
+        "chevron-up": '<path d="m18 15-6-6-6 6"/>',
+        "chrome": (
+            '<circle cx="12" cy="12" r="10"/>'
+            '<circle cx="12" cy="12" r="4"/>'
+            '<path d="M21.17 8H12"/><path d="M3.95 6.06 8.54 14"/>'
+            '<path d="M10.88 21.94 15.46 14"/>'
+        ),
+        "clock": '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+        "home": '<path d="m3 10 9-7 9 7"/><path d="M5 10v10h14V10"/>',
+        "plus-circle": '<circle cx="12" cy="12" r="10"/><path d="M12 8v8"/><path d="M8 12h8"/>',
+        "trend-up": '<path d="M3 17 9 11l4 4 8-8"/><path d="M14 7h7v7"/>',
+        "users": (
+            '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>'
+            '<circle cx="9" cy="7" r="4"/>'
+            '<path d="M22 21v-2a4 4 0 0 0-3-3.87"/>'
+            '<path d="M16 3.13a4 4 0 0 1 0 7.75"/>'
+        ),
+    }
+    return f"<svg {common_attrs}>{paths.get(name, paths['activity'])}</svg>"
 
 
 def page_header(

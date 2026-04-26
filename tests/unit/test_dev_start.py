@@ -3,9 +3,27 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 
+import pytest
+
+from app.domain.entities import WatchItem
+from app.domain.enums import NotificationLeafKind
+from app.domain.notification_rules import RuleLeaf
+from app.domain.value_objects import WatchTarget
+from app.infrastructure.db import SqliteDatabase, SqliteWatchItemRepository
+from app.sites.ikyu.client import _build_target_page_url
 from app.tools import dev_start
+
+
+@pytest.fixture(autouse=True)
+def _isolate_dev_start_database(monkeypatch, tmp_path) -> None:
+    """讓 dev_start 測試固定使用測試資料庫，避免讀到本機真實監視資料。"""
+    monkeypatch.setenv(
+        "HOTEL_PRICE_WATCH_DB_PATH",
+        str(tmp_path / "hotel_price_watch.db"),
+    )
 
 
 class _FakeFetcher:
@@ -107,6 +125,37 @@ def test_dev_start_opens_profile_when_debuggable_chrome_missing(monkeypatch) -> 
     ]
 
 
+def test_dev_start_opens_first_active_watch_when_runtime_enabled(monkeypatch) -> None:
+    """已有 active watch 時，啟動專用 Chrome 應直接使用第一筆監視 URL。"""
+    fetcher = _FakeFetcher(running=False)
+    uvicorn_calls: list[dict[str, object]] = []
+    watch_item = _build_dev_start_watch_item("watch-dev-start-active")
+    database = SqliteDatabase(dev_start._resolve_database_path())
+    database.initialize()
+    SqliteWatchItemRepository(database).save(watch_item)
+    monkeypatch.setattr(dev_start, "ChromeCdpHtmlFetcher", lambda **kwargs: fetcher)
+    monkeypatch.setattr(dev_start, "read_lock_record", lambda path: None)
+    monkeypatch.setattr(dev_start, "_is_port_in_use", lambda **kwargs: False)
+    monkeypatch.setattr(dev_start, "write_lock_record", lambda path, record: None)
+    monkeypatch.setattr(dev_start, "remove_lock_record", lambda path: None)
+    monkeypatch.setattr(
+        dev_start.uvicorn,
+        "run",
+        lambda *args, **kwargs: uvicorn_calls.append(
+            {
+                "args": args,
+                "kwargs": kwargs,
+            }
+        ),
+    )
+
+    dev_start.main()
+
+    assert fetcher.opened is True
+    assert fetcher.open_start_url == _build_target_page_url(watch_item.target)
+    assert len(uvicorn_calls) == 1
+
+
 def test_dev_start_opens_blank_profile_when_runtime_auto_start_disabled(
     monkeypatch,
 ) -> None:
@@ -135,6 +184,35 @@ def test_dev_start_opens_blank_profile_when_runtime_auto_start_disabled(
     assert fetcher.opened is True
     assert fetcher.open_start_url == "about:blank"
     assert len(uvicorn_calls) == 1
+
+
+def _build_dev_start_watch_item(watch_item_id: str) -> WatchItem:
+    """建立 dev_start 測試用的最小 IKYU watch item。"""
+    target = WatchTarget(
+        site="ikyu",
+        hotel_id="00082173",
+        room_id="10191605",
+        plan_id="11035620",
+        check_in_date=date(2026, 9, 18),
+        check_out_date=date(2026, 9, 19),
+        people_count=2,
+        room_count=1,
+    )
+    return WatchItem(
+        id=watch_item_id,
+        target=target,
+        hotel_name="Dormy Inn",
+        room_name="standard room",
+        plan_name="room only",
+        canonical_url="https://www.ikyu.com/zh-tw/00082173/",
+        notification_rule=RuleLeaf(
+            kind=NotificationLeafKind.BELOW_TARGET_PRICE,
+            target_price=Decimal("20000"),
+        ),
+        scheduler_interval_seconds=600,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
 
 
 def test_dev_start_cleans_lock_when_profile_launch_fails(monkeypatch) -> None:

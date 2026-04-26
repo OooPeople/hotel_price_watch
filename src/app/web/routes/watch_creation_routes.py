@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -12,9 +13,10 @@ from app.application.preview_guard import PreviewCooldownError
 from app.application.watch_editor import WatchCreationPreview
 from app.application.watch_tab_matching import find_existing_watch_ids_by_tab_id
 from app.bootstrap.container import AppContainer
-from app.domain.enums import NotificationLeafKind
+from app.domain.entities import CheckEvent, LatestCheckSnapshot, PriceHistoryEntry
+from app.domain.enums import Availability, NotificationLeafKind, SourceKind
 from app.infrastructure.browser import ChromeTabSummary
-from app.sites.base import LookupDiagnostic
+from app.sites.base import LookupDiagnostic, OfferCandidate
 from app.web import request_helpers
 from app.web.views import (
     render_chrome_tab_selection_page,
@@ -22,6 +24,7 @@ from app.web.views import (
 )
 
 CHROME_TAB_LIST_TIMEOUT_SECONDS = 8.0
+CHROME_TAB_PREVIEW_TIMEOUT_SECONDS = 45.0
 
 
 def build_watch_creation_router(container: AppContainer) -> APIRouter:
@@ -155,9 +158,20 @@ def build_watch_creation_router(container: AppContainer) -> APIRouter:
                 status_code=429,
             )
         try:
-            preview = await run_in_threadpool(
-                container.chrome_tab_preview_service.preview_from_tab_id,
-                selected_tab_id,
+            preview = await asyncio.wait_for(
+                run_in_threadpool(
+                    container.chrome_tab_preview_service.preview_from_tab_id,
+                    selected_tab_id,
+                ),
+                timeout=CHROME_TAB_PREVIEW_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            return _chrome_tab_selection_response(
+                container=container,
+                tabs=tabs,
+                error_message="抓取 Chrome 分頁逾時，請確認該分頁已完整載入後再重試。",
+                selected_tab_id=selected_tab_id,
+                status_code=504,
             )
         except Exception as exc:
             diagnostics = getattr(exc, "diagnostics", ())
@@ -172,8 +186,9 @@ def build_watch_creation_router(container: AppContainer) -> APIRouter:
                 diagnostics=diagnostics,
                 selected_tab_id=selected_tab_id,
                 status_code=400,
-            )
+        )
         preview = container.watch_editor_service.mark_existing_watch_for_preview(preview)
+        preview_cache_key = container.watch_creation_preview_cache.store(preview)
         site_name = _site_name_for_preview(container=container, preview=preview)
         container.preview_attempt_guard.register_result(
             diagnostics=preview.diagnostics,
@@ -183,6 +198,7 @@ def build_watch_creation_router(container: AppContainer) -> APIRouter:
             render_new_watch_page(
                 seed_url=preview.draft.seed_url,
                 preview=preview,
+                preview_cache_key=preview_cache_key,
                 site_descriptors=container.site_registry.descriptors(),
             )
         )
@@ -194,6 +210,7 @@ def build_watch_creation_router(container: AppContainer) -> APIRouter:
         form = await request_helpers.read_form_data(request)
         seed_url = form.get("seed_url", "")
         browser_tab_id = form.get("browser_tab_id", "").strip() or None
+        preview_cache_key = form.get("preview_cache_key", "").strip() or None
         preview = None
         try:
             room_id, plan_id = request_helpers.parse_candidate_key(
@@ -206,6 +223,7 @@ def build_watch_creation_router(container: AppContainer) -> APIRouter:
                 container=container,
                 seed_url=seed_url,
                 browser_tab_id=browser_tab_id,
+                preview_cache_key=preview_cache_key,
             )
             preview = container.watch_editor_service.mark_existing_watch_for_preview(preview)
             watch_item = await run_in_threadpool(
@@ -221,6 +239,24 @@ def build_watch_creation_router(container: AppContainer) -> APIRouter:
                     )
                 ),
                 target_price=target_price,
+            )
+            _save_initial_price_snapshot(
+                container=container,
+                preview=preview,
+                watch_item_id=watch_item.id,
+                room_id=room_id,
+                plan_id=plan_id,
+            )
+            container.watch_creation_preview_cache.discard(preview_cache_key)
+        except TimeoutError:
+            return HTMLResponse(
+                render_new_watch_page(
+                    seed_url=seed_url,
+                    error_message="抓取 Chrome 分頁逾時，請回到分頁選擇頁重新抓取。",
+                    preview=preview,
+                    site_descriptors=container.site_registry.descriptors(),
+                ),
+                status_code=504,
             )
         except Exception as exc:
             diagnostics = getattr(exc, "diagnostics", ())
@@ -257,6 +293,87 @@ async def _safe_preview(
         )
     except Exception:
         return None
+
+
+def _save_initial_price_snapshot(
+    *,
+    container: AppContainer,
+    preview: WatchCreationPreview,
+    watch_item_id: str,
+    room_id: str,
+    plan_id: str,
+) -> None:
+    """把建立時已抓到的候選價格寫入最新摘要，避免首頁顯示尚未檢查。"""
+    candidate = _find_candidate_for_initial_snapshot(
+        preview=preview,
+        room_id=room_id,
+        plan_id=plan_id,
+    )
+    if candidate is None or candidate.normalized_price_amount is None:
+        return
+
+    captured_at = datetime.now(UTC)
+    currency = candidate.currency or "JPY"
+    container.runtime_repository.save_latest_check_snapshot(
+        LatestCheckSnapshot(
+            watch_item_id=watch_item_id,
+            checked_at=captured_at,
+            availability=Availability.AVAILABLE,
+            normalized_price_amount=candidate.normalized_price_amount,
+            currency=currency,
+        )
+    )
+    container.runtime_repository.append_check_event(
+        CheckEvent(
+            watch_item_id=watch_item_id,
+            checked_at=captured_at,
+            availability=Availability.AVAILABLE,
+            event_kinds=("initial_snapshot",),
+            normalized_price_amount=candidate.normalized_price_amount,
+            currency=currency,
+        )
+    )
+    container.runtime_repository.append_price_history(
+        PriceHistoryEntry(
+            watch_item_id=watch_item_id,
+            captured_at=captured_at,
+            display_price_text=_display_price_text_for_initial_snapshot(
+                candidate=candidate,
+                currency=currency,
+            ),
+            normalized_price_amount=candidate.normalized_price_amount,
+            currency=currency,
+            source_kind=SourceKind.BROWSER,
+        )
+    )
+
+
+def _find_candidate_for_initial_snapshot(
+    *,
+    preview: WatchCreationPreview,
+    room_id: str,
+    plan_id: str,
+) -> OfferCandidate | None:
+    """從建立表單選取的 room/plan 找回 preview 內的候選方案。"""
+    return next(
+        (
+            candidate
+            for candidate in preview.candidate_bundle.candidates
+            if candidate.room_id == room_id and candidate.plan_id == plan_id
+        ),
+        None,
+    )
+
+
+def _display_price_text_for_initial_snapshot(
+    *,
+    candidate: OfferCandidate,
+    currency: str,
+) -> str:
+    """取得初始價格歷史要顯示的價格字串。"""
+    if candidate.display_price_text:
+        return candidate.display_price_text
+    return f"{currency} {candidate.normalized_price_amount}"
 
 
 def _chrome_tab_selection_response(
@@ -373,12 +490,19 @@ async def _resolve_watch_creation_preview(
     container: AppContainer,
     seed_url: str,
     browser_tab_id: str | None,
+    preview_cache_key: str | None,
 ) -> WatchCreationPreview:
     """依目前主線決定建立 watch 時應重建哪一份 preview。"""
+    cached_preview = container.watch_creation_preview_cache.get(preview_cache_key)
+    if cached_preview is not None:
+        return cached_preview
     if browser_tab_id is not None:
-        return await run_in_threadpool(
-            container.chrome_tab_preview_service.preview_from_tab_id,
-            browser_tab_id,
+        return await asyncio.wait_for(
+            run_in_threadpool(
+                container.chrome_tab_preview_service.preview_from_tab_id,
+                browser_tab_id,
+            ),
+            timeout=CHROME_TAB_PREVIEW_TIMEOUT_SECONDS,
         )
     return await run_in_threadpool(
         container.watch_editor_service.preview_from_seed_url,

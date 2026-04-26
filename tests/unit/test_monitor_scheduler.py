@@ -55,6 +55,22 @@ def test_mark_finished_reschedules_with_backoff_override() -> None:
     assert scheduler.get_worker_state("watch-1") is None
 
 
+def test_mark_check_completed_reschedules_without_worker_assignment() -> None:
+    """驗證啟動恢復等非 worker 檢查完成後，也能推進下一次執行時間。"""
+    scheduler = MonitorScheduler(random_seed=1)
+    now = datetime(2026, 4, 12, 10, 0, 0)
+
+    scheduler.register_watch(watch_item_id="watch-1", interval_seconds=600, now=now)
+
+    updated = scheduler.mark_check_completed(
+        watch_item_id="watch-1",
+        completed_at=now,
+    )
+
+    assert updated.next_run_at > now
+    assert scheduler.get_worker_state("watch-1") is None
+
+
 def test_reschedule_now_moves_next_run_to_current_time() -> None:
     """驗證手動喚醒會把下一次執行時間移到目前時間。"""
     scheduler = MonitorScheduler(random_seed=1)

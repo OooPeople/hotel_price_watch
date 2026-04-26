@@ -94,3 +94,17 @@ def test_adapter_matches_ikyu_urls() -> None:
     assert adapter.match_url("https://www.ikyu.com/hotel/hotel-123")
     assert adapter.match_url("http://ikyu.com/hotel/hotel-123")
     assert adapter.match_url("https://example.com/hotel/hotel-123") is False
+
+
+def test_adapter_browser_preview_url_requires_candidate_lookup_ready_url() -> None:
+    """Chrome 分頁建立來源只接受具備飯店、日期與人數條件的 `ikyu` 頁。"""
+    adapter = IkyuAdapter()
+
+    assert adapter.is_browser_page_url("https://www.ikyu.com/") is True
+    assert adapter.is_browser_preview_url("https://www.ikyu.com/") is False
+    assert adapter.is_browser_preview_url("https://www.ikyu.com/zh-tw/") is False
+    assert adapter.is_browser_preview_url("https://www.ikyu.com/zh-tw/00082173/") is False
+    assert adapter.is_browser_preview_url(
+        "https://www.ikyu.com/zh-tw/00082173/"
+        "?adc=1&cid=20260918&discsort=1&lc=1&ppc=2&rc=1&si=1&st=1"
+    )

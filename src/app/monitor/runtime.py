@@ -25,6 +25,7 @@ from app.domain.enums import (
     SourceKind,
 )
 from app.domain.notification_engine import compare_snapshots, evaluate_notification_rule
+from app.domain.value_objects import SearchDraft
 from app.domain.watch_lifecycle_state_machine import (
     WatchLifecycleContext,
     build_runtime_lifecycle_events,
@@ -74,6 +75,18 @@ class MonitorRuntimeStatus:
     chrome_debuggable: bool
     last_tick_at: datetime | None
     last_watch_sync_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class _WatchCheckOutcome:
+    """描述一次 watch 檢查完成後，runtime 需要回饋給調度流程的摘要。"""
+
+    persisted: bool
+    tab_id: str | None = None
+    tab_url: str | None = None
+    backoff_until: datetime | None = None
+    removed_from_scheduler: bool = False
+    failure_detail: str | None = None
 
 
 class ChromeDrivenMonitorRuntime:
@@ -190,13 +203,31 @@ class ChromeDrivenMonitorRuntime:
 
     async def run_watch_check_once(self, watch_item_id: str) -> None:
         """執行單一 watch item 的刷新、解析、持久化與通知流程。"""
+        await self._run_watch_check_once(
+            watch_item_id,
+            reload_page=True,
+            excluded_tab_ids=(),
+        )
+
+    async def _run_watch_check_once(
+        self,
+        watch_item_id: str,
+        *,
+        reload_page: bool,
+        excluded_tab_ids: tuple[str, ...],
+    ) -> _WatchCheckOutcome:
+        """執行單一 watch item 檢查，並可選擇是否先重新整理頁面。"""
         watch_item = self._watch_item_repository.get(watch_item_id)
         if watch_item is None or not watch_item.enabled or watch_item.paused_reason is not None:
-            return
+            return _WatchCheckOutcome(persisted=False)
 
         draft = self._watch_item_repository.get_draft(watch_item_id)
         adapter = self._site_registry.for_url(
             draft.seed_url if draft else watch_item.canonical_url
+        )
+        operation_url = adapter.build_browser_operation_url(
+            watch_item=watch_item,
+            draft=draft,
         )
 
         latest_snapshot = self._runtime_repository.get_latest_check_snapshot(watch_item_id)
@@ -213,22 +244,23 @@ class ChromeDrivenMonitorRuntime:
         error_code: CheckErrorCode | None = None
         debug_artifact: DebugArtifact | None = None
         browser_blocking_outcome: BrowserBlockingOutcome | None = None
+        failure_detail: str | None = None
 
         try:
             capture = await asyncio.to_thread(
-                self._chrome_fetcher.refresh_capture_for_url,
-                expected_url=watch_item.canonical_url,
-                fallback_url=(
-                    draft.browser_page_url
-                    if draft is not None and draft.browser_page_url is not None
-                    else draft.seed_url if draft is not None else watch_item.canonical_url
-                ),
-                preferred_tab_id=(
-                    draft.browser_tab_id
-                    if draft is not None and draft.browser_tab_id is not None
-                    else None
-                ),
+                self._chrome_fetcher.capture_for_url,
+                expected_url=operation_url,
+                fallback_url=operation_url,
+                preferred_tab_id=_resolve_watch_preferred_tab_id(draft),
+                excluded_tab_ids=excluded_tab_ids,
                 page_strategy=adapter.browser_page_strategy,
+                reload=reload_page,
+            )
+            await self._save_browser_assignment(
+                watch_item_id=watch_item_id,
+                draft=draft,
+                tab_id=capture.tab.tab_id,
+                tab_url=capture.tab.url,
             )
             current_snapshot = adapter.build_snapshot_from_browser_page(
                 page_url=capture.tab.url,
@@ -248,6 +280,7 @@ class ChromeDrivenMonitorRuntime:
         except Exception as exc:
             if isinstance(exc, BrowserBlockedPageError):
                 browser_blocking_outcome = exc.outcome
+            failure_detail = f"{exc.__class__.__name__}: {exc}"
             error_code = _map_runtime_exception_to_error_code_typed(exc)
             current_snapshot = PriceSnapshot(
                 display_price_text=None,
@@ -277,7 +310,11 @@ class ChromeDrivenMonitorRuntime:
                 TaskLifecycleCheckpoint.AFTER_CAPTURE,
             )
         ).should_discard:
-            return
+            return _WatchCheckOutcome(
+                persisted=False,
+                tab_id=capture.tab.tab_id if capture is not None else None,
+                tab_url=capture.tab.url if capture is not None else None,
+            )
 
         check_result = compare_snapshots(
             checked_at=checked_at,
@@ -307,7 +344,11 @@ class ChromeDrivenMonitorRuntime:
                     TaskLifecycleCheckpoint.BEFORE_NOTIFICATION_DISPATCH,
                 )
             ).should_discard:
-                return
+                return _WatchCheckOutcome(
+                    persisted=False,
+                    tab_id=capture.tab.tab_id if capture is not None else None,
+                    tab_url=capture.tab.url if capture is not None else None,
+                )
             dispatch_result = await asyncio.to_thread(
                 self._dispatch_notification,
                 watch_item,
@@ -322,7 +363,11 @@ class ChromeDrivenMonitorRuntime:
                 TaskLifecycleCheckpoint.BEFORE_PERSIST_RESULT,
             )
         ).should_discard:
-            return
+            return _WatchCheckOutcome(
+                persisted=False,
+                tab_id=capture.tab.tab_id if capture is not None else None,
+                tab_url=capture.tab.url if capture is not None else None,
+            )
 
         artifacts = build_monitor_check_artifacts(
             watch_item_id=watch_item_id,
@@ -368,6 +413,14 @@ class ChromeDrivenMonitorRuntime:
 
         if control_recommendation.remove_from_scheduler:
             self._scheduler.remove_watch(watch_item_id)
+        return _WatchCheckOutcome(
+            persisted=True,
+            tab_id=capture.tab.tab_id if capture is not None else None,
+            tab_url=capture.tab.url if capture is not None else None,
+            backoff_until=artifacts.latest_check_snapshot.backoff_until,
+            removed_from_scheduler=control_recommendation.remove_from_scheduler,
+            failure_detail=failure_detail,
+        )
 
     async def _evaluate_task_disposition(
         self,
@@ -406,6 +459,15 @@ class ChromeDrivenMonitorRuntime:
                 now=now,
                 resumed_after_sleep=resumed_after_sleep,
             )
+            startup_restore_task = self._startup_restore_task
+            if startup_restore_task is not None and not startup_restore_task.done():
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(startup_restore_task),
+                        timeout=self._tick_seconds,
+                    )
+                except TimeoutError:
+                    continue
             assignments = self._scheduler.dequeue_due_work(
                 now=now,
                 max_workers=self._max_workers,
@@ -421,9 +483,17 @@ class ChromeDrivenMonitorRuntime:
                     completed: asyncio.Task[None],
                     *,
                     assignment_task: asyncio.Task[None] = task,
+                    assignment_watch_item_id: str = assignment.watch_item_id,
                 ) -> None:
                     """在 assignment task 結束後清理背景 worker 追蹤。"""
-                    del completed
+                    if not completed.cancelled():
+                        exc = completed.exception()
+                        if exc is not None:
+                            print(
+                                "背景監視工作失敗："
+                                f"watch_id={assignment_watch_item_id}；"
+                                f"error={_compact_log_value(f'{exc.__class__.__name__}: {exc}')}"
+                            )
                     self._assignment_tasks.discard(assignment_task)
 
                 task.add_done_callback(_forget_assignment_task)
@@ -528,10 +598,17 @@ class ChromeDrivenMonitorRuntime:
         active_watch_items: dict[str, WatchItem],
     ) -> None:
         """在 runtime 啟動時低速恢復 enabled watch 對應的 Chrome 分頁。"""
+        if not active_watch_items:
+            print("啟動恢復監視分頁：沒有啟用且未暫停的監視。")
+            return
+
+        print(f"啟動恢復監視分頁：準備恢復 {len(active_watch_items)} 筆監視。")
         claimed_tab_ids: set[str] = set()
         for watch_item in active_watch_items.values():
             if self._stop_event.is_set():
                 break
+            fallback_url = watch_item.canonical_url
+            preferred_tab_id = None
             try:
                 draft = await asyncio.to_thread(
                     self._watch_item_repository.get_draft,
@@ -540,27 +617,86 @@ class ChromeDrivenMonitorRuntime:
                 adapter = self._site_registry.for_url(
                     draft.seed_url if draft else watch_item.canonical_url
                 )
-                summary = await asyncio.to_thread(
-                    self._chrome_fetcher.ensure_tab_for_url,
-                    expected_url=watch_item.canonical_url,
-                    fallback_url=(
-                        draft.browser_page_url
-                        if draft is not None and draft.browser_page_url is not None
-                        else draft.seed_url if draft is not None else watch_item.canonical_url
-                    ),
-                    preferred_tab_id=(
-                        draft.browser_tab_id
-                        if draft is not None and draft.browser_tab_id is not None
-                        else None
-                    ),
-                    excluded_tab_ids=tuple(claimed_tab_ids),
-                    page_strategy=adapter.browser_page_strategy,
+                operation_url = adapter.build_browser_operation_url(
+                    watch_item=watch_item,
+                    draft=draft,
                 )
-                claimed_tab_ids.add(summary.tab_id)
-            except Exception:
+                fallback_url = operation_url
+                preferred_tab_id = _resolve_watch_preferred_tab_id(draft)
+                print(
+                    _format_startup_restore_attempt(
+                        watch_item=watch_item,
+                        fallback_url=fallback_url,
+                        preferred_tab_id=preferred_tab_id,
+                    )
+                )
+                outcome = await self._run_watch_check_once(
+                    watch_item.id,
+                    reload_page=False,
+                    excluded_tab_ids=tuple(claimed_tab_ids),
+                )
+                if outcome.persisted and not outcome.removed_from_scheduler:
+                    with suppress(LookupError):
+                        self._scheduler.mark_check_completed(
+                            watch_item_id=watch_item.id,
+                            completed_at=_utcnow(),
+                            backoff_until=outcome.backoff_until,
+                        )
+                if outcome.tab_id is None or outcome.tab_url is None:
+                    raise RuntimeError(
+                        outcome.failure_detail
+                        or "startup capture did not return a Chrome tab"
+                    )
+                claimed_tab_ids.add(outcome.tab_id)
+                print(
+                    _format_startup_restore_success(
+                        watch_item=watch_item,
+                        tab_id=outcome.tab_id,
+                        tab_url=outcome.tab_url,
+                    )
+                )
+            except Exception as exc:
+                print(
+                    _format_startup_restore_failure(
+                        watch_item=watch_item,
+                        fallback_url=fallback_url,
+                        preferred_tab_id=preferred_tab_id,
+                        exc=exc,
+                    )
+                )
                 continue
             if self._restore_delay_seconds > 0 and not self._stop_event.is_set():
                 await asyncio.sleep(self._restore_delay_seconds)
+
+    async def _save_browser_assignment(
+        self,
+        *,
+        watch_item_id: str,
+        draft: SearchDraft | None,
+        tab_id: str,
+        tab_url: str,
+    ) -> None:
+        """保存最近一次成功使用的 Chrome 分頁，作為下次操作的短期 hint。"""
+        if draft is None:
+            return
+        try:
+            await asyncio.to_thread(
+                self._watch_item_repository.save_draft,
+                watch_item_id,
+                replace(
+                    draft,
+                    browser_tab_id=tab_id,
+                    browser_page_url=tab_url,
+                ),
+            )
+        except Exception as exc:
+            print(
+                "Chrome 分頁 hint 回寫失敗："
+                f"watch_id={watch_item_id}；"
+                f"tab_id={_compact_log_value(tab_id)}；"
+                f"tab_url={_compact_log_value(tab_url)}；"
+                f"error={_compact_log_value(f'{exc.__class__.__name__}: {exc}')}"
+            )
 
     def _dispatch_notification(
         self,
@@ -735,3 +871,72 @@ def _format_browser_blocking_detail(
     if outcome is None:
         return None
     return f"kind={outcome.kind}; reason={outcome.reason}; message={outcome.message}"
+
+
+def _resolve_watch_preferred_tab_id(draft: SearchDraft | None) -> str | None:
+    """讀取最近一次成功使用的分頁 hint；空值不參與 matching。"""
+    if draft is None or draft.browser_tab_id is None:
+        return None
+    tab_id = draft.browser_tab_id.strip()
+    return tab_id or None
+
+
+def _format_startup_restore_attempt(
+    *,
+    watch_item: WatchItem,
+    fallback_url: str,
+    preferred_tab_id: str | None,
+) -> str:
+    """整理啟動恢復單一 watch 分頁前的終端機診斷訊息。"""
+    return (
+        "啟動恢復監視分頁："
+        f"watch_id={watch_item.id}；"
+        f"hotel={_compact_log_value(watch_item.hotel_name)}；"
+        f"preferred_tab_id={_compact_log_value(preferred_tab_id)}；"
+        f"fallback_url={_compact_log_value(fallback_url)}"
+    )
+
+
+def _format_startup_restore_success(
+    *,
+    watch_item: WatchItem,
+    tab_id: str,
+    tab_url: str,
+) -> str:
+    """整理啟動恢復單一 watch 分頁成功後的終端機診斷訊息。"""
+    return (
+        "啟動恢復監視分頁成功："
+        f"watch_id={watch_item.id}；"
+        f"hotel={_compact_log_value(watch_item.hotel_name)}；"
+        f"tab_id={_compact_log_value(tab_id)}；"
+        f"tab_url={_compact_log_value(tab_url)}"
+    )
+
+
+def _format_startup_restore_failure(
+    *,
+    watch_item: WatchItem,
+    fallback_url: str,
+    preferred_tab_id: str | None,
+    exc: Exception,
+) -> str:
+    """整理啟動恢復單一 watch 分頁失敗時的終端機診斷訊息。"""
+    error_text = f"{exc.__class__.__name__}: {exc}"
+    return (
+        "啟動恢復監視分頁失敗："
+        f"watch_id={watch_item.id}；"
+        f"hotel={_compact_log_value(watch_item.hotel_name)}；"
+        f"preferred_tab_id={_compact_log_value(preferred_tab_id)}；"
+        f"fallback_url={_compact_log_value(fallback_url)}；"
+        f"error={_compact_log_value(error_text)}"
+    )
+
+
+def _compact_log_value(value: str | None, *, max_length: int = 320) -> str:
+    """壓縮終端機診斷值，避免換行或過長 URL 讓啟動輸出難讀。"""
+    if value is None or not value.strip():
+        return "-"
+    compacted = " ".join(value.strip().split())
+    if len(compacted) <= max_length:
+        return compacted
+    return f"{compacted[: max_length - 3]}..."
