@@ -204,6 +204,19 @@ class SqliteRuntimeRepository:
                     retention_limit=debug_retention_limit,
                 )
 
+    def persist_initial_check_snapshot(
+        self,
+        *,
+        latest_snapshot: LatestCheckSnapshot,
+        check_event: CheckEvent,
+        price_history_entry: PriceHistoryEntry,
+    ) -> None:
+        """以單一 transaction 保存建立 watch 時已取得的初始價格資料。"""
+        with self._database.connect() as connection:
+            self._save_latest_check_snapshot(connection, latest_snapshot)
+            self._append_check_event(connection, check_event)
+            self._append_price_history(connection, price_history_entry)
+
     def save_latest_check_snapshot(self, snapshot: LatestCheckSnapshot) -> None:
         """新增或更新 watch item 的最新檢查摘要。"""
         with self._database.connect() as connection:

@@ -20,12 +20,12 @@
 - 通用設定頁：通知通道、測試通知、GUI 時間顯示格式
 - 設定頁提供未儲存提示與離頁前防呆
 - background runtime 定期刷新、寫入歷史並發送通知
-- 首頁與 watch 詳細頁局部 polling 更新
+- 首頁與 watch 詳細頁已採 version polling：資料版本改變才抓 fragment，相對時間 / 退避倒數由前端局部更新
 
 最新驗證狀態：
 
-- `ruff check src tests` 通過
-- `pytest` 通過，`257 passed`
+- 最近一次本輪驗證：`ruff check` 通過
+- 最近一次本輪驗證：`pytest tests/unit -q` 通過，`225 passed`
 
 ## 2. 正式主線
 
@@ -87,16 +87,38 @@ V1 正式主線是 Chrome-driven：
 - `src/app/web/routes/`：本機 GUI routes
 - `src/app/web/*_views.py`：本機 GUI renderers
 - `src/app/web/ui_styles.py`：GUI style token 與語意化 style helper
-- `src/app/web/ui_components.py`：GUI 共用 layout、button、card、empty state、table 等 UI primitives；含可收合 AppShell、inline SVG icon 導覽、側欄狀態摘要與窄版 responsive 規則
+- `src/app/web/ui_components.py`：GUI 共用 layout、button、card、empty state、table 等 UI primitives；含可收合 AppShell、inline SVG icon 導覽與窄版 responsive 規則
 - `src/app/web/ui_presenters.py`：GUI presentation helper，集中價格、狀態、通知、錯誤與 badge 文案
+- `src/app/web/watch_detail_presenters.py`：watch detail page presentation，集中 detail hero、價格摘要、通知摘要與 runtime state 基礎資料
+- `src/app/web/settings_presenters.py`：全域設定頁 presentation，集中摘要卡、啟用狀態、表單回填與敏感值遮罩
 - `src/app/web/view_formatters.py`：GUI 共用顯示格式化 helper
 - `src/app/web/view_helpers.py`：舊 renderer import 的相容匯出入口
-- `src/app/web/watch_view_partials.py`：watch list / detail 可替換區塊 partial；watch card 已顯示最後檢查、目前價格、通知條件與更多操作；首頁支援卡片 / 清單切換；detail 已有輕量價格趨勢圖
+- `src/app/web/watch_client_scripts.py`：watch list / detail version polling、relative time updater、runtime dock collapse 與 list view mode persistence script renderer
+- `src/app/web/watch_fragment_contracts.py`：watch list / detail fragment payload schema 與 DOM hook id contract；route、renderer、client script 與測試需共用此檔定義
+- `src/app/web/watch_action_partials.py`：watch 操作表單與 quick action mode renderer
+- `src/app/web/watch_list_partials.py`：watch list / dashboard partial renderer 實作入口
+- `src/app/web/watch_detail_partials.py`：watch detail partial renderer 實作入口
+- `src/app/web/watch_view_partials.py`：舊 renderer import 的相容匯出入口，新程式碼不要再把實作加回此檔
 - `src/app/web/watch_creation_partials.py`：新增 watch / Chrome tab selection 可替換區塊 partial；新增流程上方採 3-step wizard，確認建立收在 Step 3 內容內
 - `src/app/web/debug_views.py`：進階診斷 / preview capture renderer，raw metadata 與 HTML 預覽預設收合
 - `docs/ui_reference/`：第二輪 UI 參考圖；實作 Dashboard、Add Watch、Settings、Debug 或 AppShell 前後都應開啟對應圖片對照
 - `src/app/tools/dev_start.py`：單一啟動入口；會在本專案流程內加入 `NODE_OPTIONS=--disable-warning=DEP0169`，抑制 Playwright driver 在 Node 24 觸發的 `url.parse()` deprecation warning
 - `src/app/sites/ikyu/`：`ikyu` adapter、parser、normalizer、browser strategy
+
+目前 review 後的 web 架構注意事項：
+
+- `watch_view_partials.py` 的壓力已先解除：client scripts、list partial、detail partial、action partial 已拆出；下一步不要再把新 UI 實作加回相容檔。
+- watch creation 初始價格保存已移入 `WatchCreationSnapshotService`，並以 repository 單一 transaction 寫入 latest snapshot、check event、price history。
+- watch list / detail fragment payload 與 DOM hook contract 已集中到 `watch_fragment_contracts.py`，後續新增 fragment 欄位或改 DOM id 應先改 contract，再同步 renderer / client script / tests。
+- Watch Detail / Settings 第二輪 UI 前的 presenter gate 已完成：Detail 使用 `WatchDetailPresentation`，Settings 使用 `NotificationChannelSettingsPresentation`；後續重構視覺時不要把摘要判讀放回 partial。
+- `ui_components.py` 可暫時保留，但新增共用 UI 時避免繼續混入 layout、icons、primitives 與 behavior script。
+- 第二站 target / candidate contract 已在架構文件中標記為 lodging-room-plan 暫緩，不因這輪 UI 架構整理提前 payload 化。
+
+目前 UI 進度口徑：
+
+- Dashboard 與 Add Watch 的第二輪主要流程已落地；Watch Detail / Settings 前置 web 架構整理已完成，可開始第二輪頁面 UI 重構。
+- Watch Detail 只有第一輪產品化與 MiniPriceChart / fragment polling 強化，尚未完成 `07_watch_detail.png` 的整頁重構。
+- Settings 只有第一輪摘要 / 展開編輯 / webhook 遮罩，尚未完成 `05_settings_notifications.png` 的通道卡片新版。
 
 ## 5. 第二站前注意事項
 
@@ -132,11 +154,10 @@ V1 正式主線是 Chrome-driven：
 
 ## 7. 建議下一步
 
-1. 依 `docs/UI_REDESIGN_PLAN.md` 先做 Design Token / AppShell 對齊，讓後續頁面共用一致視覺基底。
-2. 補強 Add Watch wizard：3-step 步驟條、建立前確認摘要、桌機 summary，並維持 Chrome-driven 建立流程。
-3. 再做 Dashboard 折衷清單；若要顯示價格差異，先補 watch list context 的上一筆有效價格或價格歷史資料，避免 UI 假造不存在的 domain 資訊。
-4. UI 穩定後做人工 smoke test：啟動、列分頁、建立監視、手動 check、通知測試、暫停 / 恢復。
-5. 若 smoke test 穩定，進入 Packaging；若要先做第二站，只做 spike，先驗證 target / candidate contract 是否足夠。
+1. 對照 `07_watch_detail.png` 重構監視詳情頁，沿用 `WatchDetailPresentation`、fragment contract 與既有 action presentation。
+2. 對照 `05_settings_notifications.png` 重構設定頁，沿用 `NotificationChannelSettingsPresentation` 與既有設定保存流程。
+3. UI 與架構穩定後做人工 smoke test：啟動、列分頁、建立監視、手動 check、通知測試、暫停 / 恢復。
+4. 若 smoke test 穩定，進入 Packaging；若要先做第二站，只做 spike，先驗證 target / candidate contract 是否足夠。
 
 ## 8. 仍需觀察
 
@@ -144,3 +165,5 @@ V1 正式主線是 Chrome-driven：
 - VPN / IP 風控下的使用者操作流程
 - 第二站加入前，blocking outcome 是否需要更正式的 control recommendation
 - `watch_item` 靜態定義與 control state 是否值得在後續 migration 中拆表
+- Watch Detail / Settings 第二輪 UI 是否會需要更正式的 page view model 與 settings presentation contract
+- version polling endpoint 的 revision token 是否需要在更多頁面局部更新時抽成共用 read model service

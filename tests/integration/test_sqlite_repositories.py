@@ -566,6 +566,72 @@ def test_persist_check_outcome_rolls_back_when_midway_write_fails(tmp_path) -> N
     assert watch_item.paused_reason is None
 
 
+def test_persist_initial_check_snapshot_rolls_back_when_midway_write_fails(
+    tmp_path,
+) -> None:
+    """驗證建立時初始價格寫入失敗時，不會留下部分 runtime 資料。"""
+
+    class _FailOnCheckEventConnection(sqlite3.Connection):
+        """在寫入 check_events 時故意失敗，驗證 transaction rollback。"""
+
+        def execute(self, sql: str, parameters=(), /):  # type: ignore[override]
+            if "INSERT INTO check_events" in sql:
+                raise sqlite3.OperationalError("forced initial check event failure")
+            return super().execute(sql, parameters)
+
+    class _FailOnCheckEventDatabase(SqliteDatabase):
+        """回傳故障注入 connection 的測試資料庫。"""
+
+        def connect(self) -> sqlite3.Connection:
+            connection = sqlite3.connect(
+                self.db_path,
+                factory=_FailOnCheckEventConnection,
+            )
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            return connection
+
+    database = _FailOnCheckEventDatabase(tmp_path / "watcher.db")
+    database.initialize()
+    SqliteWatchItemRepository(database).save(_build_watch_item())
+    repository = SqliteRuntimeRepository(database)
+
+    try:
+        repository.persist_initial_check_snapshot(
+            latest_snapshot=LatestCheckSnapshot(
+                watch_item_id="watch-1",
+                checked_at=datetime(2026, 4, 11, 12, 0, 0),
+                availability=Availability.AVAILABLE,
+                normalized_price_amount=Decimal("12000"),
+                currency="JPY",
+            ),
+            check_event=CheckEvent(
+                watch_item_id="watch-1",
+                checked_at=datetime(2026, 4, 11, 12, 0, 0),
+                availability=Availability.AVAILABLE,
+                event_kinds=("initial_snapshot",),
+                normalized_price_amount=Decimal("12000"),
+                currency="JPY",
+            ),
+            price_history_entry=PriceHistoryEntry(
+                watch_item_id="watch-1",
+                captured_at=datetime(2026, 4, 11, 12, 0, 0),
+                display_price_text="JPY 12,000",
+                normalized_price_amount=Decimal("12000"),
+                currency="JPY",
+                source_kind=SourceKind.BROWSER,
+            ),
+        )
+    except sqlite3.OperationalError as exc:
+        assert "forced initial check event failure" in str(exc)
+    else:
+        raise AssertionError("expected persist_initial_check_snapshot to raise")
+
+    assert repository.get_latest_check_snapshot("watch-1") is None
+    assert repository.list_check_events("watch-1") == []
+    assert repository.list_price_history("watch-1") == []
+
+
 def test_debug_artifact_retention_keeps_only_latest_items(tmp_path) -> None:
     """驗證 debug artifact 會依 watch item 套用保留上限。"""
     database = SqliteDatabase(tmp_path / "watcher.db")

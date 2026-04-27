@@ -19,6 +19,7 @@ from app.application.debug_captures import (
 )
 from app.application.preview_guard import PreviewAttemptGuard
 from app.application.watch_creation_cache import WatchCreationPreviewCache
+from app.application.watch_creation_snapshot import WatchCreationSnapshotService
 from app.application.watch_editor import WatchCreationPreview, WatchEditorService
 from app.application.watch_lifecycle import WatchLifecycleCoordinator
 from app.bootstrap.container import AppContainer, build_app_container
@@ -52,6 +53,7 @@ from app.sites.ikyu import IkyuAdapter
 from app.sites.registry import SiteRegistry
 from app.web.routes import debug_routes as debug_routes_module
 from app.web.routes import watch_creation_routes as watch_creation_routes_module
+from app.web.settings_presenters import build_notification_channel_settings_presentation
 from app.web.ui_presenters import (
     WatchActionSurface,
     build_watch_action_presentations,
@@ -65,6 +67,13 @@ from app.web.views import (
     render_notification_settings_page,
     render_watch_detail_page,
     render_watch_list_page,
+)
+from app.web.watch_detail_presenters import build_watch_detail_presentation
+from app.web.watch_fragment_contracts import (
+    WATCH_DETAIL_DOM_IDS,
+    WATCH_DETAIL_PAYLOAD_KEYS,
+    WATCH_LIST_DOM_IDS,
+    WATCH_LIST_PAYLOAD_KEYS,
 )
 
 
@@ -217,10 +226,18 @@ def test_watch_list_fragments_endpoint_returns_runtime_and_rows(tmp_path) -> Non
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["version"]
-    assert "啟用中的監視" in payload["summary_html"]
-    assert "系統狀態" in payload["runtime_html"]
-    assert "Ocean Hotel" in payload["table_body_html"]
+    keys = WATCH_LIST_PAYLOAD_KEYS
+    assert set(payload) == {
+        keys.version,
+        keys.flash_html,
+        keys.summary_html,
+        keys.runtime_html,
+        keys.table_body_html,
+    }
+    assert payload[keys.version]
+    assert "啟用中的監視" in payload[keys.summary_html]
+    assert "系統狀態" in payload[keys.runtime_html]
+    assert "Ocean Hotel" in payload[keys.table_body_html]
 
 
 def test_watch_list_fragment_version_changes_after_runtime_update(tmp_path) -> None:
@@ -254,13 +271,23 @@ def test_watch_detail_fragments_endpoint_returns_partial_sections(tmp_path) -> N
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["version"]
+    keys = WATCH_DETAIL_PAYLOAD_KEYS
+    assert set(payload) == {
+        keys.version,
+        keys.hero_section_html,
+        keys.price_summary_section_html,
+        keys.price_trend_section_html,
+        keys.check_events_section_html,
+        keys.runtime_state_events_section_html,
+        keys.debug_artifacts_section_html,
+    }
+    assert payload[keys.version]
     assert "latest_section_html" not in payload
-    assert "Ocean Hotel" in payload["hero_section_html"]
-    assert "目前價格" in payload["price_summary_section_html"]
-    assert "價格趨勢" in payload["price_trend_section_html"]
-    assert "檢查歷史" in payload["check_events_section_html"]
-    assert "診斷檔案" in payload["debug_artifacts_section_html"]
+    assert "Ocean Hotel" in payload[keys.hero_section_html]
+    assert "目前價格" in payload[keys.price_summary_section_html]
+    assert "價格趨勢" in payload[keys.price_trend_section_html]
+    assert "檢查歷史" in payload[keys.check_events_section_html]
+    assert "診斷檔案" in payload[keys.debug_artifacts_section_html]
 
 
 def test_watch_detail_fragment_version_changes_after_debug_artifact(tmp_path) -> None:
@@ -884,6 +911,43 @@ def test_render_notification_settings_page_shows_current_rule() -> None:
     assert "Standard Twin / Room Only" not in html
 
 
+def test_notification_channel_settings_presentation_handles_form_values() -> None:
+    """設定 presenter 應集中表單回填、摘要與敏感值遮罩規則。"""
+    presentation = build_notification_channel_settings_presentation(
+        settings=NotificationChannelSettings(
+            desktop_enabled=True,
+            ntfy_enabled=False,
+            ntfy_server_url="https://ntfy.sh",
+            ntfy_topic="saved-topic",
+            discord_enabled=False,
+            discord_webhook_url="https://discord.example.com/saved-webhook",
+        ),
+        display_settings=DisplaySettings(use_24_hour_time=True),
+        form_values={
+            "desktop_enabled": "",
+            "ntfy_enabled": "on",
+            "ntfy_server_url": "https://ntfy.example.com",
+            "ntfy_topic": "form-topic",
+            "discord_enabled": "on",
+            "discord_webhook_url": "https://discord.example.com/form-webhook",
+            "time_format_12h": "on",
+        },
+    )
+
+    assert presentation.desktop_enabled is False
+    assert presentation.ntfy_enabled is True
+    assert presentation.discord_enabled is True
+    assert presentation.use_24_hour_time is False
+    assert presentation.ntfy_topic == "form-topic"
+    assert presentation.masked_discord_webhook_url == "https://discord.ex...ebhook"
+    assert [card.title for card in presentation.summary_cards] == [
+        "時間顯示",
+        "桌面通知",
+        "ntfy",
+        "Discord",
+    ]
+
+
 def test_render_notification_channel_settings_page_shows_saved_values() -> None:
     """設定頁應顯示目前已保存的通道與顯示設定。"""
     html = render_notification_channel_settings_page(
@@ -1451,14 +1515,14 @@ def test_render_watch_list_page_includes_polling_script() -> None:
 
     assert "/fragments/watch-list" in html
     assert "/fragments/watch-list/version" in html
-    assert "dashboard-summary-section" in html
-    assert "dashboard-flash-section" in html
-    assert "watch-list-table-body" in html
-    assert "runtime-status-section" in html
-    assert "payload.summary_html" in html
-    assert "payload.flash_html" in html
-    assert "payload.runtime_html" in html
-    assert "payload.table_body_html" in html
+    assert WATCH_LIST_DOM_IDS.summary in html
+    assert WATCH_LIST_DOM_IDS.flash in html
+    assert WATCH_LIST_DOM_IDS.watch_list in html
+    assert WATCH_LIST_DOM_IDS.runtime in html
+    assert "payload[payloadKeys.summaryHtml]" in html
+    assert "payload[payloadKeys.flashHtml]" in html
+    assert "payload[payloadKeys.runtimeHtml]" in html
+    assert "payload[payloadKeys.tableBodyHtml]" in html
     assert "data-watch-list-action" in html
     assert "data-relative-time" in html
     assert "form.action" in html
@@ -1580,6 +1644,25 @@ def test_render_watch_detail_page_uses_single_axis_label_for_flat_price_trend() 
     assert "區間：JPY 18434 - JPY 18434" not in html
 
 
+def test_watch_detail_presentation_centralizes_summary_values() -> None:
+    """詳情頁 presenter 應集中 hero、價格摘要與通知摘要所需資料。"""
+    presentation = build_watch_detail_presentation(
+        watch_item=_build_watch_item_with_below_target_rule(),
+        latest_snapshot=_build_latest_snapshot(),
+        notification_state=_build_notification_state(),
+    )
+
+    assert presentation.hotel_name == "Ocean Hotel"
+    assert presentation.room_name == "Standard Twin"
+    assert presentation.date_range_text == "2026-09-18 - 2026-09-19"
+    assert presentation.occupancy_text == "2 人 / 1 房"
+    assert presentation.current_price_text == "JPY 22990"
+    assert presentation.availability_text == "有空房"
+    assert presentation.notification_rule_text == "低於目標價 20000 時通知"
+    assert presentation.last_checked_at == _build_latest_snapshot().checked_at
+    assert presentation.last_notified_at == _build_notification_state().last_notified_at
+
+
 def test_render_watch_detail_page_shows_check_now_during_backoff() -> None:
     """退避中仍應顯示立即檢查，讓使用者排除狀況後可手動更新。"""
     latest_snapshot = replace(
@@ -1616,16 +1699,16 @@ def test_render_watch_detail_page_includes_polling_script() -> None:
 
     assert "/watches/watch-list-1/fragments" in html
     assert "/watches/watch-list-1/fragments/version" in html
-    assert "watch-detail-hero-section" in html
-    assert "watch-detail-price-summary-section" in html
-    assert "watch-detail-price-trend-section" in html
-    assert "watch-detail-check-events-section" in html
-    assert "watch-detail-debug-artifacts-section" in html
-    assert "payload.hero_section_html" in html
-    assert "payload.price_summary_section_html" in html
-    assert "payload.price_trend_section_html" in html
-    assert "payload.check_events_section_html" in html
-    assert "payload.debug_artifacts_section_html" in html
+    assert WATCH_DETAIL_DOM_IDS.hero in html
+    assert WATCH_DETAIL_DOM_IDS.price_summary in html
+    assert WATCH_DETAIL_DOM_IDS.price_trend in html
+    assert WATCH_DETAIL_DOM_IDS.check_events in html
+    assert WATCH_DETAIL_DOM_IDS.debug_artifacts in html
+    assert "payload[payloadKeys.heroHtml]" in html
+    assert "payload[payloadKeys.priceSummaryHtml]" in html
+    assert "payload[payloadKeys.priceTrendHtml]" in html
+    assert "payload[payloadKeys.checkEventsHtml]" in html
+    assert "payload[payloadKeys.debugArtifactsHtml]" in html
     assert "currentVersion = \"detail-version-1\"" in html
     assert "setInterval(checkVersion, 1000)" in html
     assert "setInterval(updateClientTimeText, 30000)" in html
@@ -2092,6 +2175,9 @@ def _build_test_container(tmp_path) -> AppContainer:
         chrome_cdp_fetcher=ChromeCdpHtmlFetcher(),
         preview_attempt_guard=PreviewAttemptGuard(),
         watch_creation_preview_cache=WatchCreationPreviewCache(),
+        watch_creation_snapshot_service=WatchCreationSnapshotService(
+            runtime_repository=runtime_repository,
+        ),
         monitor_runtime=None,
     )
 

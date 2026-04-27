@@ -33,6 +33,12 @@ from app.web.views import (
     render_watch_list_page,
     render_watch_list_rows_fragment,
 )
+from app.web.watch_fragment_contracts import (
+    WATCH_DETAIL_PAYLOAD_KEYS,
+    WATCH_LIST_PAYLOAD_KEYS,
+    WatchDetailFragmentPayload,
+    WatchListFragmentPayload,
+)
 
 
 @dataclass(frozen=True)
@@ -48,27 +54,6 @@ class WatchListPageContext:
 
 
 @dataclass(frozen=True)
-class WatchListFragmentPayload:
-    """首頁局部更新回傳給前端的固定 payload schema。"""
-
-    version: str
-    flash_html: str
-    summary_html: str
-    runtime_html: str
-    table_body_html: str
-
-    def to_dict(self) -> dict[str, str]:
-        """轉成 FastAPI JSONResponse 可直接序列化的 dict。"""
-        return {
-            "version": self.version,
-            "flash_html": self.flash_html,
-            "summary_html": self.summary_html,
-            "runtime_html": self.runtime_html,
-            "table_body_html": self.table_body_html,
-        }
-
-
-@dataclass(frozen=True)
 class WatchDetailPageContext:
     """watch 詳細頁與 fragment renderer 共用的資料集合。"""
 
@@ -79,18 +64,6 @@ class WatchDetailPageContext:
     debug_artifacts: tuple[DebugArtifact, ...]
     runtime_state_events: tuple[RuntimeStateEvent, ...]
     display_settings: DisplaySettings
-
-
-@dataclass(frozen=True)
-class WatchDetailFragmentPayload:
-    """詳細頁局部更新回傳給前端的固定 payload schema。"""
-
-    version: str
-    sections: dict[str, str]
-
-    def to_dict(self) -> dict[str, str]:
-        """轉成 FastAPI JSONResponse 可直接序列化的 dict。"""
-        return {"version": self.version, **self.sections}
 
 
 def build_watch_router(container: AppContainer) -> APIRouter:
@@ -122,7 +95,7 @@ def build_watch_router(container: AppContainer) -> APIRouter:
     @router.get("/fragments/watch-list/version")
     def watch_list_fragment_version() -> dict[str, str]:
         """回傳首頁局部更新使用的資料版本。"""
-        return {"version": _build_watch_list_revision(container)}
+        return {WATCH_LIST_PAYLOAD_KEYS.version: _build_watch_list_revision(container)}
 
     @router.get("/watches/{watch_item_id}", response_class=HTMLResponse)
     def watch_detail_page(watch_item_id: str, request: Request) -> HTMLResponse:
@@ -165,7 +138,7 @@ def build_watch_router(container: AppContainer) -> APIRouter:
         if watch_item is None:
             raise HTTPException(status_code=404, detail="watch item not found")
         return {
-            "version": _build_watch_detail_revision(
+            WATCH_DETAIL_PAYLOAD_KEYS.version: _build_watch_detail_revision(
                 container=container,
                 watch_item=watch_item,
             )

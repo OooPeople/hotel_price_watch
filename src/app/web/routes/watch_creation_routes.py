@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -13,10 +12,9 @@ from app.application.preview_guard import PreviewCooldownError
 from app.application.watch_editor import WatchCreationPreview
 from app.application.watch_tab_matching import find_existing_watch_ids_by_tab_id
 from app.bootstrap.container import AppContainer
-from app.domain.entities import CheckEvent, LatestCheckSnapshot, PriceHistoryEntry
-from app.domain.enums import Availability, NotificationLeafKind, SourceKind
+from app.domain.enums import NotificationLeafKind
 from app.infrastructure.browser import ChromeTabSummary
-from app.sites.base import LookupDiagnostic, OfferCandidate
+from app.sites.base import LookupDiagnostic
 from app.web import request_helpers
 from app.web.views import (
     render_chrome_tab_selection_page,
@@ -240,8 +238,7 @@ def build_watch_creation_router(container: AppContainer) -> APIRouter:
                 ),
                 target_price=target_price,
             )
-            _save_initial_price_snapshot(
-                container=container,
+            container.watch_creation_snapshot_service.persist_initial_snapshot_from_preview(
                 preview=preview,
                 watch_item_id=watch_item.id,
                 room_id=room_id,
@@ -293,87 +290,6 @@ async def _safe_preview(
         )
     except Exception:
         return None
-
-
-def _save_initial_price_snapshot(
-    *,
-    container: AppContainer,
-    preview: WatchCreationPreview,
-    watch_item_id: str,
-    room_id: str,
-    plan_id: str,
-) -> None:
-    """把建立時已抓到的候選價格寫入最新摘要，避免首頁顯示尚未檢查。"""
-    candidate = _find_candidate_for_initial_snapshot(
-        preview=preview,
-        room_id=room_id,
-        plan_id=plan_id,
-    )
-    if candidate is None or candidate.normalized_price_amount is None:
-        return
-
-    captured_at = datetime.now(UTC)
-    currency = candidate.currency or "JPY"
-    container.runtime_repository.save_latest_check_snapshot(
-        LatestCheckSnapshot(
-            watch_item_id=watch_item_id,
-            checked_at=captured_at,
-            availability=Availability.AVAILABLE,
-            normalized_price_amount=candidate.normalized_price_amount,
-            currency=currency,
-        )
-    )
-    container.runtime_repository.append_check_event(
-        CheckEvent(
-            watch_item_id=watch_item_id,
-            checked_at=captured_at,
-            availability=Availability.AVAILABLE,
-            event_kinds=("initial_snapshot",),
-            normalized_price_amount=candidate.normalized_price_amount,
-            currency=currency,
-        )
-    )
-    container.runtime_repository.append_price_history(
-        PriceHistoryEntry(
-            watch_item_id=watch_item_id,
-            captured_at=captured_at,
-            display_price_text=_display_price_text_for_initial_snapshot(
-                candidate=candidate,
-                currency=currency,
-            ),
-            normalized_price_amount=candidate.normalized_price_amount,
-            currency=currency,
-            source_kind=SourceKind.BROWSER,
-        )
-    )
-
-
-def _find_candidate_for_initial_snapshot(
-    *,
-    preview: WatchCreationPreview,
-    room_id: str,
-    plan_id: str,
-) -> OfferCandidate | None:
-    """從建立表單選取的 room/plan 找回 preview 內的候選方案。"""
-    return next(
-        (
-            candidate
-            for candidate in preview.candidate_bundle.candidates
-            if candidate.room_id == room_id and candidate.plan_id == plan_id
-        ),
-        None,
-    )
-
-
-def _display_price_text_for_initial_snapshot(
-    *,
-    candidate: OfferCandidate,
-    currency: str,
-) -> str:
-    """取得初始價格歷史要顯示的價格字串。"""
-    if candidate.display_price_text:
-        return candidate.display_price_text
-    return f"{currency} {candidate.normalized_price_amount}"
 
 
 def _chrome_tab_selection_response(

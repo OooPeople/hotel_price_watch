@@ -11,6 +11,7 @@ from app.application.chrome_tab_preview import ChromeTabPreviewService
 from app.application.notification_channel_test import NotificationChannelTestService
 from app.application.preview_guard import PreviewAttemptGuard
 from app.application.watch_creation_cache import WatchCreationPreviewCache
+from app.application.watch_creation_snapshot import WatchCreationSnapshotService
 from app.application.watch_editor import WatchEditorService
 from app.application.watch_lifecycle import WatchLifecycleCoordinator
 from app.bootstrap.site_wiring import register_default_sites
@@ -46,6 +47,7 @@ class AppContainer:
     chrome_cdp_fetcher: ChromeCdpHtmlFetcher
     preview_attempt_guard: PreviewAttemptGuard
     watch_creation_preview_cache: WatchCreationPreviewCache
+    watch_creation_snapshot_service: WatchCreationSnapshotService
     monitor_runtime: ChromeDrivenMonitorRuntime | None = None
     monitor_runtime_auto_start_enabled: bool = True
 
@@ -108,6 +110,9 @@ def build_app_container(db_path: str | Path | None = None) -> AppContainer:
         chrome_cdp_fetcher=chrome_cdp_fetcher,
         preview_attempt_guard=PreviewAttemptGuard(),
         watch_creation_preview_cache=WatchCreationPreviewCache(),
+        watch_creation_snapshot_service=WatchCreationSnapshotService(
+            runtime_repository=runtime_repository,
+        ),
         monitor_runtime=monitor_runtime,
         monitor_runtime_auto_start_enabled=runtime_auto_start_enabled,
     )
