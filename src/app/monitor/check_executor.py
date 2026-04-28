@@ -32,6 +32,11 @@ from app.infrastructure.db.repositories import (
     SqliteRuntimeWriteRepository,
     SqliteWatchItemRepository,
 )
+from app.monitor.check_pipeline_contexts import (
+    CapturedCheckContext,
+    CheckSetupContext,
+    EvaluatedCheckContext,
+)
 from app.monitor.notification_dispatch import NotificationDispatchCoordinator
 from app.monitor.policies import (
     TaskLifecycleCheckpoint,
@@ -99,15 +104,24 @@ class WatchCheckExecutor:
         latest_snapshot = self._runtime_history_repository.get_latest_check_snapshot(
             watch_item_id
         )
-        previous_snapshot = _previous_snapshot_from_latest(latest_snapshot)
-        previous_effective_availability = (
-            self._runtime_history_repository.get_last_effective_availability(watch_item_id)
+        setup = CheckSetupContext(
+            watch_item=watch_item,
+            draft=draft,
+            adapter=adapter,
+            operation_url=operation_url,
+            latest_snapshot=latest_snapshot,
+            previous_snapshot=_previous_snapshot_from_latest(latest_snapshot),
+            previous_effective_availability=(
+                self._runtime_history_repository.get_last_effective_availability(
+                    watch_item_id
+                )
+            ),
+            notification_state=(
+                self._runtime_history_repository.get_notification_state(watch_item_id)
+                or NotificationState(watch_item_id=watch_item_id)
+            ),
+            checked_at=self._now(),
         )
-        notification_state = (
-            self._runtime_history_repository.get_notification_state(watch_item_id)
-            or NotificationState(watch_item_id=watch_item_id)
-        )
-        checked_at = self._now()
         capture = None
         error_code: CheckErrorCode | None = None
         debug_artifact: DebugArtifact | None = None
@@ -117,11 +131,11 @@ class WatchCheckExecutor:
         try:
             capture = await asyncio.to_thread(
                 self._chrome_fetcher.capture_for_url,
-                expected_url=operation_url,
-                fallback_url=operation_url,
+                expected_url=setup.operation_url,
+                fallback_url=setup.operation_url,
                 preferred_tab_id=resolve_watch_preferred_tab_id(draft),
                 excluded_tab_ids=excluded_tab_ids,
-                page_strategy=adapter.browser_page_strategy,
+                page_strategy=setup.adapter.browser_page_strategy,
                 reload=reload_page,
             )
             await self._save_browser_assignment(
@@ -130,10 +144,10 @@ class WatchCheckExecutor:
                 tab_id=capture.tab.tab_id,
                 tab_url=capture.tab.url,
             )
-            current_snapshot = adapter.build_snapshot_from_browser_page(
+            current_snapshot = setup.adapter.build_snapshot_from_browser_page(
                 page_url=capture.tab.url,
                 html=capture.html,
-                target=watch_item.target,
+                target=setup.watch_item.target,
             )
             error_code = _map_snapshot_error(current_snapshot)
             debug_artifact = _build_optional_debug_artifact(
@@ -143,7 +157,7 @@ class WatchCheckExecutor:
                 capture_possible_throttling=capture.tab.possible_throttling,
                 capture_was_discarded=capture.tab.was_discarded,
                 error_code=error_code,
-                checked_at=checked_at,
+                checked_at=setup.checked_at,
             )
         except Exception as exc:
             if isinstance(exc, BrowserBlockedPageError):
@@ -159,17 +173,31 @@ class WatchCheckExecutor:
             )
             debug_artifact = DebugArtifact(
                 watch_item_id=watch_item_id,
-                captured_at=checked_at,
+                captured_at=setup.checked_at,
                 reason=error_code.value,
                 payload_text=str(exc),
-                source_url=(draft.seed_url if draft is not None else watch_item.canonical_url),
+                source_url=(
+                    setup.draft.seed_url
+                    if setup.draft is not None
+                    else setup.watch_item.canonical_url
+                ),
             )
 
-        previous_failures = latest_snapshot.consecutive_failures if latest_snapshot else 0
+        captured = CapturedCheckContext(
+            current_snapshot=current_snapshot,
+            capture=capture,
+            error_code=error_code,
+            debug_artifact=debug_artifact,
+            browser_blocking_outcome=browser_blocking_outcome,
+            failure_detail=failure_detail,
+        )
+        previous_failures = (
+            setup.latest_snapshot.consecutive_failures if setup.latest_snapshot else 0
+        )
         consecutive_failures = 0 if error_code is None else previous_failures + 1
         error_handling = decide_error_handling(
-            checked_at=checked_at,
-            error_code=error_code,
+            checked_at=setup.checked_at,
+            error_code=captured.error_code,
             consecutive_failures=consecutive_failures,
         )
         if (
@@ -185,15 +213,15 @@ class WatchCheckExecutor:
             )
 
         check_result = compare_snapshots(
-            checked_at=checked_at,
-            current_snapshot=current_snapshot,
-            previous_snapshot=previous_snapshot,
-            previous_effective_availability=previous_effective_availability,
+            checked_at=setup.checked_at,
+            current_snapshot=captured.current_snapshot,
+            previous_snapshot=setup.previous_snapshot,
+            previous_effective_availability=setup.previous_effective_availability,
         )
         notification_decision = evaluate_notification_rule(
-            rule=watch_item.notification_rule,
+            rule=setup.watch_item.notification_rule,
             check_result=check_result,
-            notification_state=notification_state,
+            notification_state=setup.notification_state,
         )
         next_notification_state = replace(
             notification_decision.next_state,
@@ -203,9 +231,15 @@ class WatchCheckExecutor:
             next_notification_state = reset_notification_state_after_success(
                 next_notification_state
             )
+        evaluated = EvaluatedCheckContext(
+            check_result=check_result,
+            notification_decision=notification_decision,
+            next_notification_state=next_notification_state,
+            error_handling=error_handling,
+        )
 
         dispatch_result = None
-        if notification_decision.should_notify:
+        if evaluated.notification_decision.should_notify:
             if (
                 await self._evaluate_task_disposition(
                     watch_item_id,
@@ -219,14 +253,15 @@ class WatchCheckExecutor:
                 )
             dispatch_result = await asyncio.to_thread(
                 self._notification_dispatch_coordinator.dispatch_notification,
-                watch_item=watch_item,
-                check_result=check_result,
+                watch_item=setup.watch_item,
+                check_result=evaluated.check_result,
                 notification_decision=replace(
-                    notification_decision,
-                    next_state=next_notification_state,
+                    evaluated.notification_decision,
+                    next_state=evaluated.next_notification_state,
                 ),
-                attempted_at=checked_at,
+                attempted_at=setup.checked_at,
             )
+        evaluated = replace(evaluated, dispatch_result=dispatch_result)
 
         if (
             await self._evaluate_task_disposition(
@@ -242,42 +277,44 @@ class WatchCheckExecutor:
 
         artifacts = build_monitor_check_artifacts(
             watch_item_id=watch_item_id,
-            check_result=check_result,
+            check_result=evaluated.check_result,
             notification_decision=replace(
-                notification_decision,
-                next_state=next_notification_state,
+                evaluated.notification_decision,
+                next_state=evaluated.next_notification_state,
             ),
-            error_code=error_code,
-            error_handling=error_handling,
-            dispatch_result=dispatch_result,
+            error_code=captured.error_code,
+            error_handling=evaluated.error_handling,
+            dispatch_result=evaluated.dispatch_result,
         )
         control_recommendation = build_runtime_control_recommendation(
-            watch_item=watch_item,
-            latest_snapshot=latest_snapshot,
+            watch_item=setup.watch_item,
+            latest_snapshot=setup.latest_snapshot,
             next_snapshot=artifacts.latest_check_snapshot,
-            error_handling=error_handling,
-            error_code=error_code,
-            occurred_at=checked_at,
-            detail_text=_format_browser_blocking_detail(browser_blocking_outcome),
+            error_handling=evaluated.error_handling,
+            error_code=captured.error_code,
+            occurred_at=setup.checked_at,
+            detail_text=_format_browser_blocking_detail(
+                captured.browser_blocking_outcome
+            ),
         )
 
         await asyncio.to_thread(
             self._runtime_write_repository.persist_check_outcome,
             latest_snapshot=artifacts.latest_check_snapshot,
             check_event=artifacts.check_event,
-            notification_state=next_notification_state,
+            notification_state=evaluated.next_notification_state,
             control_watch_item=control_recommendation.watch_item,
             price_history_entry=artifacts.price_history_entry,
-            debug_artifact=debug_artifact,
+            debug_artifact=captured.debug_artifact,
             runtime_state_events=build_runtime_lifecycle_events(
                 context=WatchLifecycleContext(
-                    watch_item=watch_item,
-                    latest_snapshot=latest_snapshot,
+                    watch_item=setup.watch_item,
+                    latest_snapshot=setup.latest_snapshot,
                     next_snapshot=artifacts.latest_check_snapshot,
                 ),
                 control_decision=control_recommendation.lifecycle_decision,
-                error_code=error_code,
-                occurred_at=checked_at,
+                error_code=captured.error_code,
+                occurred_at=setup.checked_at,
             ),
             debug_retention_limit=self._debug_retention_limit,
         )
@@ -290,7 +327,7 @@ class WatchCheckExecutor:
             tab_url=capture.tab.url if capture is not None else None,
             backoff_until=artifacts.latest_check_snapshot.backoff_until,
             removed_from_scheduler=control_recommendation.remove_from_scheduler,
-            failure_detail=failure_detail,
+            failure_detail=captured.failure_detail,
         )
 
     async def _evaluate_task_disposition(

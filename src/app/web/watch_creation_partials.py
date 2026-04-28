@@ -9,19 +9,12 @@ from typing import Any
 from app.application.watch_editor import WatchCreationPreview
 from app.domain.enums import NotificationLeafKind
 from app.domain.pricing import calculate_price_per_person_per_night
-from app.infrastructure.browser import ChromeTabSummary
-from app.sites.base import LookupDiagnostic
 from app.web.client_contracts import WATCH_CREATION_DOM_IDS
 from app.web.ui_components import (
-    card,
-    collapsible_section,
-    data_table,
-    empty_state_card,
     link_button,
     section_header,
     status_badge,
     submit_button,
-    table_row,
 )
 from app.web.ui_styles import (
     SUCCESS_STYLE,
@@ -40,6 +33,14 @@ from app.web.ui_styles import (
 from app.web.watch_creation_client_scripts import (
     render_notification_rule_toggle_script,
 )
+from app.web.watch_creation_diagnostics_partials import render_diagnostics_section
+from app.web.watch_creation_tab_partials import render_chrome_tab_cards
+
+__all__ = [
+    "render_chrome_tab_cards",
+    "render_diagnostics_section",
+    "render_preview_section",
+]
 
 
 def render_preview_section(
@@ -194,146 +195,6 @@ def render_preview_section(
         wrapper_id=WATCH_CREATION_DOM_IDS.notification_target_price_wrapper,
     )}
     """
-
-
-def render_chrome_tab_cards(
-    *,
-    tabs: tuple[ChromeTabSummary, ...],
-    selected_tab_id: str | None,
-    existing_watch_ids_by_tab_id: dict[str, str],
-    site_labels_by_tab_id: dict[str, str],
-    site_label_list: str,
-    site_hint_list: str,
-) -> str:
-    """渲染 Chrome 分頁選擇頁中的分頁卡片清單。"""
-    rows = []
-    for tab in tabs:
-        rows.append(
-            _render_chrome_tab_card(
-                tab=tab,
-                selected_tab_id=selected_tab_id,
-                existing_watch_ids_by_tab_id=existing_watch_ids_by_tab_id,
-                site_labels_by_tab_id=site_labels_by_tab_id,
-            )
-        )
-
-    return "".join(rows) or empty_state_card(
-        title=f"目前找不到可用的 {site_label_list} Chrome 分頁",
-        message=(
-            f"請在目前的專用 Chrome 中打開 {site_hint_list} 頁面，"
-            "確認頁面完整載入後再回來重新整理。"
-        ),
-    )
-
-
-def render_diagnostics_section(diagnostics: tuple[LookupDiagnostic, ...]) -> str:
-    """渲染 preview 流程的診斷資訊。"""
-    if not diagnostics:
-        return ""
-
-    rows = []
-    for diagnostic in diagnostics:
-        cooldown_text = (
-            f"（冷卻 {diagnostic.cooldown_seconds:.0f} 秒）"
-            if diagnostic.cooldown_seconds is not None
-            else ""
-        )
-        rows.append(
-            table_row(
-                (
-                    escape(diagnostic.stage),
-                    escape(diagnostic.status),
-                    f"{escape(diagnostic.detail)} {escape(cooldown_text)}",
-                )
-            )
-        )
-
-    return collapsible_section(
-        title="抓取詳情",
-        body=f"""
-        <h2 style="{section_title_style()}">診斷資訊</h2>
-        <p>顯示本次 preview 嘗試過的方法與各步驟結果，平常不需要展開。</p>
-        {data_table(
-            headers=("階段", "結果", "說明"),
-            rows_html="".join(rows),
-        )}
-        """,
-    )
-
-
-def _render_chrome_tab_card(
-    *,
-    tab: ChromeTabSummary,
-    selected_tab_id: str | None,
-    existing_watch_ids_by_tab_id: dict[str, str],
-    site_labels_by_tab_id: dict[str, str],
-) -> str:
-    """渲染單一 Chrome 分頁卡片與抓取操作。"""
-    row_style = ""
-    if tab.tab_id == selected_tab_id:
-        row_style += f"border-color:{color_token('primary')};"
-    throttling_text = "可能節流" if tab.possible_throttling else "正常"
-    discarded_text = "；曾被丟棄" if tab.was_discarded else ""
-    linked_watch_id = existing_watch_ids_by_tab_id.get(tab.tab_id)
-    site_label = site_labels_by_tab_id.get(tab.tab_id)
-    site_label_html = (
-        f'<p style="margin:0;">站點：{escape(site_label)}</p>'
-        if site_label is not None
-        else ""
-    )
-    action_html = (
-        f"""
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-          {status_badge(label="已建立監視", kind="warning")}
-          {link_button(
-              href=f"/watches/{linked_watch_id}",
-              label="查看既有監視",
-              size="sm",
-          )}
-        </div>
-        """
-        if linked_watch_id is not None
-        else (
-            '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">'
-            f'{submit_button(label="抓取此分頁", kind="primary", size="sm")}'
-            "</div>"
-        )
-    )
-    status_kind = "warning" if linked_watch_id is not None else "success"
-    status_label = "已建立監視" if linked_watch_id is not None else "可抓取"
-    return card(
-        extra_style=row_style,
-        body=f"""
-        <form
-          action="/watches/chrome-tabs/preview"
-          method="post"
-          class="chrome-tab-card"
-          style="
-            display:grid;grid-template-columns:minmax(0,1fr) auto;
-            gap:18px;align-items:center;
-          "
-        >
-          <input type="hidden" name="tab_id" value="{escape(tab.tab_id)}">
-          <div style="display:grid;gap:8px;min-width:0;">
-            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-              <strong style="{card_title_style()}">{escape(tab.title or "untitled tab")}</strong>
-              {status_badge(label=status_label, kind=status_kind)}
-            </div>
-            <p style="{meta_paragraph_style()}">
-              可見性：{escape(tab.visibility_state or "unknown")} /
-              焦點：{escape(_format_focus_text(tab.has_focus))} /
-              訊號：{escape(throttling_text + discarded_text)}
-            </p>
-            {site_label_html}
-            <code style="
-              display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;
-              white-space:nowrap;color:{color_token("muted")};
-            ">{escape(tab.url)}</code>
-          </div>
-          {action_html}
-        </form>
-        """,
-    )
 
 
 def _render_preview_source_summary(
@@ -565,15 +426,6 @@ def _format_decimal_for_display(amount: Decimal) -> str:
     if amount == amount.to_integral():
         return str(amount.quantize(Decimal("1")))
     return format(amount.normalize(), "f")
-
-
-def _format_focus_text(has_focus: bool | None) -> str:
-    """把分頁焦點狀態整理成較易讀的文字。"""
-    if has_focus is True:
-        return "focused"
-    if has_focus is False:
-        return "not_focused"
-    return "unknown"
 
 
 def _render_notification_target_price_hint(kind: NotificationLeafKind) -> str:

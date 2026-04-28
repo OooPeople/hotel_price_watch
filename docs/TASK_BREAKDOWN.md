@@ -38,9 +38,18 @@
 - o settings / watch creation DOM id 與 inline behavior 已集中到 `client_contracts.py` 與 dedicated client script renderer。
 - o Dashboard、Watch Detail、Settings、Debug capture 已建立 page view model / presenter gate。
 - o Watch creation preview cache 與初始價格保存已移到 application service；初始 snapshot 以單一 transaction 寫入。
+- o `watch_client_scripts.py` 已拆成 watch list / watch detail client script renderer，原檔只保留相容 re-export。
+- o `watch_creation_routes.py` 已抽出 `WatchCreationWorkflow`，route 不再直接協調 preview guard、cache、create watch 與初始 snapshot。
+- o `settings_partials.py` 已拆成 global / rule / test partial modules，原檔只保留相容 re-export。
+- o `watch_list_partials.py` 已拆出 runtime dock / summary card modules；`watch_creation_partials.py` 已拆出 Chrome tab / diagnostics modules。
 - o `ChromeCdpHtmlFetcher` 已拆出 profile launcher、CDP connector、page matcher、page capture helper 與 chrome models。
 - o `ChromeDrivenMonitorRuntime` 已抽出 check executor、startup restorer、assignment coordinator、notification dispatch coordinator、watch definition sync coordinator。
+- o `WatchCheckExecutor` 已加入 setup / captured / evaluated pipeline context，先收斂單次 check 的資料流但不大拆流程。
 - o `SqliteRuntimeRepository` 已加上 write / history query / fragment query façade；runtime write façade 已直接持有 database，不再委派相容 repository。
+- o 資料層第二輪第一刀已完成：SQLite serializer、revision token helper、watch item row mapping 已從 `repositories.py` 抽到 dedicated modules。
+- o 資料層第二輪第二刀已完成：runtime history query SQL 與 row mapping 已抽到 `runtime_history_queries.py`，history façade 不再委派相容 repository。
+- o 資料層第二輪第三刀已完成：runtime fragment revision query 與 notification throttle state SQL 已抽到 dedicated modules。
+- o 資料層第二輪第四刀已完成：watch item repository、runtime repository façade、runtime write records、app settings repository 已拆出，`repositories.py` 降為相容 re-export。
 - o 測試已依架構邊界整理到 `tests/unit/*/` 子目錄；`tests/unit/` 根目錄不再新增 top-level `test_*.py`。
 
 ### UI 進度
@@ -63,10 +72,12 @@
 
 ## 下一步
 
-1. 對照 `docs/ui_reference/07_watch_detail.png` 重構 Watch Detail 第二輪 UI，沿用 `WatchDetailPageViewModel` 與拆分後的 detail partial。
-2. 對照 `docs/ui_reference/05_settings_notifications.png` 重構 Settings 第二輪 UI，沿用 `SettingsPageViewModel` 與 `settings_partials.py`。
-3. UI 與架構穩定後做人工 smoke test：啟動、列分頁、建立監視、手動 check、通知測試、暫停 / 恢復。
-4. Smoke test 穩定後，再決定進入 Packaging 或第二站 spike。
+1. 做 `web/` 第二輪 page-area 檢查：重點觀察 Watch Detail / Settings 第二輪 UI 會碰到的 presenter 是否需要再拆。
+2. 若資料層後續繼續成長，優先改直接 import dedicated repository module；目前不改 schema 與 public behavior。
+3. 對照 `docs/ui_reference/07_watch_detail.png` 重構 Watch Detail 第二輪 UI，沿用 `WatchDetailPageViewModel` 與拆分後的 detail partial。
+4. 對照 `docs/ui_reference/05_settings_notifications.png` 重構 Settings 第二輪 UI，沿用 `SettingsPageViewModel` 與 `settings_partials.py`。
+5. UI 與架構穩定後做人工 smoke test：啟動、列分頁、建立監視、手動 check、通知測試、暫停 / 恢復。
+6. Smoke test 穩定後，再決定進入 Packaging 或第二站 spike。
 
 ## 主要風險
 
@@ -74,5 +85,6 @@
 - 背景監看依賴專用 Chrome session，仍需長時間真機驗證。
 - Chrome 縮小、背景、discard 或站方 blocked page 的實際行為仍可能因環境不同而變動。
 - 第二站若不是 lodging-room-plan 模型，現有 target / candidate / DB contract 需要 migration。
-- `SqliteRuntimeRepository` 的 history query SQL 仍有部分保留在相容類別；若後續繼續拆 repository，優先搬到 history façade，不改 schema。
+- `repositories.py` 已降為相容 re-export；後續新增資料層實作不可加回此檔。
+- 部分 page-area presenter 仍可能變大；新增 UI 行為前應先拆分對應 component owner。
 - Watch Detail / Settings 視覺重構時，仍需避免把 domain 判斷、DOM contract 或 inline script 塞回大型 partial。

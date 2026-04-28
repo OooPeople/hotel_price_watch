@@ -6,7 +6,6 @@ from html import escape
 from typing import Iterable
 
 from app.domain.entities import LatestCheckSnapshot, PriceHistoryEntry, WatchItem
-from app.monitor.runtime import MonitorRuntimeStatus
 from app.web.ui_components import empty_state_card, icon_svg, status_badge, text_link
 from app.web.ui_presenters import (
     BadgePresentation,
@@ -25,215 +24,28 @@ from app.web.ui_styles import (
 )
 from app.web.watch_action_partials import render_watch_action_controls
 from app.web.watch_list_presenters import (
-    DashboardMetricPresentation,
     DashboardPageViewModel,
-    RuntimeStatusItemPresentation,
-    RuntimeStatusPresentation,
     build_dashboard_page_view_model,
-    build_runtime_status_presentation,
+)
+from app.web.watch_list_runtime_partials import (
+    render_runtime_status_section,
+    render_runtime_status_section_from_presentation,
+    render_runtime_status_section_with_time_format,
+)
+from app.web.watch_list_summary_partials import (
+    render_dashboard_summary_cards,
+    render_dashboard_summary_cards_from_presentation,
 )
 
-
-def render_runtime_status_section(runtime_status: MonitorRuntimeStatus | None) -> str:
-    """在首頁顯示 background monitor runtime 的狀態摘要。"""
-    return render_runtime_status_section_with_time_format(
-        runtime_status,
-        use_24_hour_time=True,
-    )
-
-
-def render_runtime_status_section_with_time_format(
-    runtime_status: MonitorRuntimeStatus | None,
-    *,
-    use_24_hour_time: bool,
-) -> str:
-    """依顯示設定渲染 background monitor runtime 的狀態摘要。"""
-    presentation = build_runtime_status_presentation(
-        runtime_status,
-        use_24_hour_time=use_24_hour_time,
-    )
-    return render_runtime_status_section_from_presentation(presentation)
-
-
-def render_runtime_status_section_from_presentation(
-    presentation: RuntimeStatusPresentation | None,
-) -> str:
-    """依 runtime presentation 渲染首頁系統狀態列。"""
-    if presentation is None:
-        return ""
-    items_html = "".join(
-        _render_runtime_status_item(item) for item in presentation.items
-    )
-    return f"""
-    <section
-      class="runtime-status-dock"
-      data-runtime-status-dock
-      style="{surface_card_style(gap="0", padding="0")}"
-    >
-      <div
-        class="runtime-status-header"
-        style="
-          display:flex;align-items:center;justify-content:space-between;gap:12px;
-          padding:14px 18px;border-bottom:1px solid {color_token("border")};
-        "
-      >
-        <h2 style="margin:0;font-size:18px;">系統狀態</h2>
-        <button
-          type="button"
-          data-runtime-status-toggle
-          aria-label="收合系統狀態"
-          aria-expanded="true"
-          style="
-            width:28px;height:28px;display:grid;place-items:center;padding:0;
-            border:1px solid {color_token("border")};border-radius:999px;
-            background:{color_token("surface")};color:{color_token("secondary")};
-            cursor:pointer;font-weight:800;line-height:1;
-          "
-        >
-          <span data-runtime-expanded-icon>{icon_svg("chevron-down", size=16)}</span>
-          <span data-runtime-collapsed-icon style="display:none;">
-            {icon_svg("chevron-up", size=16)}
-          </span>
-        </button>
-      </div>
-      <div
-        class="runtime-status-panel"
-        style="
-          display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;
-          align-items:center;padding:16px 18px;
-        "
-      >
-        {items_html}
-        <div style="display:flex;justify-content:flex-end;">
-          <a
-            href="{escape(presentation.action.href)}"
-            title="{escape(presentation.action.title)}"
-            style="
-              display:inline-flex;align-items:center;gap:8px;padding:10px 14px;
-              border:1px solid {color_token("border")};border-radius:8px;
-              color:{color_token("primary")};text-decoration:none;font-weight:700;
-              background:{color_token("surface")};
-            "
-          >
-            {escape(presentation.action.label)} <span aria-hidden="true">›</span>
-          </a>
-        </div>
-      </div>
-    </section>
-    """
-
-
-def render_dashboard_summary_cards(
-    watch_items: Iterable[WatchItem],
-    *,
-    latest_snapshots_by_watch_id: dict[str, LatestCheckSnapshot | None] | None = None,
-    recent_price_history_by_watch_id: dict[str, tuple[PriceHistoryEntry, ...]] | None = None,
-    today_notification_count: int = 0,
-    runtime_status: MonitorRuntimeStatus | None = None,
-    use_24_hour_time: bool,
-) -> str:
-    """渲染首頁摘要卡片，讓首屏先呈現產品資訊而非 runtime 細節。"""
-    view_model = build_dashboard_page_view_model(
-        watch_items=watch_items,
-        latest_snapshots_by_watch_id=latest_snapshots_by_watch_id,
-        recent_price_history_by_watch_id=recent_price_history_by_watch_id,
-        today_notification_count=today_notification_count,
-        runtime_status=runtime_status,
-        use_24_hour_time=use_24_hour_time,
-    )
-    return render_dashboard_summary_cards_from_presentation(view_model.summary_cards)
-
-
-def render_dashboard_summary_cards_from_presentation(
-    summary_cards: tuple[DashboardMetricPresentation, ...],
-) -> str:
-    """依首頁 summary presentation 渲染摘要卡片。"""
-    cards_html = "".join(_dashboard_metric_card(card) for card in summary_cards)
-    summary_grid_style = responsive_grid_style(min_width="180px", gap="14px")
-    return f"""
-    <section style="{summary_grid_style}">
-      {cards_html}
-    </section>
-    """
-
-
-def _dashboard_metric_card(
-    presentation: DashboardMetricPresentation,
-) -> str:
-    """渲染 Dashboard 參考圖風格的彩色 icon 摘要卡。"""
-    icon_style = _dashboard_metric_icon_style(presentation.icon_kind)
-    return f"""
-    <section
-      style="
-        display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;align-items:center;
-        padding:20px;border:1px solid {color_token("border")};
-        border-radius:12px;background:{color_token("surface")};
-        box-shadow:0 10px 28px {color_token("shadow_soft")};
-      "
-    >
-      <span aria-hidden="true" style="{icon_style}">
-        {icon_svg(presentation.icon_name, size=30)}
-      </span>
-      <span style="display:grid;gap:4px;min-width:0;">
-        <span style="{muted_text_style(font_size="14px")}">{escape(presentation.label)}</span>
-        <strong style="font-size:30px;line-height:1;color:{color_token("primary")};">
-          {escape(presentation.value)}
-        </strong>
-        <span style="{muted_text_style(font_size="13px")}">{escape(presentation.helper_text)}</span>
-      </span>
-    </section>
-    """
-
-
-def _dashboard_metric_icon_style(kind: str) -> str:
-    """依 summary card 語意回傳 icon 方塊樣式。"""
-    palettes = {
-        "success": ("#e8f7ef", "#15935f"),
-        "warning": ("#fff3d8", "#d97706"),
-        "info": ("#e8f2ff", "#2563eb"),
-    }
-    background, color = palettes.get(kind, palettes["success"])
-    return (
-        "width:72px;height:72px;display:grid;place-items:center;border-radius:10px;"
-        f"background:{background};color:{color};"
-    )
-
-
-def _render_runtime_status_item(
-    presentation: RuntimeStatusItemPresentation,
-) -> str:
-    """渲染系統狀態橫向列的單一狀態項目。"""
-    return f"""
-    <div
-      style="
-        display:flex;align-items:center;gap:12px;min-width:0;
-        padding:4px 18px 4px 0;border-right:1px solid {color_token("border")};
-      "
-    >
-      <span aria-hidden="true" style="{_runtime_status_icon_style(presentation.icon_kind)}">
-        {icon_svg(presentation.icon_name, size=24)}
-      </span>
-      <span style="display:grid;gap:2px;min-width:0;">
-        <span style="{muted_text_style(font_size="13px")}">{escape(presentation.label)}</span>
-        <strong style="font-size:15px;color:{color_token("secondary")};">
-          {escape(presentation.value)}
-        </strong>
-      </span>
-    </div>
-    """
-
-
-def _runtime_status_icon_style(kind: str) -> str:
-    """依 runtime 狀態語意回傳圓形 icon 樣式。"""
-    palettes = {
-        "success": ("#e8f7ef", "#15935f"),
-        "warning": ("#fff3d8", "#d97706"),
-    }
-    background, color = palettes.get(kind, palettes["success"])
-    return (
-        "width:42px;height:42px;display:grid;place-items:center;border-radius:999px;"
-        f"background:{background};color:{color};"
-    )
+__all__ = [
+    "render_dashboard_summary_cards",
+    "render_dashboard_summary_cards_from_presentation",
+    "render_runtime_status_section",
+    "render_runtime_status_section_from_presentation",
+    "render_runtime_status_section_with_time_format",
+    "render_watch_list_rows",
+    "render_watch_list_rows_from_presentation",
+]
 
 
 def render_watch_list_rows(

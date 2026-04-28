@@ -173,7 +173,14 @@ SQLite table 不急著拆，但 Python adapter 責任需分離：
 - fragment query：watch list / detail revision token 與 fragment 輕量查詢。
 - notification throttle state：通道級節流狀態。
 
-目前 `SqliteRuntimeWriteRepository` 已直接持有 database 並共用 module-level write helper；`SqliteRuntimeRepository` 仍保留相容入口與部分 history query SQL。後續若要再拆，優先搬 history query SQL 到對應 façade，不改 schema。
+目前 `repositories.py` 只保留相容 re-export；SQLite serializer、revision token helper、watch item row mapping、watch item repository、runtime repository façade、runtime write records、runtime history query SQL、runtime fragment revision query、notification throttle state SQL 與 app settings repository 都已拆到 dedicated modules。`SqliteRuntimeRepository` 仍保留相容入口，並共用這些 helper。
+
+下一輪資料層收斂方向：
+
+- 每個 façade 應逐步對應到自己的 SQL owner，不只拆 public API。
+- watch item persistence、runtime write records、runtime history query、fragment revision query、notification throttle state 與 app settings persistence 已有 dedicated module。
+- row mapping、datetime / decimal / JSON serialization、revision token hashing 已離開主 repository module。
+- 後續資料層若要再收斂，優先檢查 façade 是否能從相容入口改成直接 import；每一刀都不改 schema 與 public behavior。
 
 ## 9. Runtime 邊界
 
@@ -195,7 +202,25 @@ SQLite table 不急著拆，但 Python adapter 責任需分離：
 
 新增 runtime feature 時，先判斷應放入既有 owner，避免把流程塞回 `runtime.py`。
 
-## 10. 測試策略
+下一輪 runtime 收斂方向：
+
+- 目前不主動大拆 `WatchCheckExecutor`。
+- `check_pipeline_contexts.py` 已建立 setup / captured / evaluated context，降低單次 check 內大量局部變數互傳。
+- 若之後要新增 gate checkpoint、control recommendation、runtime event 或 persistence side effect，先延伸既有 pipeline context，再加功能。
+- 避免新增行為時同時散改 executor、policy、event builder 與 artifact builder。
+
+## 10. Web 第二輪責任收斂
+
+`web/` 已完成第一輪拆分，但 page-area 模組仍可能成為新的壓力中心。後續 UI 功能增加前，優先守住：
+
+- `watch_creation_routes.py` 已把 preview、cache、create 與 initial snapshot orchestration 交給 `WatchCreationWorkflow`；route 只保留 request / response mapping。新增建立流程時仍應放進 workflow/helper，不塞回 route。
+- `watch_client_scripts.py` 已降為相容 re-export；watch list / watch detail script renderer 已拆到 page-specific module。後續若 script 再成長，優先拆 polling、view mode、runtime dock、relative time、action submit 等小 owner。
+- `settings_partials.py` 已降為相容 re-export；全域設定、單一 watch 通知規則、測試通知 partial 已拆到 page-area modules。
+- Dashboard list partial 已拆出 runtime dock 與 summary card modules；watch creation partial 已拆出 Chrome tab selection 與 diagnostics modules。
+- 大型 partial / presenter 模組若繼續成長，應拆成 page-area component，而不是把 HTML / JS / state 判斷重新堆在同一檔。
+- `watch_fragment_contracts.py` 與 `client_contracts.py` 繼續作為 DOM / payload contract owner。
+
+## 11. 測試策略
 
 至少維持：
 
