@@ -2,7 +2,11 @@
 
 from app.infrastructure.db.repositories import (
     SqliteAppSettingsRepository,
+    SqliteNotificationThrottleStateRepository,
+    SqliteRuntimeFragmentQueryRepository,
+    SqliteRuntimeHistoryQueryRepository,
     SqliteRuntimeRepository,
+    SqliteRuntimeWriteRepository,
     SqliteWatchItemRepository,
 )
 from app.infrastructure.db.schema import (
@@ -19,7 +23,11 @@ __all__ = [
     "SchemaVersionMismatchError",
     "SqliteAppSettingsRepository",
     "SqliteDatabase",
+    "SqliteNotificationThrottleStateRepository",
+    "SqliteRuntimeFragmentQueryRepository",
+    "SqliteRuntimeHistoryQueryRepository",
     "SqliteRuntimeRepository",
+    "SqliteRuntimeWriteRepository",
     "SqliteWatchItemRepository",
     "initialize_schema",
 ]

@@ -188,17 +188,17 @@ class SqliteRuntimeRepository:
     ) -> None:
         """以單一 transaction 保存單次檢查的所有持久化結果。"""
         with self._database.connect() as connection:
-            self._save_latest_check_snapshot(connection, latest_snapshot)
-            self._append_check_event(connection, check_event)
+            _write_latest_check_snapshot(connection, latest_snapshot)
+            _write_check_event(connection, check_event)
             if price_history_entry is not None:
-                self._append_price_history(connection, price_history_entry)
-            self._save_notification_state(connection, notification_state)
+                _write_price_history(connection, price_history_entry)
+            _write_notification_state(connection, notification_state)
             for runtime_state_event in runtime_state_events:
-                self._append_runtime_state_event(connection, runtime_state_event)
+                _write_runtime_state_event(connection, runtime_state_event)
             if control_watch_item is not None:
                 _save_watch_item(connection, control_watch_item)
             if debug_artifact is not None:
-                self._append_debug_artifact(
+                _write_debug_artifact(
                     connection,
                     debug_artifact,
                     retention_limit=debug_retention_limit,
@@ -213,14 +213,14 @@ class SqliteRuntimeRepository:
     ) -> None:
         """以單一 transaction 保存建立 watch 時已取得的初始價格資料。"""
         with self._database.connect() as connection:
-            self._save_latest_check_snapshot(connection, latest_snapshot)
-            self._append_check_event(connection, check_event)
-            self._append_price_history(connection, price_history_entry)
+            _write_latest_check_snapshot(connection, latest_snapshot)
+            _write_check_event(connection, check_event)
+            _write_price_history(connection, price_history_entry)
 
     def save_latest_check_snapshot(self, snapshot: LatestCheckSnapshot) -> None:
         """新增或更新 watch item 的最新檢查摘要。"""
         with self._database.connect() as connection:
-            self._save_latest_check_snapshot(connection, snapshot)
+            _write_latest_check_snapshot(connection, snapshot)
 
     def get_latest_check_snapshot(self, watch_item_id: str) -> LatestCheckSnapshot | None:
         """讀出單一 watch item 的最新檢查摘要。"""
@@ -268,7 +268,7 @@ class SqliteRuntimeRepository:
     def append_check_event(self, event: CheckEvent) -> None:
         """追加單次檢查事件，保留完整事件列表。"""
         with self._database.connect() as connection:
-            self._append_check_event(connection, event)
+            _write_check_event(connection, event)
 
     def list_check_events(self, watch_item_id: str) -> list[CheckEvent]:
         """依時間列出某個 watch item 的檢查歷史。"""
@@ -301,7 +301,7 @@ class SqliteRuntimeRepository:
     def append_price_history(self, entry: PriceHistoryEntry) -> None:
         """追加成功價格點，供價格曲線與歷史頁使用。"""
         with self._database.connect() as connection:
-            self._append_price_history(connection, entry)
+            _write_price_history(connection, entry)
 
     def list_price_history(self, watch_item_id: str) -> list[PriceHistoryEntry]:
         """依時間列出某個 watch item 的成功價格歷史。"""
@@ -391,124 +391,21 @@ class SqliteRuntimeRepository:
     ) -> str:
         """回傳首頁可見 runtime 資料目前內容的輕量版本 token。"""
         with self._database.connect() as connection:
-            return _hash_revision_parts(
-                (
-                    _rows_revision_token(
-                        connection,
-                        """
-                        SELECT
-                            watch_item_id, checked_at_utc, availability,
-                            normalized_price_amount, currency, backoff_until_utc,
-                            is_degraded, consecutive_failures, last_error_code
-                        FROM latest_check_snapshots
-                        ORDER BY watch_item_id
-                        """,
-                    ),
-                    _rows_revision_token(
-                        connection,
-                        """
-                        SELECT
-                            watch_item_id, captured_at_utc, display_price_text,
-                            normalized_price_amount, currency, source_kind
-                        FROM price_history
-                        WHERE captured_at_utc >= ?
-                        ORDER BY watch_item_id, captured_at_utc, id
-                        """,
-                        (_datetime_to_text(price_history_since),),
-                    ),
-                    _rows_revision_token(
-                        connection,
-                        """
-                        SELECT
-                            checked_at_utc, notification_status
-                        FROM check_events
-                        WHERE checked_at_utc >= ?
-                          AND notification_status IN (?, ?)
-                        ORDER BY checked_at_utc, id
-                        """,
-                        (
-                            _datetime_to_text(notification_since),
-                            NotificationDeliveryStatus.SENT.value,
-                            NotificationDeliveryStatus.PARTIAL.value,
-                        ),
-                    ),
-                )
+            return _watch_list_revision_token(
+                connection,
+                price_history_since=price_history_since,
+                notification_since=notification_since,
             )
 
     def get_watch_detail_revision_token(self, watch_item_id: str) -> str:
         """回傳 watch 詳細頁可見 runtime 資料目前內容的輕量版本 token。"""
         with self._database.connect() as connection:
-            return _hash_revision_parts(
-                (
-                    _rows_revision_token(
-                        connection,
-                        """
-                        SELECT
-                            watch_item_id, checked_at_utc, availability,
-                            normalized_price_amount, currency, backoff_until_utc,
-                            is_degraded, consecutive_failures, last_error_code
-                        FROM latest_check_snapshots
-                        WHERE watch_item_id = ?
-                        """,
-                        (watch_item_id,),
-                    ),
-                    _rows_revision_token(
-                        connection,
-                        """
-                        SELECT
-                            checked_at_utc, availability, event_kinds_json,
-                            normalized_price_amount, currency, error_code,
-                            notification_status, sent_channels_json,
-                            throttled_channels_json, failed_channels_json
-                        FROM check_events
-                        WHERE watch_item_id = ?
-                        ORDER BY checked_at_utc, id
-                        """,
-                        (watch_item_id,),
-                    ),
-                    _rows_revision_token(
-                        connection,
-                        """
-                        SELECT
-                            last_notified_price, last_notified_availability,
-                            last_notified_at_utc, consecutive_failures,
-                            consecutive_parse_failures, degraded_notified_at_utc
-                        FROM notification_states
-                        WHERE watch_item_id = ?
-                        """,
-                        (watch_item_id,),
-                    ),
-                    _rows_revision_token(
-                        connection,
-                        """
-                        SELECT
-                            captured_at_utc, reason, payload_text, source_url,
-                            http_status
-                        FROM debug_artifacts
-                        WHERE watch_item_id = ?
-                        ORDER BY captured_at_utc, id
-                        """,
-                        (watch_item_id,),
-                    ),
-                    _rows_revision_token(
-                        connection,
-                        """
-                        SELECT
-                            occurred_at_utc, event_kind, from_state, to_state,
-                            detail_text
-                        FROM runtime_state_events
-                        WHERE watch_item_id = ?
-                        ORDER BY occurred_at_utc, id
-                        """,
-                        (watch_item_id,),
-                    ),
-                )
-            )
+            return _watch_detail_revision_token(connection, watch_item_id)
 
     def save_notification_state(self, state: NotificationState) -> None:
         """新增或更新去重用的通知狀態。"""
         with self._database.connect() as connection:
-            self._save_notification_state(connection, state)
+            _write_notification_state(connection, state)
 
     def get_notification_state(self, watch_item_id: str) -> NotificationState | None:
         """讀出單一 watch item 的通知去重狀態。"""
@@ -537,20 +434,7 @@ class SqliteRuntimeRepository:
     ) -> None:
         """保存通道級節流所需的最近成功發送時間。"""
         with self._database.connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO notification_throttle_states (
-                    channel_name, dedupe_key, last_sent_at_utc
-                ) VALUES (?, ?, ?)
-                ON CONFLICT(channel_name, dedupe_key) DO UPDATE SET
-                    last_sent_at_utc = excluded.last_sent_at_utc
-                """,
-                (
-                    state.channel_name,
-                    state.dedupe_key,
-                    _datetime_to_text(state.last_sent_at),
-                ),
-            )
+            _save_notification_throttle_state(connection, state)
 
     def get_notification_throttle_state(
         self,
@@ -560,27 +444,16 @@ class SqliteRuntimeRepository:
     ) -> NotificationThrottleState | None:
         """讀出通道級節流狀態；不存在時回傳 `None`。"""
         with self._database.connect() as connection:
-            row = connection.execute(
-                """
-                SELECT * FROM notification_throttle_states
-                WHERE channel_name = ? AND dedupe_key = ?
-                """,
-                (channel_name, dedupe_key),
-            ).fetchone()
-        if row is None:
-            return None
-        last_sent_at = _text_to_datetime(row["last_sent_at_utc"])
-        assert last_sent_at is not None
-        return NotificationThrottleState(
-            channel_name=row["channel_name"],
-            dedupe_key=row["dedupe_key"],
-            last_sent_at=last_sent_at,
-        )
+            return _get_notification_throttle_state(
+                connection,
+                channel_name=channel_name,
+                dedupe_key=dedupe_key,
+            )
 
     def append_debug_artifact(self, artifact: DebugArtifact, *, retention_limit: int) -> None:
         """追加 debug artifact，並依 watch item 套用保留上限。"""
         with self._database.connect() as connection:
-            self._append_debug_artifact(
+            _write_debug_artifact(
                 connection,
                 artifact,
                 retention_limit=retention_limit,
@@ -589,7 +462,7 @@ class SqliteRuntimeRepository:
     def append_runtime_state_event(self, event: RuntimeStateEvent) -> None:
         """追加單一 runtime 狀態事件。"""
         with self._database.connect() as connection:
-            self._append_runtime_state_event(connection, event)
+            _write_runtime_state_event(connection, event)
 
     def list_runtime_state_events(self, watch_item_id: str) -> list[RuntimeStateEvent]:
         """依時間倒序列出 watch 的 runtime 狀態轉移事件。"""
@@ -645,187 +518,575 @@ class SqliteRuntimeRepository:
             for row in rows
         ]
 
-    def _save_latest_check_snapshot(
-        self,
-        connection: Connection,
-        snapshot: LatestCheckSnapshot,
-    ) -> None:
-        """在既有 connection 上保存最新檢查摘要。"""
+def _write_latest_check_snapshot(
+    connection: Connection,
+    snapshot: LatestCheckSnapshot,
+) -> None:
+    """在既有 connection 上保存最新檢查摘要。"""
+    connection.execute(
+        """
+        INSERT INTO latest_check_snapshots (
+            watch_item_id, checked_at_utc, availability,
+            normalized_price_amount, currency, backoff_until_utc,
+            is_degraded, consecutive_failures, last_error_code
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(watch_item_id) DO UPDATE SET
+            checked_at_utc = excluded.checked_at_utc,
+            availability = excluded.availability,
+            normalized_price_amount = excluded.normalized_price_amount,
+            currency = excluded.currency,
+            backoff_until_utc = excluded.backoff_until_utc,
+            is_degraded = excluded.is_degraded,
+            consecutive_failures = excluded.consecutive_failures,
+            last_error_code = excluded.last_error_code
+        """,
+        (
+            snapshot.watch_item_id,
+            _datetime_to_text(snapshot.checked_at),
+            snapshot.availability.value,
+            _decimal_to_text(snapshot.normalized_price_amount),
+            snapshot.currency,
+            _datetime_to_text(snapshot.backoff_until),
+            int(snapshot.is_degraded),
+            snapshot.consecutive_failures,
+            snapshot.last_error_code,
+        ),
+    )
+
+
+def _write_check_event(connection: Connection, event: CheckEvent) -> None:
+    """在既有 connection 上追加單次檢查事件。"""
+    connection.execute(
+        """
+        INSERT INTO check_events (
+            watch_item_id, checked_at_utc, availability, event_kinds_json,
+            normalized_price_amount, currency, error_code, notification_status,
+            sent_channels_json, throttled_channels_json, failed_channels_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            event.watch_item_id,
+            _datetime_to_text(event.checked_at),
+            event.availability.value,
+            json.dumps(list(event.event_kinds)),
+            _decimal_to_text(event.normalized_price_amount),
+            event.currency,
+            event.error_code,
+            event.notification_status.value,
+            json.dumps(list(event.sent_channels)),
+            json.dumps(list(event.throttled_channels)),
+            json.dumps(list(event.failed_channels)),
+        ),
+    )
+
+
+def _write_price_history(connection: Connection, entry: PriceHistoryEntry) -> None:
+    """在既有 connection 上追加成功價格歷史。"""
+    connection.execute(
+        """
+        INSERT INTO price_history (
+            watch_item_id, captured_at_utc, display_price_text,
+            normalized_price_amount, currency, source_kind
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            entry.watch_item_id,
+            _datetime_to_text(entry.captured_at),
+            entry.display_price_text,
+            str(entry.normalized_price_amount),
+            entry.currency,
+            entry.source_kind.value,
+        ),
+    )
+
+
+def _write_notification_state(
+    connection: Connection,
+    state: NotificationState,
+) -> None:
+    """在既有 connection 上保存通知去重狀態。"""
+    connection.execute(
+        """
+        INSERT INTO notification_states (
+            watch_item_id, last_notified_price, last_notified_availability,
+            last_notified_at_utc, consecutive_failures,
+            consecutive_parse_failures, degraded_notified_at_utc
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(watch_item_id) DO UPDATE SET
+            last_notified_price = excluded.last_notified_price,
+            last_notified_availability = excluded.last_notified_availability,
+            last_notified_at_utc = excluded.last_notified_at_utc,
+            consecutive_failures = excluded.consecutive_failures,
+            consecutive_parse_failures = excluded.consecutive_parse_failures,
+            degraded_notified_at_utc = excluded.degraded_notified_at_utc
+        """,
+        (
+            state.watch_item_id,
+            _decimal_to_text(state.last_notified_price),
+            None
+            if state.last_notified_availability is None
+            else state.last_notified_availability.value,
+            _datetime_to_text(state.last_notified_at),
+            state.consecutive_failures,
+            state.consecutive_parse_failures,
+            _datetime_to_text(state.degraded_notified_at),
+        ),
+    )
+
+
+def _write_debug_artifact(
+    connection: Connection,
+    artifact: DebugArtifact,
+    *,
+    retention_limit: int,
+) -> None:
+    """在既有 connection 上追加 debug artifact 並套用保留上限。"""
+    connection.execute(
+        """
+        INSERT INTO debug_artifacts (
+            watch_item_id, captured_at_utc, reason, payload_text, source_url, http_status
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            artifact.watch_item_id,
+            _datetime_to_text(artifact.captured_at),
+            artifact.reason,
+            artifact.payload_text,
+            artifact.source_url,
+            artifact.http_status,
+        ),
+    )
+    if retention_limit > 0:
         connection.execute(
             """
-            INSERT INTO latest_check_snapshots (
-                watch_item_id, checked_at_utc, availability,
-                normalized_price_amount, currency, backoff_until_utc,
-                is_degraded, consecutive_failures, last_error_code
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(watch_item_id) DO UPDATE SET
-                checked_at_utc = excluded.checked_at_utc,
-                availability = excluded.availability,
-                normalized_price_amount = excluded.normalized_price_amount,
-                currency = excluded.currency,
-                backoff_until_utc = excluded.backoff_until_utc,
-                is_degraded = excluded.is_degraded,
-                consecutive_failures = excluded.consecutive_failures,
-                last_error_code = excluded.last_error_code
+            DELETE FROM debug_artifacts
+            WHERE watch_item_id = ?
+              AND id NOT IN (
+                SELECT id FROM debug_artifacts
+                WHERE watch_item_id = ?
+                ORDER BY captured_at_utc DESC, id DESC
+                LIMIT ?
+              )
             """,
-            (
-                snapshot.watch_item_id,
-                _datetime_to_text(snapshot.checked_at),
-                snapshot.availability.value,
-                _decimal_to_text(snapshot.normalized_price_amount),
-                snapshot.currency,
-                _datetime_to_text(snapshot.backoff_until),
-                int(snapshot.is_degraded),
-                snapshot.consecutive_failures,
-                snapshot.last_error_code,
-            ),
+            (artifact.watch_item_id, artifact.watch_item_id, retention_limit),
         )
 
-    def _append_check_event(
+
+def _write_runtime_state_event(
+    connection: Connection,
+    event: RuntimeStateEvent,
+) -> None:
+    """在既有 connection 上追加 runtime 狀態轉移事件。"""
+    connection.execute(
+        """
+        INSERT INTO runtime_state_events (
+            watch_item_id, occurred_at_utc, event_kind, from_state, to_state, detail_text
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            event.watch_item_id,
+            _datetime_to_text(event.occurred_at),
+            event.event_kind.value,
+            None if event.from_state is None else event.from_state.value,
+            None if event.to_state is None else event.to_state.value,
+            event.detail_text,
+        ),
+    )
+
+
+class SqliteRuntimeWriteRepository:
+    """提供 runtime 寫入路徑需要的最小 SQLite façade。"""
+
+    def __init__(self, database: SqliteDatabase) -> None:
+        """建立 runtime write façade，直接持有 SQLite database。"""
+        self._database = database
+
+    def persist_check_outcome(
         self,
-        connection: Connection,
-        event: CheckEvent,
+        *,
+        latest_snapshot: LatestCheckSnapshot,
+        check_event: CheckEvent,
+        notification_state: NotificationState,
+        control_watch_item: WatchItem | None = None,
+        price_history_entry: PriceHistoryEntry | None = None,
+        debug_artifact: DebugArtifact | None = None,
+        runtime_state_events: tuple[RuntimeStateEvent, ...] = (),
+        debug_retention_limit: int = 20,
     ) -> None:
-        """在既有 connection 上追加單次檢查事件。"""
-        connection.execute(
-            """
-            INSERT INTO check_events (
-                watch_item_id, checked_at_utc, availability, event_kinds_json,
-                normalized_price_amount, currency, error_code, notification_status,
-                sent_channels_json, throttled_channels_json, failed_channels_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                event.watch_item_id,
-                _datetime_to_text(event.checked_at),
-                event.availability.value,
-                json.dumps(list(event.event_kinds)),
-                _decimal_to_text(event.normalized_price_amount),
-                event.currency,
-                event.error_code,
-                event.notification_status.value,
-                json.dumps(list(event.sent_channels)),
-                json.dumps(list(event.throttled_channels)),
-                json.dumps(list(event.failed_channels)),
-            ),
-        )
+        """以單一 transaction 保存單次 runtime 檢查結果。"""
+        with self._database.connect() as connection:
+            _write_latest_check_snapshot(connection, latest_snapshot)
+            _write_check_event(connection, check_event)
+            if price_history_entry is not None:
+                _write_price_history(connection, price_history_entry)
+            _write_notification_state(connection, notification_state)
+            for runtime_state_event in runtime_state_events:
+                _write_runtime_state_event(connection, runtime_state_event)
+            if control_watch_item is not None:
+                _save_watch_item(connection, control_watch_item)
+            if debug_artifact is not None:
+                _write_debug_artifact(
+                    connection,
+                    debug_artifact,
+                    retention_limit=debug_retention_limit,
+                )
 
-    def _append_price_history(
+    def persist_initial_check_snapshot(
         self,
-        connection: Connection,
-        entry: PriceHistoryEntry,
+        *,
+        latest_snapshot: LatestCheckSnapshot,
+        check_event: CheckEvent,
+        price_history_entry: PriceHistoryEntry,
     ) -> None:
-        """在既有 connection 上追加成功價格歷史。"""
-        connection.execute(
-            """
-            INSERT INTO price_history (
-                watch_item_id, captured_at_utc, display_price_text,
-                normalized_price_amount, currency, source_kind
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                entry.watch_item_id,
-                _datetime_to_text(entry.captured_at),
-                entry.display_price_text,
-                str(entry.normalized_price_amount),
-                entry.currency,
-                entry.source_kind.value,
-            ),
-        )
+        """保存建立 watch 時從 preview 取得的初始價格資料。"""
+        with self._database.connect() as connection:
+            _write_latest_check_snapshot(connection, latest_snapshot)
+            _write_check_event(connection, check_event)
+            _write_price_history(connection, price_history_entry)
 
-    def _save_notification_state(
+    def save_latest_check_snapshot(self, snapshot: LatestCheckSnapshot) -> None:
+        """保存最新檢查摘要，供測試或 application service 使用。"""
+        with self._database.connect() as connection:
+            _write_latest_check_snapshot(connection, snapshot)
+
+    def append_check_event(self, event: CheckEvent) -> None:
+        """追加單次檢查事件。"""
+        with self._database.connect() as connection:
+            _write_check_event(connection, event)
+
+    def append_price_history(self, entry: PriceHistoryEntry) -> None:
+        """追加成功價格歷史。"""
+        with self._database.connect() as connection:
+            _write_price_history(connection, entry)
+
+    def save_notification_state(self, state: NotificationState) -> None:
+        """保存通知去重狀態。"""
+        with self._database.connect() as connection:
+            _write_notification_state(connection, state)
+
+    def save_notification_throttle_state(
         self,
-        connection: Connection,
-        state: NotificationState,
+        state: NotificationThrottleState,
     ) -> None:
-        """在既有 connection 上保存通知去重狀態。"""
-        connection.execute(
-            """
-            INSERT INTO notification_states (
-                watch_item_id, last_notified_price, last_notified_availability,
-                last_notified_at_utc, consecutive_failures,
-                consecutive_parse_failures, degraded_notified_at_utc
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(watch_item_id) DO UPDATE SET
-                last_notified_price = excluded.last_notified_price,
-                last_notified_availability = excluded.last_notified_availability,
-                last_notified_at_utc = excluded.last_notified_at_utc,
-                consecutive_failures = excluded.consecutive_failures,
-                consecutive_parse_failures = excluded.consecutive_parse_failures,
-                degraded_notified_at_utc = excluded.degraded_notified_at_utc
-            """,
-            (
-                state.watch_item_id,
-                _decimal_to_text(state.last_notified_price),
-                None
-                if state.last_notified_availability is None
-                else state.last_notified_availability.value,
-                _datetime_to_text(state.last_notified_at),
-                state.consecutive_failures,
-                state.consecutive_parse_failures,
-                _datetime_to_text(state.degraded_notified_at),
-            ),
-        )
+        """保存通道級節流所需的最近成功發送時間。"""
+        with self._database.connect() as connection:
+            _save_notification_throttle_state(connection, state)
 
-    def _append_debug_artifact(
+    def get_notification_throttle_state(
         self,
-        connection: Connection,
+        *,
+        channel_name: str,
+        dedupe_key: str,
+    ) -> NotificationThrottleState | None:
+        """讀出通道級節流狀態；不存在時回傳 `None`。"""
+        with self._database.connect() as connection:
+            return _get_notification_throttle_state(
+                connection,
+                channel_name=channel_name,
+                dedupe_key=dedupe_key,
+            )
+
+    def append_debug_artifact(
+        self,
         artifact: DebugArtifact,
         *,
         retention_limit: int,
     ) -> None:
-        """在既有 connection 上追加 debug artifact 並套用保留上限。"""
-        connection.execute(
-            """
-            INSERT INTO debug_artifacts (
-                watch_item_id, captured_at_utc, reason, payload_text, source_url, http_status
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                artifact.watch_item_id,
-                _datetime_to_text(artifact.captured_at),
-                artifact.reason,
-                artifact.payload_text,
-                artifact.source_url,
-                artifact.http_status,
-            ),
-        )
-        if retention_limit > 0:
-            connection.execute(
-                """
-                DELETE FROM debug_artifacts
-                WHERE watch_item_id = ?
-                  AND id NOT IN (
-                    SELECT id FROM debug_artifacts
-                    WHERE watch_item_id = ?
-                    ORDER BY captured_at_utc DESC, id DESC
-                    LIMIT ?
-                  )
-                """,
-                (artifact.watch_item_id, artifact.watch_item_id, retention_limit),
+        """追加 runtime debug artifact 並套用保留上限。"""
+        with self._database.connect() as connection:
+            _write_debug_artifact(
+                connection,
+                artifact,
+                retention_limit=retention_limit,
             )
 
-    def _append_runtime_state_event(
+    def append_runtime_state_event(self, event: RuntimeStateEvent) -> None:
+        """追加 runtime 狀態轉移事件。"""
+        with self._database.connect() as connection:
+            _write_runtime_state_event(connection, event)
+
+
+class SqliteRuntimeHistoryQueryRepository:
+    """提供 runtime 與頁面 read model 需要的歷史查詢 façade。"""
+
+    def __init__(self, database: SqliteDatabase) -> None:
+        """建立 runtime history query façade，暫時委派到相容 repository。"""
+        self._repository = SqliteRuntimeRepository(database)
+
+    def get_latest_check_snapshot(
         self,
-        connection: Connection,
-        event: RuntimeStateEvent,
+        watch_item_id: str,
+    ) -> LatestCheckSnapshot | None:
+        """讀出單一 watch item 的最新檢查摘要。"""
+        return self._repository.get_latest_check_snapshot(watch_item_id)
+
+    def get_last_effective_availability(self, watch_item_id: str) -> Availability | None:
+        """回溯最近一次明確可判定的 availability。"""
+        return self._repository.get_last_effective_availability(watch_item_id)
+
+    def list_check_events(self, watch_item_id: str) -> list[CheckEvent]:
+        """列出單一 watch item 的檢查歷史。"""
+        return self._repository.list_check_events(watch_item_id)
+
+    def list_price_history(self, watch_item_id: str) -> list[PriceHistoryEntry]:
+        """列出單一 watch item 的成功價格歷史。"""
+        return self._repository.list_price_history(watch_item_id)
+
+    def list_price_history_since(
+        self,
+        *,
+        watch_item_ids: tuple[str, ...],
+        since: datetime,
+    ) -> dict[str, tuple[PriceHistoryEntry, ...]]:
+        """批次讀取多個 watch item 在指定時間後的成功價格歷史。"""
+        return self._repository.list_price_history_since(
+            watch_item_ids=watch_item_ids,
+            since=since,
+        )
+
+    def count_notifications_since(self, since: datetime) -> int:
+        """統計指定時間後已送出或部分成功的通知事件數。"""
+        return self._repository.count_notifications_since(since)
+
+    def get_notification_state(self, watch_item_id: str) -> NotificationState | None:
+        """讀出單一 watch item 的通知去重狀態。"""
+        return self._repository.get_notification_state(watch_item_id)
+
+    def list_runtime_state_events(self, watch_item_id: str) -> list[RuntimeStateEvent]:
+        """依時間倒序列出 watch 的 runtime 狀態轉移事件。"""
+        return self._repository.list_runtime_state_events(watch_item_id)
+
+    def list_debug_artifacts(self, watch_item_id: str) -> list[DebugArtifact]:
+        """依時間列出 watch 的 debug artifacts。"""
+        return self._repository.list_debug_artifacts(watch_item_id)
+
+
+class SqliteRuntimeFragmentQueryRepository:
+    """提供前端 fragment polling 版本 token 的 SQLite façade。"""
+
+    def __init__(self, database: SqliteDatabase) -> None:
+        """建立 fragment query façade，直接持有 SQLite database。"""
+        self._database = database
+
+    def get_watch_list_revision_token(
+        self,
+        *,
+        price_history_since: datetime,
+        notification_since: datetime,
+    ) -> str:
+        """回傳首頁可見 runtime 資料目前內容的輕量版本 token。"""
+        with self._database.connect() as connection:
+            return _watch_list_revision_token(
+                connection,
+                price_history_since=price_history_since,
+                notification_since=notification_since,
+            )
+
+    def get_watch_detail_revision_token(self, watch_item_id: str) -> str:
+        """回傳 watch 詳細頁可見 runtime 資料目前內容的輕量版本 token。"""
+        with self._database.connect() as connection:
+            return _watch_detail_revision_token(connection, watch_item_id)
+
+
+class SqliteNotificationThrottleStateRepository:
+    """提供通知通道節流狀態需要的最小 SQLite façade。"""
+
+    def __init__(self, database: SqliteDatabase) -> None:
+        """建立 notification throttle state façade。"""
+        self._database = database
+
+    def save_notification_throttle_state(
+        self,
+        state: NotificationThrottleState,
     ) -> None:
-        """在既有 connection 上追加 runtime 狀態轉移事件。"""
-        connection.execute(
-            """
-            INSERT INTO runtime_state_events (
-                watch_item_id, occurred_at_utc, event_kind, from_state, to_state, detail_text
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                event.watch_item_id,
-                _datetime_to_text(event.occurred_at),
-                event.event_kind.value,
-                None if event.from_state is None else event.from_state.value,
-                None if event.to_state is None else event.to_state.value,
-                event.detail_text,
+        """保存通道級節流所需的最近成功發送時間。"""
+        with self._database.connect() as connection:
+            _save_notification_throttle_state(connection, state)
+
+    def get_notification_throttle_state(
+        self,
+        *,
+        channel_name: str,
+        dedupe_key: str,
+    ) -> NotificationThrottleState | None:
+        """讀出通道級節流狀態；不存在時回傳 `None`。"""
+        with self._database.connect() as connection:
+            return _get_notification_throttle_state(
+                connection,
+                channel_name=channel_name,
+                dedupe_key=dedupe_key,
+            )
+
+
+def _watch_list_revision_token(
+    connection: Connection,
+    *,
+    price_history_since: datetime,
+    notification_since: datetime,
+) -> str:
+    """在既有 connection 上建立首頁 runtime fragment revision token。"""
+    return _hash_revision_parts(
+        (
+            _rows_revision_token(
+                connection,
+                """
+                SELECT
+                    watch_item_id, checked_at_utc, availability,
+                    normalized_price_amount, currency, backoff_until_utc,
+                    is_degraded, consecutive_failures, last_error_code
+                FROM latest_check_snapshots
+                ORDER BY watch_item_id
+                """,
+            ),
+            _rows_revision_token(
+                connection,
+                """
+                SELECT
+                    watch_item_id, captured_at_utc, display_price_text,
+                    normalized_price_amount, currency, source_kind
+                FROM price_history
+                WHERE captured_at_utc >= ?
+                ORDER BY watch_item_id, captured_at_utc, id
+                """,
+                (_datetime_to_text(price_history_since),),
+            ),
+            _rows_revision_token(
+                connection,
+                """
+                SELECT
+                    checked_at_utc, notification_status
+                FROM check_events
+                WHERE checked_at_utc >= ?
+                  AND notification_status IN (?, ?)
+                ORDER BY checked_at_utc, id
+                """,
+                (
+                    _datetime_to_text(notification_since),
+                    NotificationDeliveryStatus.SENT.value,
+                    NotificationDeliveryStatus.PARTIAL.value,
+                ),
             ),
         )
+    )
+
+
+def _watch_detail_revision_token(
+    connection: Connection,
+    watch_item_id: str,
+) -> str:
+    """在既有 connection 上建立詳細頁 runtime fragment revision token。"""
+    return _hash_revision_parts(
+        (
+            _rows_revision_token(
+                connection,
+                """
+                SELECT
+                    watch_item_id, checked_at_utc, availability,
+                    normalized_price_amount, currency, backoff_until_utc,
+                    is_degraded, consecutive_failures, last_error_code
+                FROM latest_check_snapshots
+                WHERE watch_item_id = ?
+                """,
+                (watch_item_id,),
+            ),
+            _rows_revision_token(
+                connection,
+                """
+                SELECT
+                    checked_at_utc, availability, event_kinds_json,
+                    normalized_price_amount, currency, error_code,
+                    notification_status, sent_channels_json,
+                    throttled_channels_json, failed_channels_json
+                FROM check_events
+                WHERE watch_item_id = ?
+                ORDER BY checked_at_utc, id
+                """,
+                (watch_item_id,),
+            ),
+            _rows_revision_token(
+                connection,
+                """
+                SELECT
+                    last_notified_price, last_notified_availability,
+                    last_notified_at_utc, consecutive_failures,
+                    consecutive_parse_failures, degraded_notified_at_utc
+                FROM notification_states
+                WHERE watch_item_id = ?
+                """,
+                (watch_item_id,),
+            ),
+            _rows_revision_token(
+                connection,
+                """
+                SELECT
+                    captured_at_utc, reason, payload_text, source_url,
+                    http_status
+                FROM debug_artifacts
+                WHERE watch_item_id = ?
+                ORDER BY captured_at_utc, id
+                """,
+                (watch_item_id,),
+            ),
+            _rows_revision_token(
+                connection,
+                """
+                SELECT
+                    occurred_at_utc, event_kind, from_state, to_state,
+                    detail_text
+                FROM runtime_state_events
+                WHERE watch_item_id = ?
+                ORDER BY occurred_at_utc, id
+                """,
+                (watch_item_id,),
+            ),
+        )
+    )
+
+
+def _save_notification_throttle_state(
+    connection: Connection,
+    state: NotificationThrottleState,
+) -> None:
+    """在既有 connection 上保存通知通道節流狀態。"""
+    connection.execute(
+        """
+        INSERT INTO notification_throttle_states (
+            channel_name, dedupe_key, last_sent_at_utc
+        ) VALUES (?, ?, ?)
+        ON CONFLICT(channel_name, dedupe_key) DO UPDATE SET
+            last_sent_at_utc = excluded.last_sent_at_utc
+        """,
+        (
+            state.channel_name,
+            state.dedupe_key,
+            _datetime_to_text(state.last_sent_at),
+        ),
+    )
+
+
+def _get_notification_throttle_state(
+    connection: Connection,
+    *,
+    channel_name: str,
+    dedupe_key: str,
+) -> NotificationThrottleState | None:
+    """在既有 connection 上讀出通知通道節流狀態。"""
+    row = connection.execute(
+        """
+        SELECT * FROM notification_throttle_states
+        WHERE channel_name = ? AND dedupe_key = ?
+        """,
+        (channel_name, dedupe_key),
+    ).fetchone()
+    if row is None:
+        return None
+    last_sent_at = _text_to_datetime(row["last_sent_at_utc"])
+    assert last_sent_at is not None
+    return NotificationThrottleState(
+        channel_name=row["channel_name"],
+        dedupe_key=row["dedupe_key"],
+        last_sent_at=last_sent_at,
+    )
 
 
 class SqliteAppSettingsRepository:

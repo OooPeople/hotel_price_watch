@@ -7,15 +7,26 @@ from datetime import UTC, datetime
 from app.application.watch_editor import WatchCreationPreview
 from app.domain.entities import CheckEvent, LatestCheckSnapshot, PriceHistoryEntry
 from app.domain.enums import Availability, SourceKind
-from app.infrastructure.db.repositories import SqliteRuntimeRepository
+from app.infrastructure.db.repositories import (
+    SqliteRuntimeRepository,
+    SqliteRuntimeWriteRepository,
+)
 from app.sites.base import OfferCandidate
 
 
 class WatchCreationSnapshotService:
     """負責把新增監視 preview 取得的價格保存成初始 runtime snapshot。"""
 
-    def __init__(self, runtime_repository: SqliteRuntimeRepository) -> None:
-        self._runtime_repository = runtime_repository
+    def __init__(
+        self,
+        runtime_write_repository: SqliteRuntimeWriteRepository | None = None,
+        runtime_repository: SqliteRuntimeRepository | None = None,
+    ) -> None:
+        """建立初始價格保存服務；舊 runtime_repository 參數僅作相容。"""
+        repository = runtime_write_repository or runtime_repository
+        if repository is None:
+            raise ValueError("runtime write repository is required")
+        self._runtime_write_repository = repository
 
     def persist_initial_snapshot_from_preview(
         self,
@@ -36,7 +47,7 @@ class WatchCreationSnapshotService:
 
         captured_at = datetime.now(UTC)
         currency = candidate.currency or "JPY"
-        self._runtime_repository.persist_initial_check_snapshot(
+        self._runtime_write_repository.persist_initial_check_snapshot(
             latest_snapshot=LatestCheckSnapshot(
                 watch_item_id=watch_item_id,
                 checked_at=captured_at,

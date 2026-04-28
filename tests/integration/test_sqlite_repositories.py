@@ -34,7 +34,11 @@ from app.infrastructure.db import (
     SchemaVersionMismatchError,
     SqliteAppSettingsRepository,
     SqliteDatabase,
+    SqliteNotificationThrottleStateRepository,
+    SqliteRuntimeFragmentQueryRepository,
+    SqliteRuntimeHistoryQueryRepository,
     SqliteRuntimeRepository,
+    SqliteRuntimeWriteRepository,
     SqliteWatchItemRepository,
 )
 
@@ -411,6 +415,54 @@ def test_runtime_repository_persists_latest_history_and_notification_state(tmp_p
     assert repository.list_check_events("watch-1") == [event]
     assert repository.list_price_history("watch-1") == [price_history]
     assert repository.get_notification_state("watch-1") == notification_state
+
+
+def test_runtime_repository_facades_separate_write_history_and_fragment_queries(
+    tmp_path,
+) -> None:
+    """驗證 runtime write / history / fragment façade 可分開使用同一 SQLite 資料。"""
+    database = SqliteDatabase(tmp_path / "watcher.db")
+    database.initialize()
+    SqliteWatchItemRepository(database).save(_build_watch_item())
+    write_repository = SqliteRuntimeWriteRepository(database)
+    history_repository = SqliteRuntimeHistoryQueryRepository(database)
+    fragment_repository = SqliteRuntimeFragmentQueryRepository(database)
+    throttle_repository = SqliteNotificationThrottleStateRepository(database)
+    checked_at = datetime(2026, 4, 11, 12, 0, 0)
+    latest = LatestCheckSnapshot(
+        watch_item_id="watch-1",
+        checked_at=checked_at,
+        availability=Availability.AVAILABLE,
+        normalized_price_amount=Decimal("12000"),
+        currency="JPY",
+    )
+    event = CheckEvent(
+        watch_item_id="watch-1",
+        checked_at=checked_at,
+        availability=Availability.AVAILABLE,
+        event_kinds=("price_drop",),
+        normalized_price_amount=Decimal("12000"),
+        currency="JPY",
+        notification_status=NotificationDeliveryStatus.SENT,
+        sent_channels=("desktop",),
+    )
+    throttle_state = NotificationThrottleState(
+        channel_name="desktop",
+        dedupe_key="watch-1:price_drop:available:12000",
+        last_sent_at=checked_at,
+    )
+
+    write_repository.save_latest_check_snapshot(latest)
+    write_repository.append_check_event(event)
+    throttle_repository.save_notification_throttle_state(throttle_state)
+
+    assert history_repository.get_latest_check_snapshot("watch-1") == latest
+    assert history_repository.list_check_events("watch-1") == [event]
+    assert throttle_repository.get_notification_throttle_state(
+        channel_name="desktop",
+        dedupe_key="watch-1:price_drop:available:12000",
+    ) == throttle_state
+    assert fragment_repository.get_watch_detail_revision_token("watch-1")
 
 
 def test_runtime_repository_persists_notification_throttle_state(tmp_path) -> None:

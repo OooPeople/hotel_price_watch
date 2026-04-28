@@ -13,7 +13,9 @@ from app.domain.watch_lifecycle_state_machine import (
     decide_watch_lifecycle,
 )
 from app.infrastructure.db.repositories import (
+    SqliteRuntimeHistoryQueryRepository,
     SqliteRuntimeRepository,
+    SqliteRuntimeWriteRepository,
     SqliteWatchItemRepository,
 )
 from app.monitor.runtime import ChromeDrivenMonitorRuntime
@@ -30,11 +32,19 @@ class WatchLifecycleCoordinator:
         self,
         *,
         watch_item_repository: SqliteWatchItemRepository,
-        runtime_repository: SqliteRuntimeRepository,
         monitor_runtime: ChromeDrivenMonitorRuntime | None,
+        runtime_repository: SqliteRuntimeRepository | None = None,
+        runtime_write_repository: SqliteRuntimeWriteRepository | None = None,
+        runtime_history_repository: SqliteRuntimeHistoryQueryRepository | None = None,
     ) -> None:
         self._watch_item_repository = watch_item_repository
-        self._runtime_repository = runtime_repository
+        if runtime_repository is not None:
+            runtime_write_repository = runtime_repository
+            runtime_history_repository = runtime_repository
+        if runtime_write_repository is None or runtime_history_repository is None:
+            raise ValueError("runtime write/history repositories are required")
+        self._runtime_write_repository = runtime_write_repository
+        self._runtime_history_repository = runtime_history_repository
         self._monitor_runtime = monitor_runtime
 
     def enable_watch(self, watch_item_id: str):
@@ -103,7 +113,9 @@ class WatchLifecycleCoordinator:
         watch_item = self._watch_item_repository.get(watch_item_id)
         if watch_item is None:
             raise WatchLifecycleError("watch item not found")
-        latest_snapshot = self._runtime_repository.get_latest_check_snapshot(watch_item_id)
+        latest_snapshot = self._runtime_history_repository.get_latest_check_snapshot(
+            watch_item_id
+        )
         return WatchLifecycleContext(
             watch_item=watch_item,
             latest_snapshot=latest_snapshot,
@@ -117,7 +129,7 @@ class WatchLifecycleCoordinator:
         assert decision.watch_item is not None
         assert decision.runtime_state_event is not None
         self._watch_item_repository.save(decision.watch_item)
-        self._runtime_repository.append_runtime_state_event(
+        self._runtime_write_repository.append_runtime_state_event(
             decision.runtime_state_event
         )
         if decision.scheduler_action is LifecycleSchedulerAction.REMOVE:

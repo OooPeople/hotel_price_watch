@@ -9,6 +9,11 @@ from starlette.concurrency import run_in_threadpool
 from app.bootstrap.container import AppContainer
 from app.domain.enums import NotificationLeafKind
 from app.web import request_helpers
+from app.web.settings_page_service import (
+    NotificationChannelSettingsPageContext,
+    SettingsPageService,
+    WatchNotificationSettingsPageContext,
+)
 from app.web.views import (
     render_notification_channel_settings_page,
     render_notification_settings_page,
@@ -18,18 +23,17 @@ from app.web.views import (
 def build_settings_router(container: AppContainer) -> APIRouter:
     """建立全域與單一 watch 通知設定使用的 router。"""
     router = APIRouter(tags=["web"])
+    page_service = SettingsPageService(container)
 
     @router.get("/settings", response_class=HTMLResponse)
     @router.get("/settings/notifications", response_class=HTMLResponse)
     def notification_channel_settings_page(request: Request) -> HTMLResponse:
         """顯示全域設定頁。"""
-        html = render_notification_channel_settings_page(
-            settings=container.app_settings_service.get_notification_channel_settings(),
-            display_settings=container.app_settings_service.get_display_settings(),
+        context = page_service.build_notification_channel_settings_context(
             test_result_message=request.query_params.get("test_message"),
             flash_message=request.query_params.get("message"),
         )
-        return HTMLResponse(html)
+        return HTMLResponse(_render_channel_settings_context(context))
 
     @router.get(
         "/watches/{watch_item_id}/notification-settings",
@@ -43,12 +47,11 @@ def build_settings_router(container: AppContainer) -> APIRouter:
         watch_item = container.watch_item_repository.get(watch_item_id)
         if watch_item is None:
             return HTMLResponse("watch item not found", status_code=404)
-        return HTMLResponse(
-            render_notification_settings_page(
-                watch_item=watch_item,
-                flash_message=request.query_params.get("message"),
-            )
+        context = page_service.build_watch_notification_settings_context(
+            watch_item=watch_item,
+            flash_message=request.query_params.get("message"),
         )
+        return HTMLResponse(_render_watch_notification_settings_context(context))
 
     @router.post(
         "/watches/{watch_item_id}/notification-settings",
@@ -80,18 +83,19 @@ def build_settings_router(container: AppContainer) -> APIRouter:
                 target_price=target_price,
             )
         except Exception as exc:
+            context = page_service.build_watch_notification_settings_context(
+                watch_item=watch_item,
+                error_message=request_helpers.to_user_facing_error_message(exc),
+                form_values={
+                    "notification_rule_kind": form.get(
+                        "notification_rule_kind",
+                        NotificationLeafKind.ANY_DROP.value,
+                    ),
+                    "target_price": form.get("target_price", ""),
+                },
+            )
             return HTMLResponse(
-                render_notification_settings_page(
-                    watch_item=watch_item,
-                    error_message=request_helpers.to_user_facing_error_message(exc),
-                    form_values={
-                        "notification_rule_kind": form.get(
-                            "notification_rule_kind",
-                            NotificationLeafKind.ANY_DROP.value,
-                        ),
-                        "target_price": form.get("target_price", ""),
-                    },
-                ),
+                _render_watch_notification_settings_context(context),
                 status_code=400,
             )
         return RedirectResponse(
@@ -124,22 +128,21 @@ def build_settings_router(container: AppContainer) -> APIRouter:
                 use_24_hour_time=use_24_hour_time,
             )
         except Exception as exc:
+            context = page_service.build_notification_channel_settings_context(
+                error_message=request_helpers.to_user_facing_error_message(exc),
+                form_values={
+                    "desktop_enabled": form.get("desktop_enabled", ""),
+                    "ntfy_enabled": form.get("ntfy_enabled", ""),
+                    "ntfy_server_url": form.get("ntfy_server_url", "https://ntfy.sh"),
+                    "ntfy_topic": form.get("ntfy_topic", ""),
+                    "discord_enabled": form.get("discord_enabled", ""),
+                    "discord_webhook_url": form.get("discord_webhook_url", ""),
+                    "time_format_12h": form.get("time_format_12h", ""),
+                    "time_format_24h": form.get("time_format_24h", ""),
+                },
+            )
             return HTMLResponse(
-                render_notification_channel_settings_page(
-                    settings=container.app_settings_service.get_notification_channel_settings(),
-                    display_settings=container.app_settings_service.get_display_settings(),
-                    error_message=request_helpers.to_user_facing_error_message(exc),
-                    form_values={
-                        "desktop_enabled": form.get("desktop_enabled", ""),
-                        "ntfy_enabled": form.get("ntfy_enabled", ""),
-                        "ntfy_server_url": form.get("ntfy_server_url", "https://ntfy.sh"),
-                        "ntfy_topic": form.get("ntfy_topic", ""),
-                        "discord_enabled": form.get("discord_enabled", ""),
-                        "discord_webhook_url": form.get("discord_webhook_url", ""),
-                        "time_format_12h": form.get("time_format_12h", ""),
-                        "time_format_24h": form.get("time_format_24h", ""),
-                    },
-                ),
+                _render_channel_settings_context(context),
                 status_code=400,
             )
         return RedirectResponse(
@@ -160,36 +163,49 @@ def build_settings_router(container: AppContainer) -> APIRouter:
                 container.notification_channel_test_service.send_test_notification,
             )
         except Exception as exc:
+            context = page_service.build_notification_channel_settings_context(
+                error_message=request_helpers.to_user_facing_error_message(exc),
+            )
             return HTMLResponse(
-                render_notification_channel_settings_page(
-                    settings=container.app_settings_service.get_notification_channel_settings(),
-                    display_settings=container.app_settings_service.get_display_settings(),
-                    error_message=request_helpers.to_user_facing_error_message(exc),
-                ),
+                _render_channel_settings_context(context),
                 status_code=400,
             )
 
-        sent_channels = ", ".join(dispatch_result.sent_channels) or "none"
-        throttled_channels = ", ".join(dispatch_result.throttled_channels) or "none"
-        failed_channels = ", ".join(dispatch_result.failed_channels) or "none"
-        failure_details = (
-            " | ".join(
-                f"{channel}: {detail}"
-                for channel, detail in (dispatch_result.failure_details or {}).items()
-            )
-            or "none"
-        )
         return RedirectResponse(
             url=(
                 "/settings?"
-                f"test_message=測試通知結果：sent={sent_channels}；"
-                f"throttled={throttled_channels}；failed={failed_channels}；"
-                f"details={failure_details}"
+                f"test_message={page_service.format_test_notification_result(dispatch_result)}"
             ),
             status_code=303,
         )
 
     return router
+
+
+def _render_channel_settings_context(
+    context: NotificationChannelSettingsPageContext,
+) -> str:
+    """把全域設定頁 context 轉交給既有 renderer。"""
+    return render_notification_channel_settings_page(
+        settings=context.settings,
+        display_settings=context.display_settings,
+        error_message=context.error_message,
+        flash_message=context.flash_message,
+        test_result_message=context.test_result_message,
+        form_values=context.form_values,
+    )
+
+
+def _render_watch_notification_settings_context(
+    context: WatchNotificationSettingsPageContext,
+) -> str:
+    """把單一 watch 通知設定頁 context 轉交給既有 renderer。"""
+    return render_notification_settings_page(
+        watch_item=context.watch_item,
+        error_message=context.error_message,
+        flash_message=context.flash_message,
+        form_values=context.form_values,
+    )
 
 
 def _parse_time_format_selection(form: dict[str, str]) -> bool:

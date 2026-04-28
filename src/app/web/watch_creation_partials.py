@@ -10,7 +10,8 @@ from app.application.watch_editor import WatchCreationPreview
 from app.domain.enums import NotificationLeafKind
 from app.domain.pricing import calculate_price_per_person_per_night
 from app.infrastructure.browser import ChromeTabSummary
-from app.sites.base import LookupDiagnostic, SiteDescriptor
+from app.sites.base import LookupDiagnostic
+from app.web.client_contracts import WATCH_CREATION_DOM_IDS
 from app.web.ui_components import (
     card,
     collapsible_section,
@@ -35,6 +36,9 @@ from app.web.ui_styles import (
     section_title_style,
     selectable_card_style,
     stack_style,
+)
+from app.web.watch_creation_client_scripts import (
+    render_notification_rule_toggle_script,
 )
 
 
@@ -142,7 +146,7 @@ def render_preview_section(
             <label style="{stack_style(gap="sm")}">
               <span>通知條件</span>
               <select
-                id="create-watch-notification-rule-kind"
+                id="{WATCH_CREATION_DOM_IDS.notification_rule_kind}"
                 name="notification_rule_kind"
                 style="{input_style()}"
               >
@@ -156,7 +160,7 @@ def render_preview_section(
               </span>
             </label>
             <div
-              id="create-watch-target-price-wrapper"
+              id="{WATCH_CREATION_DOM_IDS.notification_target_price_wrapper}"
               style="{_notification_target_price_wrapper_style(NotificationLeafKind.ANY_DROP)}"
             >
               <label>目標價（僅低於目標價時使用）</label>
@@ -185,9 +189,9 @@ def render_preview_section(
       </form>
       {summary_panel_html}
     </div>
-    {_render_notification_rule_toggle_script(
-        select_id="create-watch-notification-rule-kind",
-        wrapper_id="create-watch-target-price-wrapper",
+    {render_notification_rule_toggle_script(
+        select_id=WATCH_CREATION_DOM_IDS.notification_rule_kind,
+        wrapper_id=WATCH_CREATION_DOM_IDS.notification_target_price_wrapper,
     )}
     """
 
@@ -255,26 +259,6 @@ def render_diagnostics_section(diagnostics: tuple[LookupDiagnostic, ...]) -> str
         )}
         """,
     )
-
-
-def format_site_label_list(site_descriptors: tuple[SiteDescriptor, ...]) -> str:
-    """把站點顯示名稱整理成適合 GUI 句子使用的文字。"""
-    labels = tuple(
-        descriptor.display_name
-        for descriptor in site_descriptors
-        if descriptor.supports_browser_preview
-    )
-    return "、".join(labels) if labels else "支援站點"
-
-
-def format_site_hint_list(site_descriptors: tuple[SiteDescriptor, ...]) -> str:
-    """把站點瀏覽器開頁提示整理成適合 GUI 句子使用的文字。"""
-    hints = tuple(
-        descriptor.browser_tab_hint
-        for descriptor in site_descriptors
-        if descriptor.supports_browser_preview
-    )
-    return "、".join(hints) if hints else "支援站點"
 
 
 def _render_chrome_tab_card(
@@ -611,26 +595,3 @@ def _notification_target_price_wrapper_style(kind: NotificationLeafKind) -> str:
     """依通知規則回傳目標價欄位容器的顯示樣式。"""
     display = "none" if kind is NotificationLeafKind.ANY_DROP else "grid"
     return f"display:{display};gap:8px;"
-
-
-def _render_notification_rule_toggle_script(*, select_id: str, wrapper_id: str) -> str:
-    """渲染通知規則切換腳本，控制目標價欄位顯示與隱藏。"""
-    any_drop_value = NotificationLeafKind.ANY_DROP.value
-    return f"""
-    <script>
-      (() => {{
-        const select = document.getElementById("{escape(select_id)}");
-        const wrapper = document.getElementById("{escape(wrapper_id)}");
-        if (!select || !wrapper) {{
-          return;
-        }}
-
-        const syncTargetPriceVisibility = () => {{
-          wrapper.style.display = select.value === "{escape(any_drop_value)}" ? "none" : "grid";
-        }};
-
-        syncTargetPriceVisibility();
-        select.addEventListener("change", syncTargetPriceVisibility);
-      }})();
-    </script>
-    """

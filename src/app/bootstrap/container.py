@@ -19,11 +19,20 @@ from app.infrastructure.browser import ChromeCdpHtmlFetcher
 from app.infrastructure.db import (
     SqliteAppSettingsRepository,
     SqliteDatabase,
+    SqliteNotificationThrottleStateRepository,
+    SqliteRuntimeFragmentQueryRepository,
+    SqliteRuntimeHistoryQueryRepository,
     SqliteRuntimeRepository,
+    SqliteRuntimeWriteRepository,
     SqliteWatchItemRepository,
 )
 from app.monitor.runtime import ChromeDrivenMonitorRuntime
-from app.notifiers import DesktopNotifier, DiscordWebhookNotifier, NtfyNotifier
+from app.notifiers import (
+    DesktopNotifier,
+    DiscordWebhookNotifier,
+    NtfyNotifier,
+    PersistentNotificationThrottle,
+)
 from app.sites.registry import SiteRegistry
 
 DEFAULT_DATABASE_PATH = Path("data") / "hotel_price_watch.db"
@@ -38,6 +47,10 @@ class AppContainer:
     app_settings_repository: SqliteAppSettingsRepository
     watch_item_repository: SqliteWatchItemRepository
     runtime_repository: SqliteRuntimeRepository
+    runtime_write_repository: SqliteRuntimeWriteRepository
+    runtime_history_repository: SqliteRuntimeHistoryQueryRepository
+    runtime_fragment_repository: SqliteRuntimeFragmentQueryRepository
+    notification_throttle_state_repository: SqliteNotificationThrottleStateRepository
     site_registry: SiteRegistry
     app_settings_service: AppSettingsService
     notification_channel_test_service: NotificationChannelTestService
@@ -62,6 +75,12 @@ def build_app_container(db_path: str | Path | None = None) -> AppContainer:
     app_settings_repository = SqliteAppSettingsRepository(database)
     watch_item_repository = SqliteWatchItemRepository(database)
     runtime_repository = SqliteRuntimeRepository(database)
+    runtime_write_repository = SqliteRuntimeWriteRepository(database)
+    runtime_history_repository = SqliteRuntimeHistoryQueryRepository(database)
+    runtime_fragment_repository = SqliteRuntimeFragmentQueryRepository(database)
+    notification_throttle_state_repository = SqliteNotificationThrottleStateRepository(
+        database
+    )
 
     site_registry = SiteRegistry()
     chrome_cdp_fetcher = ChromeCdpHtmlFetcher()
@@ -84,14 +103,19 @@ def build_app_container(db_path: str | Path | None = None) -> AppContainer:
     )
     monitor_runtime = ChromeDrivenMonitorRuntime(
         watch_item_repository=watch_item_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         site_registry=site_registry,
         chrome_fetcher=chrome_cdp_fetcher,
         app_settings_service=app_settings_service,
+        notification_throttle=PersistentNotificationThrottle(
+            notification_throttle_state_repository
+        ),
     )
     watch_lifecycle_coordinator = WatchLifecycleCoordinator(
         watch_item_repository=watch_item_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         monitor_runtime=monitor_runtime,
     )
 
@@ -101,6 +125,10 @@ def build_app_container(db_path: str | Path | None = None) -> AppContainer:
         app_settings_repository=app_settings_repository,
         watch_item_repository=watch_item_repository,
         runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
+        runtime_fragment_repository=runtime_fragment_repository,
+        notification_throttle_state_repository=notification_throttle_state_repository,
         site_registry=site_registry,
         app_settings_service=app_settings_service,
         notification_channel_test_service=notification_channel_test_service,
@@ -111,7 +139,7 @@ def build_app_container(db_path: str | Path | None = None) -> AppContainer:
         preview_attempt_guard=PreviewAttemptGuard(),
         watch_creation_preview_cache=WatchCreationPreviewCache(),
         watch_creation_snapshot_service=WatchCreationSnapshotService(
-            runtime_repository=runtime_repository,
+            runtime_write_repository=runtime_write_repository,
         ),
         monitor_runtime=monitor_runtime,
         monitor_runtime_auto_start_enabled=runtime_auto_start_enabled,

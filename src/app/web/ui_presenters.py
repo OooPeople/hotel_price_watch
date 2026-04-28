@@ -50,6 +50,7 @@ class WatchRowPresentation:
     """集中首頁 watch row / card 需要的顯示文字與狀態語意。"""
 
     watch_id: str
+    runtime_state: WatchRuntimeState
     hotel_name: str
     room_name: str
     plan_name: str
@@ -294,6 +295,7 @@ def build_watch_row_presentation(
     checked_rank = -(checked_at.timestamp()) if checked_at is not None else 0.0
     return WatchRowPresentation(
         watch_id=watch_item.id,
+        runtime_state=runtime_state,
         hotel_name=watch_item.hotel_name,
         room_name=watch_item.room_name,
         plan_name=watch_item.plan_name,

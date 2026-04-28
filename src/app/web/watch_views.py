@@ -33,25 +33,33 @@ from app.web.watch_client_scripts import (
     render_watch_detail_polling_script,
     render_watch_list_polling_script,
 )
+from app.web.watch_detail_history_partials import (
+    render_check_events_section_from_presentation,
+    render_debug_artifacts_section_from_presentation,
+    render_runtime_state_events_section_from_presentation,
+)
 from app.web.watch_detail_partials import (
-    render_check_events_section_with_time_format,
-    render_debug_artifacts_section_with_time_format,
-    render_price_trend_section_with_time_format,
-    render_runtime_state_events_section_with_time_format,
     render_watch_action_controls,
     render_watch_detail_hero_section,
     render_watch_price_summary_cards,
 )
-from app.web.watch_detail_presenters import build_watch_detail_presentation
+from app.web.watch_detail_presenters import build_watch_detail_page_view_model
+from app.web.watch_detail_trend_partials import (
+    render_price_trend_section_from_presentation,
+)
 from app.web.watch_fragment_contracts import (
     WATCH_DETAIL_DOM_IDS,
     WATCH_DETAIL_PAYLOAD_KEYS,
     WATCH_LIST_DOM_IDS,
 )
 from app.web.watch_list_partials import (
-    render_dashboard_summary_cards,
-    render_runtime_status_section_with_time_format,
-    render_watch_list_rows,
+    render_dashboard_summary_cards_from_presentation,
+    render_runtime_status_section_from_presentation,
+    render_watch_list_rows_from_presentation,
+)
+from app.web.watch_list_presenters import (
+    build_dashboard_page_view_model,
+    build_runtime_status_presentation,
 )
 
 
@@ -67,24 +75,23 @@ def render_watch_list_page(
     initial_fragment_version: str | None = None,
 ) -> str:
     """渲染 watch item 列表頁。"""
-    flash_html = render_flash_message(flash_message)
-    runtime_html = render_runtime_status_section_with_time_format(
-        runtime_status,
-        use_24_hour_time=use_24_hour_time,
-    )
-    summary_html = render_dashboard_summary_cards(
-        watch_items,
+    dashboard_view_model = build_dashboard_page_view_model(
+        watch_items=watch_items,
         latest_snapshots_by_watch_id=latest_snapshots_by_watch_id,
         recent_price_history_by_watch_id=recent_price_history_by_watch_id,
         today_notification_count=today_notification_count,
         runtime_status=runtime_status,
         use_24_hour_time=use_24_hour_time,
     )
-    watch_cards_html = render_watch_list_rows(
-        watch_items,
-        latest_snapshots_by_watch_id=latest_snapshots_by_watch_id,
-        recent_price_history_by_watch_id=recent_price_history_by_watch_id,
-        use_24_hour_time=use_24_hour_time,
+    flash_html = render_flash_message(flash_message)
+    runtime_html = render_runtime_status_section_from_presentation(
+        dashboard_view_model.runtime_status,
+    )
+    summary_html = render_dashboard_summary_cards_from_presentation(
+        dashboard_view_model.summary_cards,
+    )
+    watch_cards_html = render_watch_list_rows_from_presentation(
+        dashboard_view_model,
     )
     watch_list_header_style = (
         "display:flex;justify-content:space-between;gap:16px;"
@@ -136,9 +143,11 @@ def render_runtime_status_fragment(
     use_24_hour_time: bool = True,
 ) -> str:
     """提供首頁 polling 使用的 runtime 摘要 HTML 片段。"""
-    return render_runtime_status_section_with_time_format(
-        runtime_status,
-        use_24_hour_time=use_24_hour_time,
+    return render_runtime_status_section_from_presentation(
+        build_runtime_status_presentation(
+            runtime_status,
+            use_24_hour_time=use_24_hour_time,
+        )
     )
 
 
@@ -152,13 +161,16 @@ def render_dashboard_summary_fragment(
     use_24_hour_time: bool = True,
 ) -> str:
     """提供首頁 polling 使用的 summary cards HTML 片段。"""
-    return render_dashboard_summary_cards(
-        watch_items,
+    dashboard_view_model = build_dashboard_page_view_model(
+        watch_items=watch_items,
         latest_snapshots_by_watch_id=latest_snapshots_by_watch_id,
         recent_price_history_by_watch_id=recent_price_history_by_watch_id,
         today_notification_count=today_notification_count,
         runtime_status=runtime_status,
         use_24_hour_time=use_24_hour_time,
+    )
+    return render_dashboard_summary_cards_from_presentation(
+        dashboard_view_model.summary_cards,
     )
 
 
@@ -170,12 +182,13 @@ def render_watch_list_rows_fragment(
     use_24_hour_time: bool = True,
 ) -> str:
     """提供首頁 polling 使用的 watch 列表 tbody 片段。"""
-    return render_watch_list_rows(
-        watch_items,
+    dashboard_view_model = build_dashboard_page_view_model(
+        watch_items=watch_items,
         latest_snapshots_by_watch_id=latest_snapshots_by_watch_id,
         recent_price_history_by_watch_id=recent_price_history_by_watch_id,
         use_24_hour_time=use_24_hour_time,
     )
+    return render_watch_list_rows_from_presentation(dashboard_view_model)
 
 
 def render_watch_detail_page(
@@ -191,39 +204,39 @@ def render_watch_detail_page(
     initial_fragment_version: str | None = None,
 ) -> str:
     """渲染單一 watch item 的詳細頁與歷史摘要。"""
-    detail_presentation = build_watch_detail_presentation(
+    detail_view_model = build_watch_detail_page_view_model(
         watch_item=watch_item,
         latest_snapshot=latest_snapshot,
+        check_events=check_events,
         notification_state=notification_state,
+        debug_artifacts=debug_artifacts,
+        runtime_state_events=runtime_state_events,
+        use_24_hour_time=use_24_hour_time,
     )
     hero_html = render_watch_detail_hero_section(
-        presentation=detail_presentation,
+        presentation=detail_view_model.summary,
         use_24_hour_time=use_24_hour_time,
     )
     price_summary_html = render_watch_price_summary_cards(
-        presentation=detail_presentation,
+        presentation=detail_view_model.summary,
         use_24_hour_time=use_24_hour_time,
     )
-    runtime_state_events_html = render_runtime_state_events_section_with_time_format(
-        runtime_state_events,
-        use_24_hour_time=use_24_hour_time,
+    runtime_state_events_html = render_runtime_state_events_section_from_presentation(
+        detail_view_model.runtime_state_event_rows,
     )
-    check_events_html = render_check_events_section_with_time_format(
-        check_events,
-        use_24_hour_time=use_24_hour_time,
+    check_events_html = render_check_events_section_from_presentation(
+        detail_view_model.check_event_rows,
     )
-    price_trend_html = render_price_trend_section_with_time_format(
-        check_events,
-        use_24_hour_time=use_24_hour_time,
+    price_trend_html = render_price_trend_section_from_presentation(
+        detail_view_model.price_trend,
     )
-    debug_artifacts_html = render_debug_artifacts_section_with_time_format(
-        debug_artifacts,
-        use_24_hour_time=use_24_hour_time,
+    debug_artifacts_html = render_debug_artifacts_section_from_presentation(
+        detail_view_model.debug_artifact_rows,
     )
     flash_html = render_flash_message(flash_message)
     action_controls_html = render_watch_action_controls(
         watch_item=watch_item,
-        runtime_state=detail_presentation.runtime_state,
+        runtime_state=detail_view_model.summary.runtime_state,
         surface=WatchActionSurface.DETAIL,
     )
     technical_info_html = card(
@@ -232,8 +245,8 @@ def render_watch_detail_page(
         <p style="{meta_paragraph_style()}">
           這些資訊主要用於排錯，平常不需要查看。
         </p>
-        <p>Canonical URL：<code>{escape(detail_presentation.canonical_url)}</code></p>
-        <p>檢查頻率：每 {detail_presentation.scheduler_interval_seconds} 秒</p>
+        <p>Canonical URL：<code>{escape(detail_view_model.summary.canonical_url)}</code></p>
+        <p>檢查頻率：每 {detail_view_model.summary.scheduler_interval_seconds} 秒</p>
         """,
     )
     advanced_diagnostics_html = collapsible_section(
@@ -292,38 +305,38 @@ def render_watch_detail_sections(
 ) -> dict[str, str]:
     """提供 watch 詳細頁 polling 使用的主要 HTML 片段。"""
     keys = WATCH_DETAIL_PAYLOAD_KEYS
-    detail_presentation = build_watch_detail_presentation(
+    detail_view_model = build_watch_detail_page_view_model(
         watch_item=watch_item,
         latest_snapshot=latest_snapshot,
+        check_events=check_events,
         notification_state=notification_state,
+        debug_artifacts=debug_artifacts,
+        runtime_state_events=runtime_state_events,
+        use_24_hour_time=use_24_hour_time,
     )
     return {
         keys.hero_section_html: render_watch_detail_hero_section(
-            presentation=detail_presentation,
+            presentation=detail_view_model.summary,
             use_24_hour_time=use_24_hour_time,
         ),
         keys.runtime_state_events_section_html: (
-            render_runtime_state_events_section_with_time_format(
-                runtime_state_events,
-                use_24_hour_time=use_24_hour_time,
+            render_runtime_state_events_section_from_presentation(
+                detail_view_model.runtime_state_event_rows,
             )
         ),
         keys.price_summary_section_html: render_watch_price_summary_cards(
-            presentation=detail_presentation,
+            presentation=detail_view_model.summary,
             use_24_hour_time=use_24_hour_time,
         ),
-        keys.check_events_section_html: render_check_events_section_with_time_format(
-            check_events,
-            use_24_hour_time=use_24_hour_time,
+        keys.check_events_section_html: render_check_events_section_from_presentation(
+            detail_view_model.check_event_rows,
         ),
-        keys.price_trend_section_html: render_price_trend_section_with_time_format(
-            check_events,
-            use_24_hour_time=use_24_hour_time,
+        keys.price_trend_section_html: render_price_trend_section_from_presentation(
+            detail_view_model.price_trend,
         ),
         keys.debug_artifacts_section_html: (
-            render_debug_artifacts_section_with_time_format(
-                debug_artifacts,
-                use_24_hour_time=use_24_hour_time,
+            render_debug_artifacts_section_from_presentation(
+                detail_view_model.debug_artifact_rows,
             )
         ),
     }

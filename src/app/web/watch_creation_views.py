@@ -22,11 +22,15 @@ from app.web.ui_styles import (
     stack_style,
 )
 from app.web.watch_creation_partials import (
-    format_site_hint_list,
-    format_site_label_list,
     render_chrome_tab_cards,
     render_diagnostics_section,
     render_preview_section,
+)
+from app.web.watch_creation_presenters import (
+    ChromeTabSelectionPageViewModel,
+    NewWatchPageViewModel,
+    build_chrome_tab_selection_page_view_model,
+    build_new_watch_page_view_model,
 )
 
 
@@ -41,25 +45,38 @@ def render_new_watch_page(
 ) -> str:
     """渲染新增 watch item 的 editor 頁。"""
     del seed_url
-    site_label_list = format_site_label_list(site_descriptors)
+    view_model = build_new_watch_page_view_model(
+        preview=preview,
+        preview_cache_key=preview_cache_key,
+        error_message=error_message,
+        diagnostics=diagnostics,
+        site_descriptors=site_descriptors,
+    )
+    return render_new_watch_page_from_view_model(view_model)
+
+
+def render_new_watch_page_from_view_model(view_model: NewWatchPageViewModel) -> str:
+    """依新增監視頁 view model 渲染新增頁。"""
     preview_html = (
-        render_preview_section(preview, preview_cache_key=preview_cache_key)
-        if preview is not None
+        render_preview_section(
+            view_model.preview,
+            preview_cache_key=view_model.preview_cache_key,
+        )
+        if view_model.preview is not None
         else ""
     )
-    error_html = flash_message(error_message, kind="error")
-    diagnostics_html = "" if preview is not None else render_diagnostics_section(diagnostics)
-    page_subtitle = (
-        "確認來源、房型與通知條件後開始監視。"
-        if preview is not None
-        else f"從專用 Chrome 中已開啟的 {site_label_list} 頁面建立價格監視。"
+    error_html = flash_message(view_model.error_message, kind="error")
+    diagnostics_html = (
+        ""
+        if view_model.has_preview
+        else render_diagnostics_section(view_model.diagnostics)
     )
     source_selection_html = (
         ""
-        if preview is not None
-        else _render_source_selection_panel(site_label_list=site_label_list)
+        if view_model.has_preview
+        else _render_source_selection_panel(site_label_list=view_model.site_label_list)
     )
-    stepper_html = _render_add_watch_stepper(current_step=2 if preview is not None else 1)
+    stepper_html = _render_add_watch_stepper(current_step=view_model.current_step)
 
     return page_layout(
         title="新增監視",
@@ -67,7 +84,7 @@ def render_new_watch_page(
         <section style="{stack_style(gap="xl")}">
           {page_header(
               title="新增監視",
-              subtitle=page_subtitle,
+              subtitle=view_model.page_subtitle,
               back_href="/",
               back_label="回列表",
           )}
@@ -92,28 +109,40 @@ def render_chrome_tab_selection_page(
     site_labels_by_tab_id: dict[str, str] | None = None,
 ) -> str:
     """渲染專用 Chrome 分頁選擇頁。"""
-    existing_watch_ids_by_tab_id = existing_watch_ids_by_tab_id or {}
-    site_labels_by_tab_id = site_labels_by_tab_id or {}
-    site_label_list = format_site_label_list(site_descriptors)
-    site_hint_list = format_site_hint_list(site_descriptors)
-    error_html = flash_message(error_message, kind="error")
-    diagnostics_html = render_diagnostics_section(diagnostics)
+    view_model = build_chrome_tab_selection_page_view_model(
+        tabs=tabs,
+        error_message=error_message,
+        diagnostics=diagnostics,
+        selected_tab_id=selected_tab_id,
+        existing_watch_ids_by_tab_id=existing_watch_ids_by_tab_id,
+        site_descriptors=site_descriptors,
+        site_labels_by_tab_id=site_labels_by_tab_id,
+    )
+    return render_chrome_tab_selection_page_from_view_model(view_model)
+
+
+def render_chrome_tab_selection_page_from_view_model(
+    view_model: ChromeTabSelectionPageViewModel,
+) -> str:
+    """依 Chrome 分頁選擇頁 view model 渲染頁面。"""
+    error_html = flash_message(view_model.error_message, kind="error")
+    diagnostics_html = render_diagnostics_section(view_model.diagnostics)
     throttling_hint_html = (
         f"""
         <p style="{SUCCESS_STYLE};margin:0;">
           若某個分頁顯示「可能節流」，建議先把該分頁切回前景後再抓取。
         </p>
         """
-        if any(tab.possible_throttling for tab in tabs)
+        if view_model.has_throttling_signal
         else ""
     )
     rows_html = render_chrome_tab_cards(
-        tabs=tabs,
-        selected_tab_id=selected_tab_id,
-        existing_watch_ids_by_tab_id=existing_watch_ids_by_tab_id,
-        site_labels_by_tab_id=site_labels_by_tab_id,
-        site_label_list=site_label_list,
-        site_hint_list=site_hint_list,
+        tabs=view_model.tabs,
+        selected_tab_id=view_model.selected_tab_id,
+        existing_watch_ids_by_tab_id=view_model.existing_watch_ids_by_tab_id,
+        site_labels_by_tab_id=view_model.site_labels_by_tab_id,
+        site_label_list=view_model.site_label_list,
+        site_hint_list=view_model.site_hint_list,
     )
 
     return page_layout(
@@ -122,14 +151,14 @@ def render_chrome_tab_selection_page(
         <section style="{stack_style(gap="xl")}">
           {page_header(
               title="選擇 Chrome 分頁",
-              subtitle=f"選擇要建立監視的 {site_label_list} 分頁。",
+              subtitle=f"選擇要建立監視的 {view_model.site_label_list} 分頁。",
               back_href="/watches/new",
               back_label="回新增頁",
           )}
           {_render_add_watch_stepper(current_step=1)}
           <div style="{stack_style(gap="md")}">
             <p style="{meta_paragraph_style()}">
-              請先在專用 Chrome 中打開要監視的 {escape(site_hint_list)} 頁面。
+              請先在專用 Chrome 中打開要監視的 {escape(view_model.site_hint_list)} 頁面。
             </p>
             {throttling_hint_html}
           </div>

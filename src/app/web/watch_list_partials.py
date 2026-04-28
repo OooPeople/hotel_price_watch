@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from html import escape
 from typing import Iterable
 
-from app.domain import derive_watch_runtime_state
 from app.domain.entities import LatestCheckSnapshot, PriceHistoryEntry, WatchItem
 from app.monitor.runtime import MonitorRuntimeStatus
 from app.web.ui_components import empty_state_card, icon_svg, status_badge, text_link
@@ -14,9 +12,6 @@ from app.web.ui_presenters import (
     BadgePresentation,
     WatchActionSurface,
     WatchRowPresentation,
-    build_watch_row_presentation,
-    price_history_changed,
-    price_history_increased,
 )
 from app.web.ui_styles import (
     color_token,
@@ -28,8 +23,15 @@ from app.web.ui_styles import (
     surface_card_style,
     watch_title_style,
 )
-from app.web.view_formatters import format_datetime_for_display
 from app.web.watch_action_partials import render_watch_action_controls
+from app.web.watch_list_presenters import (
+    DashboardMetricPresentation,
+    DashboardPageViewModel,
+    RuntimeStatusItemPresentation,
+    RuntimeStatusPresentation,
+    build_dashboard_page_view_model,
+    build_runtime_status_presentation,
+)
 
 
 def render_runtime_status_section(runtime_status: MonitorRuntimeStatus | None) -> str:
@@ -46,25 +48,21 @@ def render_runtime_status_section_with_time_format(
     use_24_hour_time: bool,
 ) -> str:
     """依顯示設定渲染 background monitor runtime 的狀態摘要。"""
-    if runtime_status is None:
-        return ""
+    presentation = build_runtime_status_presentation(
+        runtime_status,
+        use_24_hour_time=use_24_hour_time,
+    )
+    return render_runtime_status_section_from_presentation(presentation)
 
-    running_text = "運作正常" if runtime_status.is_running else "未啟動"
-    chrome_text = "已連線" if runtime_status.chrome_debuggable else "未連線"
-    last_tick_text = format_datetime_for_display(
-        runtime_status.last_tick_at,
-        use_24_hour_time=use_24_hour_time,
-    )
-    last_sync_text = format_datetime_for_display(
-        runtime_status.last_watch_sync_at,
-        use_24_hour_time=use_24_hour_time,
-    )
-    runtime_kind = "success" if runtime_status.is_running else "warning"
-    chrome_kind = "success" if runtime_status.chrome_debuggable else "warning"
-    runtime_details = (
-        f"已啟用監視：{runtime_status.enabled_watch_count}；"
-        f"目前檢查中：{runtime_status.inflight_watch_count}；"
-        f"最後 tick：{last_tick_text}"
+
+def render_runtime_status_section_from_presentation(
+    presentation: RuntimeStatusPresentation | None,
+) -> str:
+    """依 runtime presentation 渲染首頁系統狀態列。"""
+    if presentation is None:
+        return ""
+    items_html = "".join(
+        _render_runtime_status_item(item) for item in presentation.items
     )
     return f"""
     <section
@@ -105,28 +103,11 @@ def render_runtime_status_section_with_time_format(
           align-items:center;padding:16px 18px;
         "
       >
-        {_render_runtime_status_item(
-            icon_name="check-circle",
-            icon_kind=runtime_kind,
-            label="背景監視器",
-            value=running_text,
-        )}
-        {_render_runtime_status_item(
-            icon_name="chrome",
-            icon_kind=chrome_kind,
-            label="專用 Chrome",
-            value=chrome_text,
-        )}
-        {_render_runtime_status_item(
-            icon_name="clock",
-            icon_kind="success",
-            label="最後同步時間",
-            value=last_sync_text,
-        )}
+        {items_html}
         <div style="display:flex;justify-content:flex-end;">
           <a
-            href="/debug/captures"
-            title="{escape(runtime_details)}"
+            href="{escape(presentation.action.href)}"
+            title="{escape(presentation.action.title)}"
             style="
               display:inline-flex;align-items:center;gap:8px;padding:10px 14px;
               border:1px solid {color_token("border")};border-radius:8px;
@@ -134,7 +115,7 @@ def render_runtime_status_section_with_time_format(
               background:{color_token("surface")};
             "
           >
-            查看詳細狀態 <span aria-hidden="true">›</span>
+            {escape(presentation.action.label)} <span aria-hidden="true">›</span>
           </a>
         </div>
       </div>
@@ -152,57 +133,22 @@ def render_dashboard_summary_cards(
     use_24_hour_time: bool,
 ) -> str:
     """渲染首頁摘要卡片，讓首屏先呈現產品資訊而非 runtime 細節。"""
-    watch_items_tuple = tuple(watch_items)
-    latest_snapshots_by_watch_id = latest_snapshots_by_watch_id or {}
-    recent_price_history_by_watch_id = recent_price_history_by_watch_id or {}
-    attention_count = sum(
-        1
-        for watch_item in watch_items_tuple
-        if _watch_needs_attention(latest_snapshots_by_watch_id.get(watch_item.id))
-        or price_history_increased(recent_price_history_by_watch_id.get(watch_item.id, ()))
+    view_model = build_dashboard_page_view_model(
+        watch_items=watch_items,
+        latest_snapshots_by_watch_id=latest_snapshots_by_watch_id,
+        recent_price_history_by_watch_id=recent_price_history_by_watch_id,
+        today_notification_count=today_notification_count,
+        runtime_status=runtime_status,
+        use_24_hour_time=use_24_hour_time,
     )
-    changed_count = sum(
-        1
-        for watch_item in watch_items_tuple
-        if price_history_changed(recent_price_history_by_watch_id.get(watch_item.id, ()))
-    )
-    active_count = (
-        runtime_status.enabled_watch_count
-        if runtime_status is not None
-        else sum(1 for watch_item in watch_items_tuple if watch_item.enabled)
-    )
-    cards_html = "".join(
-        (
-            _dashboard_metric_card(
-                label="啟用中的監視",
-                value=str(active_count),
-                helper_text=f"共 {len(watch_items_tuple)} 個監視",
-                icon_name="trend-up",
-                icon_kind="success",
-            ),
-            _dashboard_metric_card(
-                label="需要注意",
-                value=str(attention_count),
-                helper_text="異常、退避或價格上漲",
-                icon_name="alert-circle",
-                icon_kind="warning",
-            ),
-            _dashboard_metric_card(
-                label="最近有變動",
-                value=str(changed_count),
-                helper_text="過去 24 小時內",
-                icon_name="arrow-up-down",
-                icon_kind="info",
-            ),
-            _dashboard_metric_card(
-                label="今日通知",
-                value=str(today_notification_count),
-                helper_text=f"{today_notification_count} 封新通知",
-                icon_name="bell",
-                icon_kind="success",
-            ),
-        )
-    )
+    return render_dashboard_summary_cards_from_presentation(view_model.summary_cards)
+
+
+def render_dashboard_summary_cards_from_presentation(
+    summary_cards: tuple[DashboardMetricPresentation, ...],
+) -> str:
+    """依首頁 summary presentation 渲染摘要卡片。"""
+    cards_html = "".join(_dashboard_metric_card(card) for card in summary_cards)
     summary_grid_style = responsive_grid_style(min_width="180px", gap="14px")
     return f"""
     <section style="{summary_grid_style}">
@@ -212,15 +158,10 @@ def render_dashboard_summary_cards(
 
 
 def _dashboard_metric_card(
-    *,
-    label: str,
-    value: str,
-    helper_text: str,
-    icon_name: str,
-    icon_kind: str,
+    presentation: DashboardMetricPresentation,
 ) -> str:
     """渲染 Dashboard 參考圖風格的彩色 icon 摘要卡。"""
-    icon_style = _dashboard_metric_icon_style(icon_kind)
+    icon_style = _dashboard_metric_icon_style(presentation.icon_kind)
     return f"""
     <section
       style="
@@ -231,14 +172,14 @@ def _dashboard_metric_card(
       "
     >
       <span aria-hidden="true" style="{icon_style}">
-        {icon_svg(icon_name, size=30)}
+        {icon_svg(presentation.icon_name, size=30)}
       </span>
       <span style="display:grid;gap:4px;min-width:0;">
-        <span style="{muted_text_style(font_size="14px")}">{escape(label)}</span>
+        <span style="{muted_text_style(font_size="14px")}">{escape(presentation.label)}</span>
         <strong style="font-size:30px;line-height:1;color:{color_token("primary")};">
-          {escape(value)}
+          {escape(presentation.value)}
         </strong>
-        <span style="{muted_text_style(font_size="13px")}">{escape(helper_text)}</span>
+        <span style="{muted_text_style(font_size="13px")}">{escape(presentation.helper_text)}</span>
       </span>
     </section>
     """
@@ -259,11 +200,7 @@ def _dashboard_metric_icon_style(kind: str) -> str:
 
 
 def _render_runtime_status_item(
-    *,
-    icon_name: str,
-    icon_kind: str,
-    label: str,
-    value: str,
+    presentation: RuntimeStatusItemPresentation,
 ) -> str:
     """渲染系統狀態橫向列的單一狀態項目。"""
     return f"""
@@ -273,13 +210,13 @@ def _render_runtime_status_item(
         padding:4px 18px 4px 0;border-right:1px solid {color_token("border")};
       "
     >
-      <span aria-hidden="true" style="{_runtime_status_icon_style(icon_kind)}">
-        {icon_svg(icon_name, size=24)}
+      <span aria-hidden="true" style="{_runtime_status_icon_style(presentation.icon_kind)}">
+        {icon_svg(presentation.icon_name, size=24)}
       </span>
       <span style="display:grid;gap:2px;min-width:0;">
-        <span style="{muted_text_style(font_size="13px")}">{escape(label)}</span>
+        <span style="{muted_text_style(font_size="13px")}">{escape(presentation.label)}</span>
         <strong style="font-size:15px;color:{color_token("secondary")};">
-          {escape(value)}
+          {escape(presentation.value)}
         </strong>
       </span>
     </div>
@@ -307,35 +244,25 @@ def render_watch_list_rows(
     use_24_hour_time: bool = True,
 ) -> str:
     """渲染首頁 watch card 內容，供首屏與局部更新共用。"""
+    view_model = build_dashboard_page_view_model(
+        watch_items=watch_items,
+        latest_snapshots_by_watch_id=latest_snapshots_by_watch_id,
+        recent_price_history_by_watch_id=recent_price_history_by_watch_id,
+        use_24_hour_time=use_24_hour_time,
+    )
+    return render_watch_list_rows_from_presentation(view_model)
+
+
+def render_watch_list_rows_from_presentation(
+    view_model: DashboardPageViewModel,
+) -> str:
+    """依 Dashboard view model 渲染 watch 卡片與清單模式。"""
     cards = []
     list_items = []
-    latest_snapshots_by_watch_id = latest_snapshots_by_watch_id or {}
-    recent_price_history_by_watch_id = recent_price_history_by_watch_id or {}
-    row_presentations = sorted(
-        (
-            build_watch_row_presentation(
-                watch_item=watch_item,
-                latest_snapshot=latest_snapshots_by_watch_id.get(watch_item.id),
-                recent_price_history=recent_price_history_by_watch_id.get(
-                    watch_item.id,
-                    (),
-                ),
-                use_24_hour_time=use_24_hour_time,
-            )
-            for watch_item in watch_items
-        ),
-        key=lambda row: row.sort_key,
-    )
-    watch_items_by_id = {watch_item.id: watch_item for watch_item in watch_items}
-    for row in row_presentations:
-        watch_item = watch_items_by_id[row.watch_id]
-        runtime_state = derive_watch_runtime_state(
-            watch_item=watch_item,
-            latest_snapshot=latest_snapshots_by_watch_id.get(watch_item.id),
-        )
+    for row in view_model.watch_rows:
         actions_html = render_watch_action_controls(
-            watch_item=watch_item,
-            runtime_state=runtime_state,
+            watch_item_id=row.watch_id,
+            runtime_state=row.runtime_state,
             surface=WatchActionSurface.LIST,
         )
         availability_html = _presentation_badge_html(row.availability_badge)
@@ -610,68 +537,10 @@ def _dashboard_meta_icon_line_style() -> str:
         f"{muted_text_style(font_size='13px')}"
     )
 
-def _watch_needs_attention(snapshot: LatestCheckSnapshot | None) -> bool:
-    """判斷首頁摘要是否應把 watch 計入需注意項目。"""
-    if snapshot is None:
-        return False
-    return bool(snapshot.last_error_code or snapshot.is_degraded)
-
-def _format_date_range_text(watch_item: WatchItem) -> str:
-    """把 watch target 的日期與晚數整理成使用者容易掃描的文案。"""
-    date_text = _format_date_range_core(watch_item)
-    return f"{date_text}，{watch_item.target.nights} 晚"
-
-
-def _format_date_range_list_html(watch_item: WatchItem) -> str:
-    """把清單模式日期分成日期區間與晚數兩行，降低欄寬壓力。"""
-    date_text = _format_date_range_core(watch_item)
-    nights_text = f"{watch_item.target.nights} 晚"
-    return (
-        f'<span style="white-space:nowrap;">{escape(date_text)}</span>'
-        f"<br><span style=\"{muted_text_style(font_size='13px')}\">"
-        f"{escape(nights_text)}</span>"
-    )
-
-
-def _format_date_range_list_html_from_row(row: WatchRowPresentation) -> str:
-    """把首頁 view model 的日期拆成日期區間與晚數兩行。"""
-    return (
-        f'<span style="white-space:nowrap;">{escape(row.date_range_short_text)}</span>'
-        f"<br><span style=\"{muted_text_style(font_size='13px')}\">"
-        f"{escape(row.nights_text)}</span>"
-    )
-
 
 def _presentation_badge_html(presentation: BadgePresentation | None) -> str:
     """把 presenter badge 轉成共用 badge HTML，允許缺值。"""
     if presentation is None:
         return ""
     return status_badge(label=presentation.label, kind=presentation.kind)
-
-
-def _format_date_range_core(watch_item: WatchItem) -> str:
-    """產生不含晚數的精簡日期區間，跨年時才顯示年份。"""
-    check_in = watch_item.target.check_in_date
-    check_out = watch_item.target.check_out_date
-    if check_in.year == check_out.year:
-        return f"{check_in.month}/{check_in.day} - {check_out.month}/{check_out.day}"
-    return (
-        f"{check_in.year}/{check_in.month}/{check_in.day} - "
-        f"{check_out.year}/{check_out.month}/{check_out.day}"
-    )
-
-
-def _format_short_datetime_for_list(
-    value: datetime,
-    *,
-    use_24_hour_time: bool,
-) -> str:
-    """產生清單欄位使用的短時間格式，避免年份佔用過多欄寬。"""
-    local_value = value.astimezone()
-    if use_24_hour_time:
-        return f"{local_value.month}/{local_value.day} {local_value:%H:%M}"
-
-    period_text = "上午" if local_value.hour < 12 else "下午"
-    hour = local_value.hour % 12 or 12
-    return f"{local_value.month}/{local_value.day} {period_text} {hour:02d}:{local_value:%M}"
 

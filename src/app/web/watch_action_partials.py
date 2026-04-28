@@ -16,18 +16,25 @@ from app.web.ui_presenters import (
 
 def render_watch_action_controls(
     *,
-    watch_item: WatchItem,
+    watch_item: WatchItem | None = None,
+    watch_item_id: str | None = None,
     runtime_state: WatchRuntimeState,
     surface: WatchActionSurface,
 ) -> str:
     """依頁面情境渲染 watch 操作按鈕。"""
+    resolved_watch_item_id = watch_item_id or (watch_item.id if watch_item else None)
+    if resolved_watch_item_id is None:
+        raise ValueError("render_watch_action_controls requires watch_item or watch_item_id")
     actions = build_watch_action_presentations(
         runtime_state=runtime_state,
         surface=surface,
     )
     return action_row(
         body="".join(
-            _render_watch_action_form(watch_item_id=watch_item.id, action=action)
+            _render_watch_action_form(
+                watch_item_id=resolved_watch_item_id,
+                action=action,
+            )
             for action in actions
         ),
         extra_style="flex-wrap:nowrap;",
