@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from app.web.client_script_helpers import replace_script_constants
 from app.web.watch_fragment_contracts import (
-    WATCH_DETAIL_DOM_IDS,
+    WATCH_DETAIL_FRAGMENT_SECTIONS,
     WATCH_DETAIL_PAYLOAD_KEYS,
 )
 
@@ -20,22 +20,9 @@ def render_watch_detail_polling_script(
     script = """
     <script>
       (() => {
-        const heroSection = document.getElementById(__HERO_DOM_ID__);
-        const checkEventsSection = document.getElementById(__CHECK_EVENTS_DOM_ID__);
-        const priceSummarySection = document.getElementById(__PRICE_SUMMARY_DOM_ID__);
-        const priceTrendSection = document.getElementById(__PRICE_TREND_DOM_ID__);
-        const runtimeStateEventsSection = document.getElementById(
-          __RUNTIME_STATE_EVENTS_DOM_ID__
-        );
-        const debugArtifactsSection = document.getElementById(__DEBUG_ARTIFACTS_DOM_ID__);
+        const sections = __SECTIONS__;
         const payloadKeys = {
-          version: __VERSION_KEY__,
-          heroHtml: __HERO_HTML_KEY__,
-          priceSummaryHtml: __PRICE_SUMMARY_HTML_KEY__,
-          priceTrendHtml: __PRICE_TREND_HTML_KEY__,
-          checkEventsHtml: __CHECK_EVENTS_HTML_KEY__,
-          runtimeStateEventsHtml: __RUNTIME_STATE_EVENTS_HTML_KEY__,
-          debugArtifactsHtml: __DEBUG_ARTIFACTS_HTML_KEY__
+          version: __VERSION_KEY__
         };
         const fragmentsUrl = __FRAGMENTS_URL__;
         const versionUrl = __VERSION_URL__;
@@ -44,14 +31,11 @@ def render_watch_detail_polling_script(
         let pendingVersion = null;
         let lastFragmentRefreshAt = 0;
         let scheduledFragmentRefresh = null;
-        if (
-          !heroSection ||
-          !priceSummarySection ||
-          !priceTrendSection ||
-          !runtimeStateEventsSection ||
-          !checkEventsSection ||
-          !debugArtifactsSection
-        ) {
+        const sectionElements = sections.map((section) => ({
+          ...section,
+          element: document.getElementById(section.domId)
+        }));
+        if (sectionElements.some((section) => !section.element)) {
           return;
         }
 
@@ -100,12 +84,12 @@ def render_watch_detail_polling_script(
         };
 
         const applyWatchDetailPayload = (payload) => {
-          heroSection.innerHTML = payload[payloadKeys.heroHtml];
-          priceSummarySection.innerHTML = payload[payloadKeys.priceSummaryHtml];
-          priceTrendSection.innerHTML = payload[payloadKeys.priceTrendHtml];
-          runtimeStateEventsSection.innerHTML = payload[payloadKeys.runtimeStateEventsHtml];
-          checkEventsSection.innerHTML = payload[payloadKeys.checkEventsHtml];
-          debugArtifactsSection.innerHTML = payload[payloadKeys.debugArtifactsHtml];
+          sectionElements.forEach((section) => {
+            const html = payload[section.payloadKey];
+            if (typeof html === "string") {
+              section.element.innerHTML = html;
+            }
+          });
           updateClientTimeText();
           if (typeof payload[payloadKeys.version] === "string") {
             currentVersion = payload[payloadKeys.version];
@@ -177,26 +161,10 @@ def render_watch_detail_polling_script(
             "__FRAGMENTS_URL__": fragments_url,
             "__VERSION_URL__": version_url,
             "__INITIAL_VERSION__": initial_fragment_version,
-            "__HERO_DOM_ID__": WATCH_DETAIL_DOM_IDS.hero,
-            "__CHECK_EVENTS_DOM_ID__": WATCH_DETAIL_DOM_IDS.check_events,
-            "__PRICE_SUMMARY_DOM_ID__": WATCH_DETAIL_DOM_IDS.price_summary,
-            "__PRICE_TREND_DOM_ID__": WATCH_DETAIL_DOM_IDS.price_trend,
-            "__RUNTIME_STATE_EVENTS_DOM_ID__": WATCH_DETAIL_DOM_IDS.runtime_state_events,
-            "__DEBUG_ARTIFACTS_DOM_ID__": WATCH_DETAIL_DOM_IDS.debug_artifacts,
+            "__SECTIONS__": [
+                section.to_client_config()
+                for section in WATCH_DETAIL_FRAGMENT_SECTIONS
+            ],
             "__VERSION_KEY__": WATCH_DETAIL_PAYLOAD_KEYS.version,
-            "__HERO_HTML_KEY__": WATCH_DETAIL_PAYLOAD_KEYS.hero_section_html,
-            "__PRICE_SUMMARY_HTML_KEY__": (
-                WATCH_DETAIL_PAYLOAD_KEYS.price_summary_section_html
-            ),
-            "__PRICE_TREND_HTML_KEY__": WATCH_DETAIL_PAYLOAD_KEYS.price_trend_section_html,
-            "__CHECK_EVENTS_HTML_KEY__": (
-                WATCH_DETAIL_PAYLOAD_KEYS.check_events_section_html
-            ),
-            "__RUNTIME_STATE_EVENTS_HTML_KEY__": (
-                WATCH_DETAIL_PAYLOAD_KEYS.runtime_state_events_section_html
-            ),
-            "__DEBUG_ARTIFACTS_HTML_KEY__": (
-                WATCH_DETAIL_PAYLOAD_KEYS.debug_artifacts_section_html
-            ),
         },
     )

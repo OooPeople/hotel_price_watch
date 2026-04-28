@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from app.domain.enums import NotificationLeafKind
 from app.web.client_contracts import SETTINGS_DOM_IDS
-from app.web.settings_client_scripts import render_notification_rule_toggle_script
+from app.web.settings_page_scripts import render_watch_notification_rule_page_scripts
 from app.web.ui_components import submit_button
+from app.web.ui_page_sections import field_stack_style
 from app.web.ui_styles import input_style, meta_paragraph_style
 
 
@@ -55,11 +56,8 @@ def render_watch_notification_rule_form_body(
 
 
 def render_watch_notification_rule_scripts() -> str:
-    """渲染單一 watch 通知規則頁需要的 client script。"""
-    return render_notification_rule_toggle_script(
-        select_id=SETTINGS_DOM_IDS.notification_rule_kind,
-        wrapper_id=SETTINGS_DOM_IDS.notification_target_price_wrapper,
-    )
+    """相容舊入口，委派到單一 watch 設定頁 script entrypoint。"""
+    return render_watch_notification_rule_page_scripts()
 
 
 def _render_notification_target_price_hint(kind: NotificationLeafKind) -> str:
@@ -79,5 +77,4 @@ def _render_notification_target_price_hint(kind: NotificationLeafKind) -> str:
 
 def _notification_target_price_wrapper_style(kind: NotificationLeafKind) -> str:
     """依通知規則回傳目標價欄位容器的顯示樣式。"""
-    display = "none" if kind is NotificationLeafKind.ANY_DROP else "grid"
-    return f"display:{display};gap:8px;"
+    return field_stack_style(visible=kind is not NotificationLeafKind.ANY_DROP)

@@ -10,6 +10,8 @@
 - 首頁刪除操作維持直接可見，不收進更多選單。
 - 每一批改動要能獨立驗證，不做一次性大重寫。
 - Watch Detail / Settings 第二輪 UI 必須沿用已完成的 page service、presenter、partial、client contract，不把判斷塞回 route 或大型 partial。
+- Watch Detail 已先完成 section registry / fragment assembler / page shell 拆分；第二輪 UI 只調整 presentation 與 partial，不重新發明局部更新 contract。
+- 第二輪 UI 新增 layout 時優先使用 `ui_page_sections.py`、`ui_layout.py`、`ui_primitives.py`，避免新的 page-specific inline layout string 繼續擴散。
 
 ## 2. 參考圖片
 
@@ -39,6 +41,7 @@
 - 不假造能力：資料來源不存在時，不顯示假價格差異、假通知數或假圖片。
 - Renderer 減負：價格判讀、badge 文案、排序與狀態提示集中在 presenter / view model。
 - Contract 優先：改 UI 前確認 page view model、fragment payload、DOM hook 與 client script 責任。
+- Script entrypoint 優先：頁面互動掛到 page-level script renderer，不從 partial 任意拼接多段 script。
 
 ## 4. 範圍邊界
 
@@ -61,6 +64,9 @@
 - Settings 第一輪：摘要卡、展開編輯、Discord webhook 遮罩、未儲存提示、離頁防呆。
 - Debug 第一輪：摘要卡、capture table、收合 raw metadata / HTML 預覽。
 - Watch Detail / Settings 第二輪前的架構 gate：page service、presenter、partial 拆分、client script / DOM contract 集中。
+- Watch Detail page shell 與 fragment payload 已共用 `WATCH_DETAIL_FRAGMENT_SECTIONS`，避免 detail UI 重構時散改 DOM id / payload key / JS 更新邏輯。
+- Watch fragment payload 組裝已移到 `watch_fragment_payloads.py`；page service 不再直接呼叫 HTML renderer。
+- Settings / Watch Detail 已建立 page-level script entrypoint，重複 layout helper 已集中到 `ui_page_sections.py`。
 
 尚未完成：
 
@@ -115,6 +121,8 @@ Dashboard 已採折衷清單，不再列為下一個主要 UI phase。
 - o watch client scripts。
 - o Watch Detail / Settings / Dashboard / Debug capture view model。
 - o settings / watch creation client contracts。
+- o Watch Detail section registry、fragment assembler、page shell 與 client script contract。
+- o Watch fragment payload assembler、page-level script entrypoint、page layout helper。
 - o UI layout / primitives / icons / behaviors 拆分。
 - o runtime / repository 主要責任收斂。
 

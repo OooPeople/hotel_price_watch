@@ -6,7 +6,8 @@ from datetime import datetime
 from html import escape
 
 from app.web.ui_components import card, key_value_grid, status_badge, summary_card
-from app.web.ui_styles import hero_title_style, meta_paragraph_style, responsive_grid_style
+from app.web.ui_page_sections import responsive_section_grid
+from app.web.ui_styles import hero_title_style, meta_paragraph_style
 from app.web.view_formatters import format_datetime_lines_for_display
 from app.web.watch_detail_presenters import WatchDetailPresentation
 
@@ -80,12 +81,7 @@ def render_watch_price_summary_cards(
             ),
         )
     )
-    summary_grid_style = responsive_grid_style(min_width="180px", gap="14px")
-    return f"""
-    <section style="{summary_grid_style}">
-      {cards_html}
-    </section>
-    """
+    return responsive_section_grid(cards_html, min_width="180px", gap="14px")
 
 
 def _format_datetime_summary_value(

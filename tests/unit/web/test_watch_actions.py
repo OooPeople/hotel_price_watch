@@ -100,7 +100,7 @@ def test_post_watch_resume_records_recover_pending_transition(tmp_path) -> None:
     container.watch_item_repository.save(
         replace(_build_watch_item(), paused_reason="http_403")
     )
-    container.runtime_repository.save_latest_check_snapshot(
+    container.runtime_write_repository.save_latest_check_snapshot(
         LatestCheckSnapshot(
             watch_item_id="watch-list-1",
             checked_at=datetime(2026, 4, 14, 12, 0, tzinfo=timezone.utc),
@@ -120,7 +120,7 @@ def test_post_watch_resume_records_recover_pending_transition(tmp_path) -> None:
     )
 
     assert response.status_code == 303
-    runtime_state_events = container.runtime_repository.list_runtime_state_events(
+    runtime_state_events = container.runtime_history_repository.list_runtime_state_events(
         "watch-list-1"
     )
     assert runtime_state_events[0].event_kind is RuntimeStateEventKind.MANUAL_RESUME
@@ -164,7 +164,8 @@ def test_post_watch_check_now_calls_monitor_runtime(tmp_path) -> None:
     container.monitor_runtime = fake_runtime
     container.watch_lifecycle_coordinator = WatchLifecycleCoordinator(
         watch_item_repository=container.watch_item_repository,
-        runtime_repository=container.runtime_repository,
+        runtime_write_repository=container.runtime_write_repository,
+        runtime_history_repository=container.runtime_history_repository,
         monitor_runtime=fake_runtime,
     )
     client = TestClient(create_app(container))
@@ -189,7 +190,8 @@ def test_post_watch_check_now_rejects_paused_watch(tmp_path) -> None:
     container.monitor_runtime = fake_runtime
     container.watch_lifecycle_coordinator = WatchLifecycleCoordinator(
         watch_item_repository=container.watch_item_repository,
-        runtime_repository=container.runtime_repository,
+        runtime_write_repository=container.runtime_write_repository,
+        runtime_history_repository=container.runtime_history_repository,
         monitor_runtime=fake_runtime,
     )
     client = TestClient(create_app(container))

@@ -17,6 +17,10 @@ from app.web.watch_fragment_contracts import (
     WATCH_DETAIL_PAYLOAD_KEYS,
     WATCH_LIST_PAYLOAD_KEYS,
 )
+from app.web.watch_fragment_payloads import (
+    build_watch_detail_fragment_payload,
+    build_watch_list_fragment_payload,
+)
 from app.web.watch_page_service import WatchPageService
 
 
@@ -45,7 +49,11 @@ def build_watch_router(container: AppContainer) -> APIRouter:
     @router.get("/fragments/watch-list")
     def watch_list_fragments() -> dict[str, str]:
         """回傳首頁局部更新所需的 runtime 與 watch 列表片段。"""
-        return page_service.build_watch_list_fragment_payload().to_dict()
+        context = page_service.build_watch_list_context()
+        return build_watch_list_fragment_payload(
+            context=context,
+            version=page_service.build_watch_list_revision(),
+        ).to_dict()
 
     @router.get("/fragments/watch-list/version")
     def watch_list_fragment_version() -> dict[str, str]:
@@ -80,7 +88,11 @@ def build_watch_router(container: AppContainer) -> APIRouter:
         watch_item = container.watch_item_repository.get(watch_item_id)
         if watch_item is None:
             raise HTTPException(status_code=404, detail="watch item not found")
-        return page_service.build_watch_detail_fragment_payload(watch_item).to_dict()
+        context = page_service.build_watch_detail_context(watch_item)
+        return build_watch_detail_fragment_payload(
+            context=context,
+            version=page_service.build_watch_detail_revision(watch_item),
+        ).to_dict()
 
     @router.get("/watches/{watch_item_id}/fragments/version")
     def watch_detail_fragment_version(watch_item_id: str) -> dict[str, str]:
@@ -212,7 +224,9 @@ def _watch_list_control_response(
 ) -> JSONResponse:
     """回傳首頁 control action 完成後需要原地替換的 HTML fragments。"""
     return JSONResponse(
-        page_service.build_watch_list_fragment_payload(
+        build_watch_list_fragment_payload(
+            context=page_service.build_watch_list_context(),
+            version=page_service.build_watch_list_revision(),
             flash_message=flash_message,
         ).to_dict()
     )

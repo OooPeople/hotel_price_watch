@@ -5,10 +5,7 @@ from __future__ import annotations
 from html import escape
 
 from app.web.client_contracts import SETTINGS_DOM_IDS
-from app.web.settings_client_scripts import (
-    render_notification_channel_toggle_script,
-    render_time_format_exclusive_script,
-)
+from app.web.settings_page_scripts import render_global_settings_page_scripts
 from app.web.settings_presenters import (
     NotificationChannelSettingsPresentation,
     SettingsEditorPresentation,
@@ -21,12 +18,17 @@ from app.web.ui_components import (
     status_badge,
     submit_button,
     unsaved_changes_indicator,
-    unsaved_changes_script,
+)
+from app.web.ui_page_sections import (
+    checkbox_label,
+    details_panel,
+    field_stack_style,
+    inline_cluster,
+    text_input,
 )
 from app.web.ui_styles import (
     card_title_style,
     color_token,
-    input_style,
     muted_text_style,
     responsive_grid_style,
     stack_style,
@@ -70,22 +72,8 @@ def render_global_settings_editor_form(
 
 
 def render_global_settings_scripts() -> str:
-    """渲染全域設定頁需要的 client scripts。"""
-    return (
-        render_notification_channel_toggle_script(
-            checkbox_id=SETTINGS_DOM_IDS.global_ntfy_enabled,
-            wrapper_id=SETTINGS_DOM_IDS.global_ntfy_settings,
-        )
-        + render_notification_channel_toggle_script(
-            checkbox_id=SETTINGS_DOM_IDS.global_discord_enabled,
-            wrapper_id=SETTINGS_DOM_IDS.global_discord_settings,
-        )
-        + render_time_format_exclusive_script(
-            first_checkbox_id=SETTINGS_DOM_IDS.time_format_12h,
-            second_checkbox_id=SETTINGS_DOM_IDS.time_format_24h,
-        )
-        + unsaved_changes_script(form_id=SETTINGS_DOM_IDS.global_settings_form)
-    )
+    """相容舊入口，委派到設定頁 page-level script entrypoint。"""
+    return render_global_settings_page_scripts()
 
 
 def _render_settings_summary_card(
@@ -110,96 +98,96 @@ def _render_settings_summary_card(
 
 def _render_display_settings_editor(*, use_24_hour_time: bool) -> str:
     """渲染顯示偏好的展開編輯區。"""
-    details_style = surface_card_style(gap="12px", padding="16px")
-    return f"""
-    <details open style="{details_style}">
-      <summary style="cursor:pointer;font-weight:700;">顯示偏好</summary>
-      <div style="{stack_style(gap="md")}margin-top:12px;">
-        <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
-          <label style="display:flex;gap:8px;align-items:center;">
+    return details_panel(
+        title="顯示偏好",
+        body=inline_cluster(
+            checkbox_label(
+                input_html=f"""
             <input
               id="{SETTINGS_DOM_IDS.time_format_12h}"
               type="checkbox"
               name="time_format_12h"
               {"checked" if not use_24_hour_time else ""}
             >
-            12 小時制
-          </label>
-          <label style="display:flex;gap:8px;align-items:center;">
+            """,
+                label="12 小時制",
+            )
+            + checkbox_label(
+                input_html=f"""
             <input
               id="{SETTINGS_DOM_IDS.time_format_24h}"
               type="checkbox"
               name="time_format_24h"
               {"checked" if use_24_hour_time else ""}
             >
-            24 小時制
-          </label>
-        </div>
-      </div>
-    </details>
-    """
+            """,
+                label="24 小時制",
+            ),
+            gap="lg",
+        ),
+    )
 
 
 def _render_notification_channels_editor(
     presentation: SettingsEditorPresentation,
 ) -> str:
     """渲染通知通道的展開編輯區，保留既有欄位名稱。"""
-    details_style = surface_card_style(gap="12px", padding="16px")
     channel_section_style = surface_card_style(gap="8px", padding="14px")
-    return f"""
-    <details open style="{details_style}">
-      <summary style="cursor:pointer;font-weight:700;">通知通道</summary>
-      <div style="{stack_style(gap="lg")}margin-top:12px;">
-        <label style="display:flex;gap:8px;align-items:center;">
+    return details_panel(
+        title="通知通道",
+        body=f"""
+        {checkbox_label(
+            input_html=f'''
           <input
             type="checkbox"
             name="desktop_enabled"
             {"checked" if presentation.desktop_enabled else ""}
           >
-          啟用本機桌面通知
-        </label>
+          ''',
+            label="啟用本機桌面通知",
+        )}
         <section style="{channel_section_style}">
-          <label style="display:flex;gap:8px;align-items:center;">
+          {checkbox_label(
+              input_html=f'''
             <input
               id="{SETTINGS_DOM_IDS.global_ntfy_enabled}"
               type="checkbox"
               name="ntfy_enabled"
               {"checked" if presentation.ntfy_enabled else ""}
             >
-            啟用 ntfy
-          </label>
+            ''',
+              label="啟用 ntfy",
+          )}
           <div
             id="{SETTINGS_DOM_IDS.global_ntfy_settings}"
             style="{_channel_wrapper_style(presentation.ntfy_enabled)}"
           >
             <label>ntfy Server URL</label>
-            <input
-              type="text"
-              name="ntfy_server_url"
-              value="{escape(presentation.ntfy_server_url)}"
-              placeholder="https://ntfy.sh"
-              style="{input_style()}"
-            >
+            {text_input(
+              name="ntfy_server_url",
+              value=presentation.ntfy_server_url,
+              placeholder="https://ntfy.sh",
+            )}
             <label>ntfy Topic</label>
-            <input
-              type="text"
-              name="ntfy_topic"
-              value="{escape(presentation.ntfy_topic)}"
-              placeholder="例如 hotel-watch"
-              style="{input_style()}"
-            >
+            {text_input(
+              name="ntfy_topic",
+              value=presentation.ntfy_topic,
+              placeholder="例如 hotel-watch",
+            )}
           </div>
         </section>
         <section style="{channel_section_style}">
-          <label style="display:flex;gap:8px;align-items:center;">
+          {checkbox_label(
+              input_html=f'''
             <input
               id="{SETTINGS_DOM_IDS.global_discord_enabled}"
               type="checkbox"
               name="discord_enabled"
               {"checked" if presentation.discord_enabled else ""}
             >
-            啟用 Discord webhook
-          </label>
+            ''',
+              label="啟用 Discord webhook",
+          )}
           <p style="margin:0;{muted_text_style(font_size="13px")}">
             摘要會遮罩 webhook；展開編輯區才顯示完整輸入值。
           </p>
@@ -208,21 +196,17 @@ def _render_notification_channels_editor(
             style="{_channel_wrapper_style(presentation.discord_enabled)}"
           >
             <label>Discord Webhook URL</label>
-            <input
-              type="text"
-              name="discord_webhook_url"
-              value="{escape(presentation.discord_webhook_url)}"
-              placeholder="https://discord.com/api/webhooks/..."
-              style="{input_style()}"
-            >
+            {text_input(
+              name="discord_webhook_url",
+              value=presentation.discord_webhook_url,
+              placeholder="https://discord.com/api/webhooks/...",
+            )}
           </div>
         </section>
-      </div>
-    </details>
-    """
+        """,
+    )
 
 
 def _channel_wrapper_style(enabled: bool) -> str:
     """依通道是否啟用回傳設定區塊的顯示樣式。"""
-    display = "grid" if enabled else "none"
-    return f"display:{display};gap:8px;"
+    return field_stack_style(visible=enabled)

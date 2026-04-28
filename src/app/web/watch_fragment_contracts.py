@@ -74,6 +74,23 @@ class WatchDetailPayloadKeys:
 
 
 @dataclass(frozen=True, slots=True)
+class WatchDetailFragmentSection:
+    """描述 watch detail 單一 fragment section 的 DOM 與 payload contract。"""
+
+    name: str
+    dom_id: str
+    payload_key: str
+
+    def to_client_config(self) -> dict[str, str]:
+        """轉成 client script 可直接使用的 section 設定。"""
+        return {
+            "name": self.name,
+            "domId": self.dom_id,
+            "payloadKey": self.payload_key,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class WatchDetailFragmentPayload:
     """詳細頁局部更新回傳給前端的固定 payload schema。"""
 
@@ -89,3 +106,35 @@ WATCH_LIST_DOM_IDS = WatchListDomIds()
 WATCH_LIST_PAYLOAD_KEYS = WatchListPayloadKeys()
 WATCH_DETAIL_DOM_IDS = WatchDetailDomIds()
 WATCH_DETAIL_PAYLOAD_KEYS = WatchDetailPayloadKeys()
+WATCH_DETAIL_FRAGMENT_SECTIONS = (
+    WatchDetailFragmentSection(
+        name="hero",
+        dom_id=WATCH_DETAIL_DOM_IDS.hero,
+        payload_key=WATCH_DETAIL_PAYLOAD_KEYS.hero_section_html,
+    ),
+    WatchDetailFragmentSection(
+        name="price_summary",
+        dom_id=WATCH_DETAIL_DOM_IDS.price_summary,
+        payload_key=WATCH_DETAIL_PAYLOAD_KEYS.price_summary_section_html,
+    ),
+    WatchDetailFragmentSection(
+        name="price_trend",
+        dom_id=WATCH_DETAIL_DOM_IDS.price_trend,
+        payload_key=WATCH_DETAIL_PAYLOAD_KEYS.price_trend_section_html,
+    ),
+    WatchDetailFragmentSection(
+        name="check_events",
+        dom_id=WATCH_DETAIL_DOM_IDS.check_events,
+        payload_key=WATCH_DETAIL_PAYLOAD_KEYS.check_events_section_html,
+    ),
+    WatchDetailFragmentSection(
+        name="runtime_state_events",
+        dom_id=WATCH_DETAIL_DOM_IDS.runtime_state_events,
+        payload_key=WATCH_DETAIL_PAYLOAD_KEYS.runtime_state_events_section_html,
+    ),
+    WatchDetailFragmentSection(
+        name="debug_artifacts",
+        dom_id=WATCH_DETAIL_DOM_IDS.debug_artifacts,
+        payload_key=WATCH_DETAIL_PAYLOAD_KEYS.debug_artifacts_section_html,
+    ),
+)

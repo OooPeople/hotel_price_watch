@@ -11,6 +11,7 @@ from app.web.views import (
 from app.web.watch_detail_presenters import build_watch_detail_presentation
 from app.web.watch_fragment_contracts import (
     WATCH_DETAIL_DOM_IDS,
+    WATCH_DETAIL_FRAGMENT_SECTIONS,
 )
 
 from .helpers import (
@@ -171,11 +172,11 @@ def test_render_watch_detail_page_includes_polling_script() -> None:
     assert WATCH_DETAIL_DOM_IDS.price_trend in html
     assert WATCH_DETAIL_DOM_IDS.check_events in html
     assert WATCH_DETAIL_DOM_IDS.debug_artifacts in html
-    assert "payload[payloadKeys.heroHtml]" in html
-    assert "payload[payloadKeys.priceSummaryHtml]" in html
-    assert "payload[payloadKeys.priceTrendHtml]" in html
-    assert "payload[payloadKeys.checkEventsHtml]" in html
-    assert "payload[payloadKeys.debugArtifactsHtml]" in html
+    assert "const sections = " in html
+    assert "sectionElements.forEach" in html
+    for section in WATCH_DETAIL_FRAGMENT_SECTIONS:
+        assert section.dom_id in html
+        assert section.payload_key in html
     assert "currentVersion = \"detail-version-1\"" in html
     assert "setInterval(checkVersion, 1000)" in html
     assert "setInterval(updateClientTimeText, 30000)" in html

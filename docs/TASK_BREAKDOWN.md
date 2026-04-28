@@ -39,13 +39,17 @@
 - o Dashboard、Watch Detail、Settings、Debug capture 已建立 page view model / presenter gate。
 - o Watch creation preview cache 與初始價格保存已移到 application service；初始 snapshot 以單一 transaction 寫入。
 - o `watch_client_scripts.py` 已拆成 watch list / watch detail client script renderer，原檔只保留相容 re-export。
+- o Watch Detail page shell 已拆到 `watch_detail_views.py`；detail fragment assembler 與 `WATCH_DETAIL_FRAGMENT_SECTIONS` 已集中 page shell、payload 與 client script 的 section contract。
+- o Watch list / detail fragment payload 組裝已拆到 `watch_fragment_payloads.py`；`WatchPageService` 只負責 context 與 revision token。
+- o 正式 `AppContainer` 不再持有 `SqliteRuntimeRepository` 相容 façade；正式路徑使用 write / history / fragment / throttle 專用 repository。
+- o Watch Detail / Settings 已建立 page-level script entrypoint，常用 page layout pattern 已抽到 `ui_page_sections.py`。
 - o `watch_creation_routes.py` 已抽出 `WatchCreationWorkflow`，route 不再直接協調 preview guard、cache、create watch 與初始 snapshot。
 - o `settings_partials.py` 已拆成 global / rule / test partial modules，原檔只保留相容 re-export。
 - o `watch_list_partials.py` 已拆出 runtime dock / summary card modules；`watch_creation_partials.py` 已拆出 Chrome tab / diagnostics modules。
 - o `ChromeCdpHtmlFetcher` 已拆出 profile launcher、CDP connector、page matcher、page capture helper 與 chrome models。
 - o `ChromeDrivenMonitorRuntime` 已抽出 check executor、startup restorer、assignment coordinator、notification dispatch coordinator、watch definition sync coordinator。
 - o `WatchCheckExecutor` 已加入 setup / captured / evaluated pipeline context，先收斂單次 check 的資料流但不大拆流程。
-- o `SqliteRuntimeRepository` 已加上 write / history query / fragment query façade；runtime write façade 已直接持有 database，不再委派相容 repository。
+- o `SqliteRuntimeRepository` 已降為相容 façade；runtime write / history / fragment / throttle 專用 repository 是正式 app wiring。
 - o 資料層第二輪第一刀已完成：SQLite serializer、revision token helper、watch item row mapping 已從 `repositories.py` 抽到 dedicated modules。
 - o 資料層第二輪第二刀已完成：runtime history query SQL 與 row mapping 已抽到 `runtime_history_queries.py`，history façade 不再委派相容 repository。
 - o 資料層第二輪第三刀已完成：runtime fragment revision query 與 notification throttle state SQL 已抽到 dedicated modules。
@@ -72,7 +76,7 @@
 
 ## 下一步
 
-1. 做 `web/` 第二輪 page-area 檢查：重點觀察 Watch Detail / Settings 第二輪 UI 會碰到的 presenter 是否需要再拆。
+1. 做 Watch Detail 第二輪 UI 前的最後 presenter 檢查：確認 `WatchDetailPageViewModel` 是否足夠支撐 `07_watch_detail.png` 的資訊層級。
 2. 若資料層後續繼續成長，優先改直接 import dedicated repository module；目前不改 schema 與 public behavior。
 3. 對照 `docs/ui_reference/07_watch_detail.png` 重構 Watch Detail 第二輪 UI，沿用 `WatchDetailPageViewModel` 與拆分後的 detail partial。
 4. 對照 `docs/ui_reference/05_settings_notifications.png` 重構 Settings 第二輪 UI，沿用 `SettingsPageViewModel` 與 `settings_partials.py`。
@@ -87,4 +91,4 @@
 - 第二站若不是 lodging-room-plan 模型，現有 target / candidate / DB contract 需要 migration。
 - `repositories.py` 已降為相容 re-export；後續新增資料層實作不可加回此檔。
 - 部分 page-area presenter 仍可能變大；新增 UI 行為前應先拆分對應 component owner。
-- Watch Detail / Settings 視覺重構時，仍需避免把 domain 判斷、DOM contract 或 inline script 塞回大型 partial。
+- Watch Detail / Settings 視覺重構時，仍需避免把 domain 判斷、DOM contract、fragment payload 或 inline script 塞回大型 partial。

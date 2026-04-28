@@ -148,15 +148,15 @@ def test_post_create_watch_defaults_to_any_drop_notification_rule(tmp_path) -> N
         kind=NotificationLeafKind.ANY_DROP,
         target_price=None,
     )
-    latest_snapshot = container.runtime_repository.get_latest_check_snapshot(
+    latest_snapshot = container.runtime_history_repository.get_latest_check_snapshot(
         saved_items[0].id
     )
     assert latest_snapshot is not None
     assert latest_snapshot.normalized_price_amount == Decimal("24000")
     assert latest_snapshot.availability == Availability.AVAILABLE
-    check_events = container.runtime_repository.list_check_events(saved_items[0].id)
+    check_events = container.runtime_history_repository.list_check_events(saved_items[0].id)
     assert check_events[0].event_kinds == ("initial_snapshot",)
-    price_history = container.runtime_repository.list_price_history(saved_items[0].id)
+    price_history = container.runtime_history_repository.list_price_history(saved_items[0].id)
     assert price_history[0].display_price_text == "JPY 24000"
 
 
@@ -195,7 +195,7 @@ def test_post_create_watch_uses_cached_chrome_tab_preview(tmp_path) -> None:
     assert create_response.status_code == 303
     saved_items = container.watch_item_repository.list_all()
     assert len(saved_items) == 1
-    latest_snapshot = container.runtime_repository.get_latest_check_snapshot(
+    latest_snapshot = container.runtime_history_repository.get_latest_check_snapshot(
         saved_items[0].id
     )
     assert latest_snapshot is not None

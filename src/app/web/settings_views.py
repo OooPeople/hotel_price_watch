@@ -29,9 +29,7 @@ from app.web.ui_components import (
     page_header,
     page_layout,
 )
-from app.web.ui_styles import (
-    stack_style,
-)
+from app.web.ui_page_sections import page_stack
 
 
 def render_notification_settings_page(
@@ -59,8 +57,8 @@ def render_notification_settings_page_from_presentation(
     flash_html = render_flash_message(presentation.flash_message)
     return page_layout(
         title=f"通知設定 - {presentation.hotel_name}",
-        body=f"""
-        <section style="{stack_style(gap="xl")}">
+        body=page_stack(
+            f"""
           {page_header(
               title="通知設定",
               subtitle=f"{escape(presentation.hotel_name)} / {escape(presentation.room_name)}",
@@ -77,8 +75,8 @@ def render_notification_settings_page_from_presentation(
               ),
           )}
           {render_watch_notification_rule_scripts()}
-        </section>
         """,
+        ),
     )
 
 
@@ -114,8 +112,8 @@ def render_notification_channel_settings_page_from_view_model(
     settings_summary_html = render_global_settings_summary(view_model.channel_settings)
     return page_layout(
         title="設定",
-        body=f"""
-        <section style="{stack_style(gap="xl")}">
+        body=page_stack(
+            f"""
           {page_header(
               title="設定",
               subtitle="集中管理顯示偏好與通知通道；單一監視的通知條件仍在監視詳情頁調整。",
@@ -129,6 +127,6 @@ def render_notification_channel_settings_page_from_view_model(
           {render_global_settings_editor_form(view_model.editor)}
           {render_test_notification_form(view_model.test_action)}
           {render_global_settings_scripts()}
-        </section>
         """,
+        ),
     )

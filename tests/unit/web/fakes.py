@@ -22,7 +22,6 @@ from app.infrastructure.db import (
     SqliteNotificationThrottleStateRepository,
     SqliteRuntimeFragmentQueryRepository,
     SqliteRuntimeHistoryQueryRepository,
-    SqliteRuntimeRepository,
     SqliteRuntimeWriteRepository,
     SqliteWatchItemRepository,
 )
@@ -288,7 +287,6 @@ def _build_test_container(tmp_path) -> AppContainer:
     database.initialize()
     app_settings_repository = SqliteAppSettingsRepository(database)
     watch_repository = SqliteWatchItemRepository(database)
-    runtime_repository = SqliteRuntimeRepository(database)
     runtime_write_repository = SqliteRuntimeWriteRepository(database)
     runtime_history_repository = SqliteRuntimeHistoryQueryRepository(database)
     runtime_fragment_repository = SqliteRuntimeFragmentQueryRepository(database)
@@ -303,7 +301,6 @@ def _build_test_container(tmp_path) -> AppContainer:
         database=database,
         app_settings_repository=app_settings_repository,
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
         runtime_write_repository=runtime_write_repository,
         runtime_history_repository=runtime_history_repository,
         runtime_fragment_repository=runtime_fragment_repository,

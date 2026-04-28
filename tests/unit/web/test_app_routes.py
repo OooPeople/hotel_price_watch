@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from app.bootstrap.container import build_app_container
 from app.main import create_app
 from app.web.watch_fragment_contracts import (
+    WATCH_DETAIL_FRAGMENT_SECTIONS,
     WATCH_DETAIL_PAYLOAD_KEYS,
     WATCH_LIST_PAYLOAD_KEYS,
 )
@@ -149,7 +150,9 @@ def test_watch_list_fragment_version_changes_after_runtime_update(tmp_path) -> N
 
     with TestClient(create_app(container)) as client:
         before = client.get("/fragments/watch-list/version").json()["version"]
-        container.runtime_repository.save_latest_check_snapshot(_build_latest_snapshot())
+        container.runtime_write_repository.save_latest_check_snapshot(
+            _build_latest_snapshot()
+        )
         after = client.get("/fragments/watch-list/version").json()["version"]
 
     assert before != after
@@ -160,10 +163,10 @@ def test_watch_detail_fragments_endpoint_returns_partial_sections(tmp_path) -> N
     container = _build_test_container(tmp_path)
     watch_item = _build_watch_item()
     container.watch_item_repository.save(watch_item)
-    container.runtime_repository.save_latest_check_snapshot(_build_latest_snapshot())
-    container.runtime_repository.append_check_event(_build_check_event())
-    container.runtime_repository.save_notification_state(_build_notification_state())
-    container.runtime_repository.append_debug_artifact(
+    container.runtime_write_repository.save_latest_check_snapshot(_build_latest_snapshot())
+    container.runtime_write_repository.append_check_event(_build_check_event())
+    container.runtime_write_repository.save_notification_state(_build_notification_state())
+    container.runtime_write_repository.append_debug_artifact(
         _build_debug_artifact(),
         retention_limit=10,
     )
@@ -176,12 +179,7 @@ def test_watch_detail_fragments_endpoint_returns_partial_sections(tmp_path) -> N
     keys = WATCH_DETAIL_PAYLOAD_KEYS
     assert set(payload) == {
         keys.version,
-        keys.hero_section_html,
-        keys.price_summary_section_html,
-        keys.price_trend_section_html,
-        keys.check_events_section_html,
-        keys.runtime_state_events_section_html,
-        keys.debug_artifacts_section_html,
+        *(section.payload_key for section in WATCH_DETAIL_FRAGMENT_SECTIONS),
     }
     assert payload[keys.version]
     assert "latest_section_html" not in payload
@@ -202,7 +200,7 @@ def test_watch_detail_fragment_version_changes_after_debug_artifact(tmp_path) ->
         before = client.get(f"/watches/{watch_item.id}/fragments/version").json()[
             "version"
         ]
-        container.runtime_repository.append_debug_artifact(
+        container.runtime_write_repository.append_debug_artifact(
             _build_debug_artifact(),
             retention_limit=10,
         )

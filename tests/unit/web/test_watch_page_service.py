@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 from app.web.watch_fragment_contracts import (
+    WATCH_DETAIL_FRAGMENT_SECTIONS,
     WATCH_DETAIL_PAYLOAD_KEYS,
     WATCH_LIST_PAYLOAD_KEYS,
+)
+from app.web.watch_fragment_payloads import (
+    build_watch_detail_fragment_payload,
+    build_watch_list_fragment_payload,
 )
 from app.web.watch_page_service import WatchPageService
 
@@ -16,16 +21,18 @@ from .helpers import (
 )
 
 
-def test_watch_page_service_builds_watch_list_payload(tmp_path) -> None:
-    """WatchPageService 應集中組出首頁 fragment payload 與 runtime 摘要。"""
+def test_watch_fragment_payload_builder_builds_watch_list_payload(tmp_path) -> None:
+    """首頁 fragment payload builder 應用 page context 組出 runtime 摘要。"""
     container = _build_test_container(tmp_path)
     container.watch_item_repository.save(_build_watch_item())
-    container.runtime_repository.save_latest_check_snapshot(_build_latest_snapshot())
+    container.runtime_write_repository.save_latest_check_snapshot(_build_latest_snapshot())
     container.monitor_runtime = _FakeMonitorRuntime()
     service = WatchPageService(container)
 
-    payload = service.build_watch_list_fragment_payload(
-        flash_message="已暫停監視"
+    payload = build_watch_list_fragment_payload(
+        context=service.build_watch_list_context(),
+        version=service.build_watch_list_revision(),
+        flash_message="已暫停監視",
     ).to_dict()
 
     keys = WATCH_LIST_PAYLOAD_KEYS
@@ -42,30 +49,28 @@ def test_watch_page_service_builds_watch_list_payload(tmp_path) -> None:
     assert "Ocean Hotel" in payload[keys.table_body_html]
 
 
-def test_watch_page_service_builds_detail_payload(tmp_path) -> None:
-    """WatchPageService 應集中組出詳細頁 fragment payload。"""
+def test_watch_fragment_payload_builder_builds_detail_payload(tmp_path) -> None:
+    """詳細頁 fragment payload builder 應用 page context 組出 section HTML。"""
     container = _build_test_container(tmp_path)
     watch_item = _build_watch_item()
     container.watch_item_repository.save(watch_item)
-    container.runtime_repository.save_latest_check_snapshot(_build_latest_snapshot())
-    container.runtime_repository.append_check_event(_build_check_event())
-    container.runtime_repository.append_debug_artifact(
+    container.runtime_write_repository.save_latest_check_snapshot(_build_latest_snapshot())
+    container.runtime_write_repository.append_check_event(_build_check_event())
+    container.runtime_write_repository.append_debug_artifact(
         _build_debug_artifact(),
         retention_limit=10,
     )
     service = WatchPageService(container)
 
-    payload = service.build_watch_detail_fragment_payload(watch_item).to_dict()
+    payload = build_watch_detail_fragment_payload(
+        context=service.build_watch_detail_context(watch_item),
+        version=service.build_watch_detail_revision(watch_item),
+    ).to_dict()
 
     keys = WATCH_DETAIL_PAYLOAD_KEYS
     assert set(payload) == {
         keys.version,
-        keys.hero_section_html,
-        keys.price_summary_section_html,
-        keys.price_trend_section_html,
-        keys.check_events_section_html,
-        keys.runtime_state_events_section_html,
-        keys.debug_artifacts_section_html,
+        *(section.payload_key for section in WATCH_DETAIL_FRAGMENT_SECTIONS),
     }
     assert "Ocean Hotel" in payload[keys.hero_section_html]
     assert "目前價格" in payload[keys.price_summary_section_html]

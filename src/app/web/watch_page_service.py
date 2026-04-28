@@ -1,4 +1,4 @@
-"""watch list / detail 頁面的 context、fragment payload 與版本組裝服務。"""
+"""watch list / detail 頁面的 context 與版本組裝服務。"""
 
 from __future__ import annotations
 
@@ -18,17 +18,6 @@ from app.domain.entities import (
     WatchItem,
 )
 from app.monitor.runtime import MonitorRuntimeStatus
-from app.web.ui_components import flash_message as render_flash_message
-from app.web.views import (
-    render_dashboard_summary_fragment,
-    render_runtime_status_fragment,
-    render_watch_detail_sections,
-    render_watch_list_rows_fragment,
-)
-from app.web.watch_fragment_contracts import (
-    WatchDetailFragmentPayload,
-    WatchListFragmentPayload,
-)
 
 
 @dataclass(frozen=True)
@@ -57,7 +46,7 @@ class WatchDetailPageContext:
 
 
 class WatchPageService:
-    """集中首頁與詳細頁 route 需要的 page context 與 fragment payload 組裝。"""
+    """集中首頁與詳細頁 route 需要的 page context 與 revision token。"""
 
     def __init__(self, container: AppContainer) -> None:
         """保存 route 層提供的依賴容器。"""
@@ -85,36 +74,6 @@ class WatchPageService:
             ),
             runtime_status=self._get_runtime_status(),
             display_settings=self._container.app_settings_service.get_display_settings(),
-        )
-
-    def build_watch_list_fragment_payload(
-        self,
-        *,
-        flash_message: str | None = None,
-    ) -> WatchListFragmentPayload:
-        """建立首頁局部更新所需的 runtime 與 watch 列表 HTML 片段。"""
-        context = self.build_watch_list_context()
-        return WatchListFragmentPayload(
-            version=self.build_watch_list_revision(),
-            flash_html=render_flash_message(flash_message),
-            summary_html=render_dashboard_summary_fragment(
-                context.watch_items,
-                latest_snapshots_by_watch_id=context.latest_snapshots_by_watch_id,
-                recent_price_history_by_watch_id=context.recent_price_history_by_watch_id,
-                today_notification_count=context.today_notification_count,
-                runtime_status=context.runtime_status,
-                use_24_hour_time=context.display_settings.use_24_hour_time,
-            ),
-            runtime_html=render_runtime_status_fragment(
-                context.runtime_status,
-                use_24_hour_time=context.display_settings.use_24_hour_time,
-            ),
-            table_body_html=render_watch_list_rows_fragment(
-                context.watch_items,
-                latest_snapshots_by_watch_id=context.latest_snapshots_by_watch_id,
-                recent_price_history_by_watch_id=context.recent_price_history_by_watch_id,
-                use_24_hour_time=context.display_settings.use_24_hour_time,
-            ),
         )
 
     def build_watch_list_revision(self) -> str:
@@ -166,25 +125,6 @@ class WatchPageService:
                 )
             ),
             display_settings=self._container.app_settings_service.get_display_settings(),
-        )
-
-    def build_watch_detail_fragment_payload(
-        self,
-        watch_item: WatchItem,
-    ) -> WatchDetailFragmentPayload:
-        """建立 watch 詳細頁局部更新所需的 HTML 片段與版本。"""
-        context = self.build_watch_detail_context(watch_item)
-        return WatchDetailFragmentPayload(
-            version=self.build_watch_detail_revision(watch_item),
-            sections=render_watch_detail_sections(
-                watch_item=context.watch_item,
-                latest_snapshot=context.latest_snapshot,
-                check_events=context.check_events,
-                notification_state=context.notification_state,
-                debug_artifacts=context.debug_artifacts,
-                runtime_state_events=context.runtime_state_events,
-                use_24_hour_time=context.display_settings.use_24_hour_time,
-            ),
         )
 
     def build_watch_detail_revision(self, watch_item: WatchItem) -> str:

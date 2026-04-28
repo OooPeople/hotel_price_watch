@@ -75,24 +75,29 @@ Persistence：
 
 - `src/app/infrastructure/db/repositories.py`：只保留相容 re-export，新實作不要加回此檔。
 - `src/app/infrastructure/db/watch_item_repository.py`：watch item / draft repository。
-- `src/app/infrastructure/db/runtime_repositories.py`：runtime write / history / fragment / throttle façade。
+- `src/app/infrastructure/db/runtime_repositories.py`：runtime write / history / fragment / throttle 專用 repository；`SqliteRuntimeRepository` 只作相容 façade。
 - `src/app/infrastructure/db/runtime_write_records.py`：latest snapshot、check event、price history、notification state、runtime event、debug artifact 寫入 SQL。
 - serializer、revision token helper、watch item row mapping、runtime history query、fragment revision query、notification throttle state SQL 與 app settings repository 已拆到 dedicated modules。
 
 Web：
 
 - `src/app/web/routes/`：HTTP route。
-- `src/app/web/watch_page_service.py`：watch list / detail page context、fragment payload、revision token。
+- `src/app/web/watch_page_service.py`：watch list / detail page context 與 revision token。
+- `src/app/web/watch_fragment_payloads.py`：watch list / detail fragment payload HTML assembler。
+- `src/app/web/watch_detail_views.py`：Watch Detail page shell。
+- `src/app/web/watch_detail_fragment_assembler.py`：Watch Detail fragment section HTML assembler。
 - `src/app/web/watch_creation_page_service.py`：Chrome tab selection context。
 - `src/app/web/watch_creation_workflow.py`：watch creation preview、cache、create watch 與 initial snapshot route workflow。
 - `src/app/web/settings_page_service.py`：settings page context。
 - `src/app/web/settings_global_partials.py`、`settings_rule_partials.py`、`settings_test_partials.py`：設定頁分區 partial renderer。
 - `src/app/web/watch_list_runtime_partials.py`、`watch_list_summary_partials.py`：Dashboard runtime dock 與 summary card renderer。
 - `src/app/web/watch_creation_tab_partials.py`、`watch_creation_diagnostics_partials.py`：新增監視 Chrome tab selection 與 diagnostics renderer。
-- `src/app/web/watch_fragment_contracts.py`：watch list / detail fragment payload 與 DOM hook contract。
+- `src/app/web/watch_fragment_contracts.py`：watch list / detail fragment payload、DOM hook contract 與 `WATCH_DETAIL_FRAGMENT_SECTIONS`。
 - `src/app/web/client_contracts.py`：settings / watch creation DOM id。
 - `src/app/web/watch_list_client_scripts.py`、`watch_detail_client_scripts.py`：watch list / detail version polling 與局部 client behavior。
+- `src/app/web/watch_detail_page_scripts.py`、`settings_page_scripts.py`：頁面級 client behavior entrypoint。
 - `src/app/web/ui_layout.py`、`ui_primitives.py`、`ui_icons.py`、`ui_behaviors.py`：共用 UI 基礎設施。
+- `src/app/web/ui_page_sections.py`：page stack、section grid、details panel、inline cluster 與欄位群組 helper。
 - `src/app/web/watch_client_scripts.py`、`settings_partials.py`、`ui_components.py`、`view_helpers.py`：相容 re-export，新實作不要加回去。
 
 Presenter / view model：
@@ -114,6 +119,9 @@ Presenter / view model：
 - Settings 第一輪產品化。
 - Debug 第一輪產品化。
 - Watch Detail / Settings 第二輪前的 page service、presenter、partial、client script 架構 gate。
+- Watch Detail page shell、fragment assembler 與 client script 已共用 section registry，第二輪 UI 不需重做 fragment contract。
+- `WatchPageService` 已退出 HTML fragment payload 組裝；route 取得 context / revision 後交給 `watch_fragment_payloads.py`。
+- 正式 container 已不再 wiring `SqliteRuntimeRepository`，新增正式 persistence 路徑不要回到相容 façade。
 
 尚未完成：
 
@@ -124,26 +132,22 @@ Presenter / view model：
 
 ## 6. 下一步
 
-1. 做 `web/` 第二輪 page-area 拆分。
-   - `watch_creation_routes.py` 已有 workflow helper，後續新增建立流程不要塞回 route。
-   - 若 Watch Detail / Settings presenter 繼續成長，拆成 page-area component owner。
-
-2. 重構 Watch Detail 第二輪 UI。
+1. 重構 Watch Detail 第二輪 UI。
    - 先看 `docs/ui_reference/07_watch_detail.png`。
    - 沿用 `WatchDetailPageViewModel`。
    - 修改對應 detail summary / trend / history partial，不把判斷塞回 route。
    - 保持 `/watches/{id}/fragments` 與 version endpoint contract 不變。
 
-3. 重構 Settings 第二輪 UI。
+2. 重構 Settings 第二輪 UI。
    - 先看 `docs/ui_reference/05_settings_notifications.png`。
    - 沿用 `SettingsPageViewModel` 與 `settings_partials.py`。
    - 保持保存設定、測試通知、未儲存提示與離頁防呆。
 
-4. 視後續成長再做資料層 import 收斂。
+3. 視後續成長再做資料層 import 收斂。
    - 可把使用端逐步改成直接 import dedicated repository module。
    - 不改 schema，不改 public behavior。
 
-5. UI 穩定後做人工 smoke test。
+4. UI 穩定後做人工 smoke test。
    - 由使用者啟動安全模式 GUI / 專用 Chrome。
    - 檢查列分頁、建立監視、手動 check、通知測試、暫停 / 恢復。
 
