@@ -60,53 +60,13 @@ GUI / Chrome 操作仍以 `AGENTS.md` 為準：Codex 不可自行啟動 GUI serv
 
 ## 4. 重要架構位置
 
-Runtime / monitor：
-
-- `src/app/monitor/runtime.py`：高階 runtime 入口，只保留 wiring、start/stop、loop、status。
-- `src/app/monitor/check_executor.py`：單次檢查主流程。
-- `src/app/monitor/check_pipeline_contexts.py`：單次檢查 setup / captured / evaluated context。
-- `src/app/monitor/startup_restore.py`：啟動恢復分頁。
-- `src/app/monitor/assignment_coordinator.py`：scheduler due work、in-flight 互斥、check-now。
-- `src/app/monitor/notification_dispatch.py`：通知 dispatch 與 dispatcher cache。
-- `src/app/monitor/watch_sync_coordinator.py`：watch definition sync 與 scheduler register/update/remove。
-- `src/app/domain/watch_lifecycle_state_machine.py`：control command 與 runtime blocked pause 的正式決策中心。
-
-Persistence：
-
-- `src/app/infrastructure/db/repositories.py`：只保留相容 re-export，新實作不要加回此檔。
-- `src/app/infrastructure/db/watch_item_repository.py`：watch item / draft repository。
-- `src/app/infrastructure/db/runtime_repositories.py`：runtime write / history / fragment / throttle 專用 repository；`SqliteRuntimeRepository` 只作相容 façade。
-- `src/app/infrastructure/db/runtime_write_records.py`：latest snapshot、check event、price history、notification state、runtime event、debug artifact 寫入 SQL。
-- serializer、revision token helper、watch item row mapping、runtime history query、fragment revision query、notification throttle state SQL 與 app settings repository 已拆到 dedicated modules。
-
-Web：
-
-- `src/app/web/routes/`：HTTP route。
-- `src/app/web/watch_page_service.py`：watch list / detail page context 與 revision token。
-- `src/app/web/watch_fragment_payloads.py`：watch list / detail fragment payload HTML assembler。
-- `src/app/web/watch_detail_views.py`：Watch Detail page shell。
-- `src/app/web/watch_detail_fragment_assembler.py`：Watch Detail fragment section HTML assembler。
-- `src/app/web/watch_creation_page_service.py`：Chrome tab selection context。
-- `src/app/web/watch_creation_workflow.py`：watch creation preview、cache、create watch 與 initial snapshot route workflow。
-- `src/app/web/settings_page_service.py`：settings page context。
-- `src/app/web/settings_global_partials.py`、`settings_rule_partials.py`、`settings_test_partials.py`：設定頁分區 partial renderer。
-- `src/app/web/watch_list_runtime_partials.py`、`watch_list_summary_partials.py`：Dashboard runtime dock 與 summary card renderer。
-- `src/app/web/watch_creation_tab_partials.py`、`watch_creation_diagnostics_partials.py`：新增監視 Chrome tab selection 與 diagnostics renderer。
-- `src/app/web/watch_fragment_contracts.py`：watch list / detail fragment payload、DOM hook contract 與 `WATCH_DETAIL_FRAGMENT_SECTIONS`。
-- `src/app/web/client_contracts.py`：settings / watch creation DOM id。
-- `src/app/web/watch_list_client_scripts.py`、`watch_detail_client_scripts.py`：watch list / detail version polling 與局部 client behavior。
-- `src/app/web/watch_detail_page_scripts.py`、`settings_page_scripts.py`：頁面級 client behavior entrypoint。
-- `src/app/web/ui_layout.py`、`ui_primitives.py`、`ui_icons.py`、`ui_behaviors.py`：共用 UI 基礎設施。
-- `src/app/web/ui_page_sections.py`：page stack、section grid、details panel、inline cluster 與欄位群組 helper。
-- `src/app/web/watch_client_scripts.py`、`settings_partials.py`、`ui_components.py`、`view_helpers.py`：相容 re-export，新實作不要加回去。
-
-Presenter / view model：
-
-- `watch_list_presenters.py`：Dashboard / watch row / runtime dock。
-- `watch_detail_presenters.py`：Watch Detail page view model。
-- `settings_presenters.py`：Settings page view model。
-- `watch_creation_presenters.py`：Add Watch page view model。
-- `debug_presenters.py`：Debug capture list/detail presentation。
+- Runtime：`runtime.py` 只保留高階 loop / status / lifecycle；單次檢查、啟動恢復、assignment、通知與 watch sync 各有 coordinator / executor。
+- Lifecycle：`domain/watch_lifecycle_state_machine.py` 是手動控制與 blocked pause 的決策中心。
+- Persistence：正式路徑使用 watch item、runtime write、runtime history、fragment query、notification throttle、app settings 專用 repository。`repositories.py` 只作 re-export；`runtime_repository_compat.py` 只作舊介面相容。
+- Web routes：只處理 request / response mapping；流程放 page service、workflow 或 application service。
+- Web fragments：watch list / detail payload 與 DOM contract 由 `watch_fragment_contracts.py`、`watch_fragment_payloads.py` 管理。
+- Web UI：presenter / view model 負責文案與顯示判斷；partial 只組 HTML；page-level script entrypoint 負責互動。
+- UI helpers：共用 layout、primitive、icons、behaviors 放 `ui_*`；相容 re-export 檔不要新增實作。
 
 ## 5. UI 進度
 
@@ -119,9 +79,7 @@ Presenter / view model：
 - Settings 第一輪產品化。
 - Debug 第一輪產品化。
 - Watch Detail / Settings 第二輪前的 page service、presenter、partial、client script 架構 gate。
-- Watch Detail page shell、fragment assembler 與 client script 已共用 section registry，第二輪 UI 不需重做 fragment contract。
-- `WatchPageService` 已退出 HTML fragment payload 組裝；route 取得 context / revision 後交給 `watch_fragment_payloads.py`。
-- 正式 container 已不再 wiring `SqliteRuntimeRepository`，新增正式 persistence 路徑不要回到相容 façade。
+- 正式 container、application service、monitor runtime 與 unit tests 已不再 wiring / 接受 `SqliteRuntimeRepository`，新增正式 persistence 路徑不要回到相容 adapter。
 
 尚未完成：
 
@@ -132,24 +90,9 @@ Presenter / view model：
 
 ## 6. 下一步
 
-1. 重構 Watch Detail 第二輪 UI。
-   - 先看 `docs/ui_reference/07_watch_detail.png`。
-   - 沿用 `WatchDetailPageViewModel`。
-   - 修改對應 detail summary / trend / history partial，不把判斷塞回 route。
-   - 保持 `/watches/{id}/fragments` 與 version endpoint contract 不變。
-
-2. 重構 Settings 第二輪 UI。
-   - 先看 `docs/ui_reference/05_settings_notifications.png`。
-   - 沿用 `SettingsPageViewModel` 與 `settings_partials.py`。
-   - 保持保存設定、測試通知、未儲存提示與離頁防呆。
-
-3. 視後續成長再做資料層 import 收斂。
-   - 可把使用端逐步改成直接 import dedicated repository module。
-   - 不改 schema，不改 public behavior。
-
-4. UI 穩定後做人工 smoke test。
-   - 由使用者啟動安全模式 GUI / 專用 Chrome。
-   - 檢查列分頁、建立監視、手動 check、通知測試、暫停 / 恢復。
+1. 重構 Watch Detail 第二輪 UI：先看 `docs/ui_reference/07_watch_detail.png`，沿用 `WatchDetailPageViewModel`，保持 fragment contract 不變。
+2. 重構 Settings 第二輪 UI：先看 `docs/ui_reference/05_settings_notifications.png`，沿用 `SettingsPageViewModel`，保留保存、測試通知與未儲存提示。
+3. UI 穩定後做人工 smoke test：由使用者啟動 GUI / 專用 Chrome，再檢查列分頁、建立監視、手動 check、通知測試、暫停 / 恢復。
 
 ## 7. 測試位置
 

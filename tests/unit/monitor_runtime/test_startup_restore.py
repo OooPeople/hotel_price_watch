@@ -9,7 +9,8 @@ from app.domain.value_objects import WatchTarget
 from app.infrastructure.db import (
     SqliteAppSettingsRepository,
     SqliteDatabase,
-    SqliteRuntimeRepository,
+    SqliteRuntimeHistoryQueryRepository,
+    SqliteRuntimeWriteRepository,
     SqliteWatchItemRepository,
 )
 from app.monitor.runtime import (
@@ -37,7 +38,8 @@ def test_runtime_start_registers_only_active_watches_and_stop_clears_scheduler(
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
-    runtime_repository = SqliteRuntimeRepository(database)
+    runtime_write_repository = SqliteRuntimeWriteRepository(database)
+    runtime_history_repository = SqliteRuntimeHistoryQueryRepository(database)
     settings_repository = SqliteAppSettingsRepository(database)
     app_settings_service = AppSettingsService(settings_repository)
 
@@ -53,7 +55,8 @@ def test_runtime_start_registers_only_active_watches_and_stop_clears_scheduler(
     site_registry.register(_FakeRuntimeAdapter())
     runtime = ChromeDrivenMonitorRuntime(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         site_registry=site_registry,
         chrome_fetcher=_FakeChromeFetcher(),
         app_settings_service=app_settings_service,
@@ -89,7 +92,8 @@ def test_runtime_start_restores_only_enabled_and_unpaused_watch_tabs(
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
-    runtime_repository = SqliteRuntimeRepository(database)
+    runtime_write_repository = SqliteRuntimeWriteRepository(database)
+    runtime_history_repository = SqliteRuntimeHistoryQueryRepository(database)
     settings_repository = SqliteAppSettingsRepository(database)
     app_settings_service = AppSettingsService(settings_repository)
 
@@ -114,7 +118,8 @@ def test_runtime_start_restores_only_enabled_and_unpaused_watch_tabs(
     site_registry.register(_FakeRuntimeAdapter())
     runtime = ChromeDrivenMonitorRuntime(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         site_registry=site_registry,
         chrome_fetcher=fetcher,
         app_settings_service=app_settings_service,
@@ -151,7 +156,8 @@ def test_runtime_start_does_not_wait_for_startup_tab_restore(tmp_path) -> None:
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
-    runtime_repository = SqliteRuntimeRepository(database)
+    runtime_write_repository = SqliteRuntimeWriteRepository(database)
+    runtime_history_repository = SqliteRuntimeHistoryQueryRepository(database)
     settings_repository = SqliteAppSettingsRepository(database)
     app_settings_service = AppSettingsService(settings_repository)
 
@@ -167,7 +173,8 @@ def test_runtime_start_does_not_wait_for_startup_tab_restore(tmp_path) -> None:
     site_registry.register(_FakeRuntimeAdapter())
     runtime = ChromeDrivenMonitorRuntime(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         site_registry=site_registry,
         chrome_fetcher=fetcher,
         app_settings_service=app_settings_service,
@@ -186,7 +193,7 @@ def test_runtime_start_does_not_wait_for_startup_tab_restore(tmp_path) -> None:
 
         await asyncio.to_thread(fetcher.started.wait, 1)
         await asyncio.sleep(0.05)
-        assert runtime_repository.get_latest_check_snapshot(active_watch.id) is None
+        assert runtime_history_repository.get_latest_check_snapshot(active_watch.id) is None
         fetcher.release.set()
         await _wait_for_startup_restore(runtime)
         await runtime.stop()
@@ -209,7 +216,8 @@ def test_runtime_restore_uses_precise_seed_url_and_heals_tab_assignment(tmp_path
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
-    runtime_repository = SqliteRuntimeRepository(database)
+    runtime_write_repository = SqliteRuntimeWriteRepository(database)
+    runtime_history_repository = SqliteRuntimeHistoryQueryRepository(database)
     settings_repository = SqliteAppSettingsRepository(database)
     app_settings_service = AppSettingsService(settings_repository)
 
@@ -240,7 +248,8 @@ def test_runtime_restore_uses_precise_seed_url_and_heals_tab_assignment(tmp_path
     site_registry.register(_FakeRuntimeAdapter())
     runtime = ChromeDrivenMonitorRuntime(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         site_registry=site_registry,
         chrome_fetcher=fetcher,
         app_settings_service=app_settings_service,
@@ -270,7 +279,8 @@ def test_runtime_restore_captures_without_scheduled_reload(tmp_path) -> None:
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
-    runtime_repository = SqliteRuntimeRepository(database)
+    runtime_write_repository = SqliteRuntimeWriteRepository(database)
+    runtime_history_repository = SqliteRuntimeHistoryQueryRepository(database)
     settings_repository = SqliteAppSettingsRepository(database)
     app_settings_service = AppSettingsService(settings_repository)
 
@@ -286,7 +296,8 @@ def test_runtime_restore_captures_without_scheduled_reload(tmp_path) -> None:
     site_registry.register(_FakeRuntimeAdapter())
     runtime = ChromeDrivenMonitorRuntime(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         site_registry=site_registry,
         chrome_fetcher=fetcher,
         app_settings_service=app_settings_service,
@@ -304,7 +315,7 @@ def test_runtime_restore_captures_without_scheduled_reload(tmp_path) -> None:
 
     asyncio.run(_exercise_runtime())
 
-    latest_snapshot = runtime_repository.get_latest_check_snapshot(watch_item.id)
+    latest_snapshot = runtime_history_repository.get_latest_check_snapshot(watch_item.id)
     assert latest_snapshot is not None
     assert latest_snapshot.normalized_price_amount == Decimal("22990")
     assert fetcher.calls == []
@@ -327,7 +338,8 @@ def test_runtime_start_continues_when_single_tab_restore_fails(
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
-    runtime_repository = SqliteRuntimeRepository(database)
+    runtime_write_repository = SqliteRuntimeWriteRepository(database)
+    runtime_history_repository = SqliteRuntimeHistoryQueryRepository(database)
     settings_repository = SqliteAppSettingsRepository(database)
     app_settings_service = AppSettingsService(settings_repository)
 
@@ -362,7 +374,8 @@ def test_runtime_start_continues_when_single_tab_restore_fails(
     site_registry.register(_FakeRuntimeAdapter())
     runtime = ChromeDrivenMonitorRuntime(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         site_registry=site_registry,
         chrome_fetcher=fetcher,
         app_settings_service=app_settings_service,
@@ -399,7 +412,8 @@ def test_runtime_start_excludes_already_restored_tabs_from_later_watches(tmp_pat
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
-    runtime_repository = SqliteRuntimeRepository(database)
+    runtime_write_repository = SqliteRuntimeWriteRepository(database)
+    runtime_history_repository = SqliteRuntimeHistoryQueryRepository(database)
     settings_repository = SqliteAppSettingsRepository(database)
     app_settings_service = AppSettingsService(settings_repository)
 
@@ -434,7 +448,8 @@ def test_runtime_start_excludes_already_restored_tabs_from_later_watches(tmp_pat
     site_registry.register(_FakeRuntimeAdapter())
     runtime = ChromeDrivenMonitorRuntime(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         site_registry=site_registry,
         chrome_fetcher=fetcher,
         app_settings_service=app_settings_service,

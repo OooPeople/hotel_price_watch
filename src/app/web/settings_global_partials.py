@@ -21,10 +21,12 @@ from app.web.ui_components import (
 )
 from app.web.ui_page_sections import (
     checkbox_label,
+    cluster_style,
     details_panel,
     field_stack_style,
     inline_cluster,
     text_input,
+    zero_margin_style,
 )
 from app.web.ui_styles import (
     card_title_style,
@@ -63,7 +65,7 @@ def render_global_settings_editor_form(
             use_24_hour_time=presentation.use_24_hour_time,
         )}
         {_render_notification_channels_editor(presentation)}
-        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+        <div style="{cluster_style()}">
           {submit_button(label=presentation.submit_label, kind="primary")}
           {unsaved_changes_indicator()}
         </div>
@@ -80,18 +82,21 @@ def _render_settings_summary_card(
     presentation: SettingsSummaryCardPresentation,
 ) -> str:
     """渲染單張設定摘要卡。"""
+    title_row_style = cluster_style(justify="space-between", align="start")
+    body_style = zero_margin_style(f"color:{color_token('text')};")
+    helper_style = zero_margin_style(muted_text_style(font_size="13px"))
     badge = status_badge(
         label="已啟用" if presentation.enabled else "未啟用",
         kind="success" if presentation.enabled else "muted",
     )
     return card(
         body=f"""
-        <div style="display:flex;justify-content:space-between;gap:12px;align-items:start;">
+        <div style="{title_row_style}">
           <h3 style="{card_title_style()}">{escape(presentation.title)}</h3>
           {badge}
         </div>
-        <p style="margin:0;color:{color_token("text")};">{escape(presentation.body)}</p>
-        <p style="margin:0;{muted_text_style(font_size="13px")}">{escape(presentation.helper)}</p>
+        <p style="{body_style}">{escape(presentation.body)}</p>
+        <p style="{helper_style}">{escape(presentation.helper)}</p>
         """,
     )
 
@@ -188,7 +193,7 @@ def _render_notification_channels_editor(
             ''',
               label="啟用 Discord webhook",
           )}
-          <p style="margin:0;{muted_text_style(font_size="13px")}">
+          <p style="{zero_margin_style(muted_text_style(font_size="13px"))}">
             摘要會遮罩 webhook；展開編輯區才顯示完整輸入值。
           </p>
           <div

@@ -7,6 +7,7 @@ from html import escape
 
 from app.domain.entities import CheckEvent
 from app.web.ui_components import card, empty_state_card
+from app.web.ui_page_sections import cluster_style
 from app.web.ui_styles import (
     color_token,
     meta_label_style,
@@ -77,6 +78,7 @@ def render_price_trend_section_from_presentation(
         f"width:100%;height:auto;border:1px solid {color_token('border')};"
         f"background:{color_token('surface_alt')};border-radius:12px;"
     )
+    trend_footer_style = cluster_style(justify="space-between")
     return card(
         title="價格趨勢",
         body=f"""
@@ -106,7 +108,7 @@ def render_price_trend_section_from_presentation(
           />
           {point_markers}
         </svg>
-        <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <div style="{trend_footer_style}">
           <span style="{muted_text_style()}">
             起點：{escape(oldest_point.price_text)}
             （{escape(oldest_point.checked_at_text)}）

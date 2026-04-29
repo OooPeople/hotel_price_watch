@@ -22,7 +22,8 @@ from app.infrastructure.browser.page_strategy import (
 from app.infrastructure.db import (
     SqliteAppSettingsRepository,
     SqliteDatabase,
-    SqliteRuntimeRepository,
+    SqliteRuntimeHistoryQueryRepository,
+    SqliteRuntimeWriteRepository,
     SqliteWatchItemRepository,
 )
 from app.monitor import runtime as runtime_module
@@ -54,7 +55,8 @@ def test_runtime_network_timeout_backoff_grows_across_consecutive_failures(
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
-    runtime_repository = SqliteRuntimeRepository(database)
+    runtime_write_repository = SqliteRuntimeWriteRepository(database)
+    runtime_history_repository = SqliteRuntimeHistoryQueryRepository(database)
     settings_repository = SqliteAppSettingsRepository(database)
     app_settings_service = AppSettingsService(settings_repository)
 
@@ -74,7 +76,8 @@ def test_runtime_network_timeout_backoff_grows_across_consecutive_failures(
     site_registry.register(_FakeRuntimeAdapter())
     runtime = ChromeDrivenMonitorRuntime(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         site_registry=site_registry,
         chrome_fetcher=_TimeoutChromeFetcher(),
         app_settings_service=app_settings_service,
@@ -83,14 +86,14 @@ def test_runtime_network_timeout_backoff_grows_across_consecutive_failures(
     import asyncio
 
     asyncio.run(runtime.run_watch_check_once(watch_item.id))
-    first_snapshot = runtime_repository.get_latest_check_snapshot(watch_item.id)
+    first_snapshot = runtime_history_repository.get_latest_check_snapshot(watch_item.id)
     assert first_snapshot is not None
     assert first_snapshot.consecutive_failures == 1
     assert first_snapshot.last_error_code == CheckErrorCode.NETWORK_TIMEOUT.value
     assert first_snapshot.backoff_until == datetime(2026, 4, 14, 10, 5, tzinfo=UTC)
 
     asyncio.run(runtime.run_watch_check_once(watch_item.id))
-    second_snapshot = runtime_repository.get_latest_check_snapshot(watch_item.id)
+    second_snapshot = runtime_history_repository.get_latest_check_snapshot(watch_item.id)
     assert second_snapshot is not None
     assert second_snapshot.consecutive_failures == 2
     assert second_snapshot.backoff_until == datetime(2026, 4, 14, 10, 16, tzinfo=UTC)
@@ -101,14 +104,15 @@ def test_runtime_success_after_backoff_clears_timeout_failure_state(tmp_path, mo
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
-    runtime_repository = SqliteRuntimeRepository(database)
+    runtime_write_repository = SqliteRuntimeWriteRepository(database)
+    runtime_history_repository = SqliteRuntimeHistoryQueryRepository(database)
     settings_repository = SqliteAppSettingsRepository(database)
     app_settings_service = AppSettingsService(settings_repository)
 
     watch_item = _build_runtime_watch_item("watch-runtime-timeout-recovery")
     watch_repository.save(watch_item)
     watch_repository.save_draft(watch_item.id, _build_runtime_draft(watch_item.canonical_url))
-    runtime_repository.save_latest_check_snapshot(
+    runtime_write_repository.save_latest_check_snapshot(
         _build_latest_snapshot(
             watch_item_id=watch_item.id,
             amount=Decimal("18434"),
@@ -119,7 +123,7 @@ def test_runtime_success_after_backoff_clears_timeout_failure_state(tmp_path, mo
             backoff_until=datetime(2026, 4, 14, 10, 16, tzinfo=UTC),
         )
     )
-    runtime_repository.save_notification_state(
+    runtime_write_repository.save_notification_state(
         _build_notification_state(
             watch_item_id=watch_item.id,
             consecutive_failures=2,
@@ -137,7 +141,8 @@ def test_runtime_success_after_backoff_clears_timeout_failure_state(tmp_path, mo
     site_registry.register(_FakeRuntimeAdapter())
     runtime = ChromeDrivenMonitorRuntime(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         site_registry=site_registry,
         chrome_fetcher=_FakeChromeFetcher(),
         app_settings_service=app_settings_service,
@@ -147,13 +152,13 @@ def test_runtime_success_after_backoff_clears_timeout_failure_state(tmp_path, mo
 
     asyncio.run(runtime.run_watch_check_once(watch_item.id))
 
-    latest_snapshot = runtime_repository.get_latest_check_snapshot(watch_item.id)
+    latest_snapshot = runtime_history_repository.get_latest_check_snapshot(watch_item.id)
     assert latest_snapshot is not None
     assert latest_snapshot.consecutive_failures == 0
     assert latest_snapshot.backoff_until is None
     assert latest_snapshot.last_error_code is None
 
-    notification_state = runtime_repository.get_notification_state(watch_item.id)
+    notification_state = runtime_history_repository.get_notification_state(watch_item.id)
     assert notification_state is not None
     assert notification_state.consecutive_failures == 0
 
@@ -163,7 +168,8 @@ def test_runtime_records_possible_throttling_debug_artifact(tmp_path) -> None:
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
-    runtime_repository = SqliteRuntimeRepository(database)
+    runtime_write_repository = SqliteRuntimeWriteRepository(database)
+    runtime_history_repository = SqliteRuntimeHistoryQueryRepository(database)
     settings_repository = SqliteAppSettingsRepository(database)
     app_settings_service = AppSettingsService(settings_repository)
 
@@ -211,7 +217,8 @@ def test_runtime_records_possible_throttling_debug_artifact(tmp_path) -> None:
     site_registry.register(_FakeRuntimeAdapter())
     runtime = ChromeDrivenMonitorRuntime(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         site_registry=site_registry,
         chrome_fetcher=_ThrottledChromeFetcher(),
         app_settings_service=app_settings_service,
@@ -221,7 +228,7 @@ def test_runtime_records_possible_throttling_debug_artifact(tmp_path) -> None:
 
     asyncio.run(runtime.run_watch_check_once(watch_item.id))
 
-    debug_artifacts = runtime_repository.list_debug_artifacts(watch_item.id)
+    debug_artifacts = runtime_history_repository.list_debug_artifacts(watch_item.id)
     assert len(debug_artifacts) == 1
     assert debug_artifacts[0].reason == "possible_throttling"
     assert debug_artifacts[0].source_url == _build_target_page_url(watch_item.target)
@@ -232,7 +239,8 @@ def test_runtime_records_discarded_page_debug_artifact(tmp_path) -> None:
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
-    runtime_repository = SqliteRuntimeRepository(database)
+    runtime_write_repository = SqliteRuntimeWriteRepository(database)
+    runtime_history_repository = SqliteRuntimeHistoryQueryRepository(database)
     settings_repository = SqliteAppSettingsRepository(database)
     app_settings_service = AppSettingsService(settings_repository)
 
@@ -280,7 +288,8 @@ def test_runtime_records_discarded_page_debug_artifact(tmp_path) -> None:
     site_registry.register(_FakeRuntimeAdapter())
     runtime = ChromeDrivenMonitorRuntime(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         site_registry=site_registry,
         chrome_fetcher=_DiscardedChromeFetcher(),
         app_settings_service=app_settings_service,
@@ -290,7 +299,7 @@ def test_runtime_records_discarded_page_debug_artifact(tmp_path) -> None:
 
     asyncio.run(runtime.run_watch_check_once(watch_item.id))
 
-    debug_artifacts = runtime_repository.list_debug_artifacts(watch_item.id)
+    debug_artifacts = runtime_history_repository.list_debug_artifacts(watch_item.id)
     assert len(debug_artifacts) == 1
     assert debug_artifacts[0].reason == "page_was_discarded"
 
@@ -299,7 +308,8 @@ def test_runtime_pauses_watch_when_chrome_refresh_hits_403(tmp_path) -> None:
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
-    runtime_repository = SqliteRuntimeRepository(database)
+    runtime_write_repository = SqliteRuntimeWriteRepository(database)
+    runtime_history_repository = SqliteRuntimeHistoryQueryRepository(database)
     settings_repository = SqliteAppSettingsRepository(database)
     app_settings_service = AppSettingsService(settings_repository)
 
@@ -314,7 +324,8 @@ def test_runtime_pauses_watch_when_chrome_refresh_hits_403(tmp_path) -> None:
     site_registry.register(_FakeRuntimeAdapter())
     runtime = ChromeDrivenMonitorRuntime(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         site_registry=site_registry,
         chrome_fetcher=_ForbiddenChromeFetcher(),
         app_settings_service=app_settings_service,
@@ -334,23 +345,23 @@ def test_runtime_pauses_watch_when_chrome_refresh_hits_403(tmp_path) -> None:
     assert updated_watch_item.enabled is True
     assert updated_watch_item.paused_reason == "http_403"
 
-    latest_snapshot = runtime_repository.get_latest_check_snapshot(watch_item.id)
+    latest_snapshot = runtime_history_repository.get_latest_check_snapshot(watch_item.id)
     assert latest_snapshot is not None
     assert latest_snapshot.last_error_code == "http_403"
     assert latest_snapshot.consecutive_failures == 1
 
-    debug_artifacts = runtime_repository.list_debug_artifacts(watch_item.id)
+    debug_artifacts = runtime_history_repository.list_debug_artifacts(watch_item.id)
     assert len(debug_artifacts) == 1
     assert debug_artifacts[0].reason == "http_403"
 
-    runtime_state_events = runtime_repository.list_runtime_state_events(watch_item.id)
+    runtime_state_events = runtime_history_repository.list_runtime_state_events(watch_item.id)
     assert len(runtime_state_events) == 1
     assert runtime_state_events[0].event_kind is RuntimeStateEventKind.PAUSE_DUE_TO_BLOCKING
     assert runtime_state_events[0].detail_text is not None
     assert "kind=forbidden" in runtime_state_events[0].detail_text
     assert runtime._scheduler.list_registered_ids() == ()
 
-    price_history = runtime_repository.list_price_history(watch_item.id)
+    price_history = runtime_history_repository.list_price_history(watch_item.id)
     assert price_history == []
 
 
@@ -359,7 +370,8 @@ def test_runtime_records_timeout_as_network_timeout(tmp_path) -> None:
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
-    runtime_repository = SqliteRuntimeRepository(database)
+    runtime_write_repository = SqliteRuntimeWriteRepository(database)
+    runtime_history_repository = SqliteRuntimeHistoryQueryRepository(database)
     settings_repository = SqliteAppSettingsRepository(database)
     app_settings_service = AppSettingsService(settings_repository)
 
@@ -374,7 +386,8 @@ def test_runtime_records_timeout_as_network_timeout(tmp_path) -> None:
     site_registry.register(_FakeRuntimeAdapter())
     runtime = ChromeDrivenMonitorRuntime(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         site_registry=site_registry,
         chrome_fetcher=_TimeoutChromeFetcher(),
         app_settings_service=app_settings_service,
@@ -384,7 +397,7 @@ def test_runtime_records_timeout_as_network_timeout(tmp_path) -> None:
 
     asyncio.run(runtime.run_watch_check_once(watch_item.id))
 
-    latest_snapshot = runtime_repository.get_latest_check_snapshot(watch_item.id)
+    latest_snapshot = runtime_history_repository.get_latest_check_snapshot(watch_item.id)
     assert latest_snapshot is not None
     assert latest_snapshot.last_error_code == "network_timeout"
 
@@ -394,7 +407,8 @@ def test_runtime_recovers_cleanly_after_manual_resume_from_403_pause(tmp_path) -
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
-    runtime_repository = SqliteRuntimeRepository(database)
+    runtime_write_repository = SqliteRuntimeWriteRepository(database)
+    runtime_history_repository = SqliteRuntimeHistoryQueryRepository(database)
     settings_repository = SqliteAppSettingsRepository(database)
     app_settings_service = AppSettingsService(settings_repository)
 
@@ -412,7 +426,8 @@ def test_runtime_recovers_cleanly_after_manual_resume_from_403_pause(tmp_path) -
 
     blocked_runtime = ChromeDrivenMonitorRuntime(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         site_registry=site_registry,
         chrome_fetcher=_ForbiddenChromeFetcher(),
         app_settings_service=app_settings_service,
@@ -429,14 +444,15 @@ def test_runtime_recovers_cleanly_after_manual_resume_from_403_pause(tmp_path) -
 
     recovered_runtime = ChromeDrivenMonitorRuntime(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         site_registry=site_registry,
         chrome_fetcher=_FakeChromeFetcher(),
         app_settings_service=app_settings_service,
     )
     asyncio.run(recovered_runtime.run_watch_check_once(watch_item.id))
 
-    latest_snapshot = runtime_repository.get_latest_check_snapshot(watch_item.id)
+    latest_snapshot = runtime_history_repository.get_latest_check_snapshot(watch_item.id)
     assert latest_snapshot is not None
     assert latest_snapshot.availability is Availability.AVAILABLE
     assert latest_snapshot.last_error_code is None
@@ -448,13 +464,13 @@ def test_runtime_recovers_cleanly_after_manual_resume_from_403_pause(tmp_path) -
     assert updated_watch.enabled is True
     assert updated_watch.paused_reason is None
 
-    check_events = runtime_repository.list_check_events(watch_item.id)
+    check_events = runtime_history_repository.list_check_events(watch_item.id)
     assert len(check_events) == 2
     assert check_events[0].error_code == "http_403"
     assert check_events[1].availability is Availability.AVAILABLE
     assert NotificationEventKind.BECAME_AVAILABLE.value not in check_events[1].event_kinds
 
-    runtime_state_events = runtime_repository.list_runtime_state_events(watch_item.id)
+    runtime_state_events = runtime_history_repository.list_runtime_state_events(watch_item.id)
     event_kinds = tuple(event.event_kind for event in runtime_state_events)
     assert RuntimeStateEventKind.PAUSE_DUE_TO_BLOCKING in event_kinds
     assert RuntimeStateEventKind.RECOVERED_AFTER_SUCCESS in event_kinds

@@ -29,6 +29,7 @@ from app.web.ui_components import (
 from app.web.ui_components import (
     flash_message as render_flash_message,
 )
+from app.web.ui_page_sections import cluster_style, zero_margin_style
 from app.web.ui_styles import (
     meta_label_style,
     meta_paragraph_style,
@@ -83,6 +84,16 @@ def render_debug_capture_list_page_from_presentation(
     flash_html = render_flash_message(presentation.flash_message)
     summary_html = _render_capture_list_summary(presentation)
     capture_list_subtitle = "依時間排序的抓取紀錄與 parser 診斷入口。"
+    debug_actions_html = (
+        f'<div style="{cluster_style()}">'
+        + link_button(href="/debug/captures/latest", label="查看最新一筆", kind="primary")
+        + (
+            f'<form action="/debug/captures/clear" method="post" '
+            f'style="{zero_margin_style()}">'
+        )
+        + submit_button(label="清空紀錄", kind="danger")
+        + "</form></div>"
+    )
     return page_layout(
         title="進階診斷",
         body=f"""
@@ -95,13 +106,7 @@ def render_debug_capture_list_page_from_presentation(
               ),
               back_href="/",
               back_label="回列表",
-              actions_html=(
-                  '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">'
-                  + link_button(href="/debug/captures/latest", label="查看最新一筆", kind="primary")
-                  + '<form action="/debug/captures/clear" method="post" style="margin:0;">'
-                  + submit_button(label="清空紀錄", kind="danger")
-                  + "</form></div>"
-              ),
+              actions_html=debug_actions_html,
           )}
           {card(
               body=f'''

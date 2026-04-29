@@ -16,6 +16,7 @@ from app.web.ui_components import (
     status_badge,
     submit_button,
 )
+from app.web.ui_page_sections import cluster_style, stack_block_style, zero_margin_style
 from app.web.ui_styles import (
     SUCCESS_STYLE,
     card_title_style,
@@ -60,7 +61,7 @@ def render_preview_section(
         options.append(
             f"""
             <label style="{_candidate_card_style(checked=bool(checked))}">
-              <span style="display:flex;gap:10px;align-items:flex-start;">
+              <span style="{cluster_style(align="flex-start")}">
                 <input
                   type="radio"
                   name="candidate_key"
@@ -68,7 +69,7 @@ def render_preview_section(
                   {checked}
                   required
                 >
-                <span style="display:grid;gap:6px;">
+                <span style="{stack_block_style(gap="xs")}">
                   <strong style="{card_title_style()}">{escape(candidate.room_name)}</strong>
                   <span style="{muted_text_style()}">{escape(candidate.plan_name)}</span>
                   {_render_candidate_price(candidate=candidate, preview=preview)}
@@ -183,7 +184,7 @@ def render_preview_section(
               您可隨時在「總覽」頁面查看監視狀態與價格變化。
             </p>
           </div>
-          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <div style="{cluster_style()}">
             {submit_html}
           </div>
         </section>
@@ -208,7 +209,7 @@ def _render_preview_source_summary(
         ""
         if preview.preselected_still_valid
         else f"""
-        <p style="margin:0;">
+        <p style="{zero_margin_style()}">
           {status_badge(label=prefill_status, kind="warning")}
         </p>
         """

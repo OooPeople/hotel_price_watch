@@ -13,7 +13,6 @@ from app.domain.entities import WatchItem
 from app.infrastructure.browser import ChromeCdpHtmlFetcher
 from app.infrastructure.db.repositories import (
     SqliteRuntimeHistoryQueryRepository,
-    SqliteRuntimeRepository,
     SqliteRuntimeWriteRepository,
     SqliteWatchItemRepository,
 )
@@ -60,7 +59,6 @@ class ChromeDrivenMonitorRuntime:
         site_registry: SiteRegistry,
         chrome_fetcher: ChromeCdpHtmlFetcher,
         app_settings_service: AppSettingsService,
-        runtime_repository: SqliteRuntimeRepository | None = None,
         runtime_write_repository: SqliteRuntimeWriteRepository | None = None,
         runtime_history_repository: SqliteRuntimeHistoryQueryRepository | None = None,
         scheduler: MonitorScheduler | None = None,
@@ -75,9 +73,6 @@ class ChromeDrivenMonitorRuntime:
     ) -> None:
         """建立 background monitor runtime 所需的主要依賴。"""
         self._watch_item_repository = watch_item_repository
-        if runtime_repository is not None:
-            runtime_write_repository = runtime_repository
-            runtime_history_repository = runtime_repository
         if runtime_write_repository is None or runtime_history_repository is None:
             raise ValueError("runtime write/history repositories are required")
         self._runtime_write_repository = runtime_write_repository

@@ -8,7 +8,8 @@ from typing import Iterable
 from app.domain.entities import LatestCheckSnapshot, PriceHistoryEntry, WatchItem
 from app.monitor.runtime import MonitorRuntimeStatus
 from app.web.ui_components import icon_svg
-from app.web.ui_styles import color_token, muted_text_style, responsive_grid_style
+from app.web.ui_page_sections import responsive_section_grid, stack_block_style
+from app.web.ui_styles import color_token, muted_text_style
 from app.web.watch_list_presenters import (
     DashboardMetricPresentation,
     build_dashboard_page_view_model,
@@ -41,12 +42,7 @@ def render_dashboard_summary_cards_from_presentation(
 ) -> str:
     """依首頁 summary presentation 渲染摘要卡片。"""
     cards_html = "".join(_dashboard_metric_card(card) for card in summary_cards)
-    summary_grid_style = responsive_grid_style(min_width="180px", gap="14px")
-    return f"""
-    <section style="{summary_grid_style}">
-      {cards_html}
-    </section>
-    """
+    return responsive_section_grid(cards_html, min_width="180px", gap="14px")
 
 
 def _dashboard_metric_card(
@@ -66,7 +62,7 @@ def _dashboard_metric_card(
       <span aria-hidden="true" style="{icon_style}">
         {icon_svg(presentation.icon_name, size=30)}
       </span>
-      <span style="display:grid;gap:4px;min-width:0;">
+      <span style="{stack_block_style(gap="xs")}min-width:0;">
         <span style="{muted_text_style(font_size="14px")}">{escape(presentation.label)}</span>
         <strong style="font-size:30px;line-height:1;color:{color_token("primary")};">
           {escape(presentation.value)}

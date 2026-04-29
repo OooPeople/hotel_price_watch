@@ -31,18 +31,71 @@ def responsive_section_grid(
 
 def inline_cluster(body: str, *, gap: str = "md", align: str = "center") -> str:
     """渲染可換行的水平控制群組。"""
+    return f'<div style="{cluster_style(gap=gap, align=align)}">{body}</div>'
+
+
+def two_column_grid_style(
+    *,
+    left: str,
+    right: str,
+    gap: str = "lg",
+    align: str = "start",
+) -> str:
+    """回傳兩欄 responsive 區塊常用的 grid 樣式。"""
     return (
-        f'<div style="display:flex;gap:{SPACING[gap]};'
-        f'align-items:{align};flex-wrap:wrap;">{body}</div>'
+        f"display:grid;grid-template-columns:{left} {right};"
+        f"gap:{SPACING[gap]};align-items:{align};"
     )
+
+
+def equal_columns_grid_style(*, columns: int, gap: str = "lg") -> str:
+    """回傳固定欄數且等寬的 grid 樣式。"""
+    return (
+        f"display:grid;grid-template-columns:repeat({columns},minmax(0,1fr));"
+        f"gap:{SPACING[gap]};"
+    )
+
+
+def cluster_style(
+    *,
+    gap: str = "md",
+    align: str = "center",
+    justify: str | None = None,
+    wrap: bool = True,
+) -> str:
+    """回傳水平 cluster layout 樣式。"""
+    justify_style = f"justify-content:{justify};" if justify is not None else ""
+    wrap_style = "wrap" if wrap else "nowrap"
+    return (
+        f"display:flex;gap:{SPACING[gap]};align-items:{align};"
+        f"flex-wrap:{wrap_style};{justify_style}"
+    )
+
+
+def stack_block_style(*, gap: str = "sm", min_width: str | None = None) -> str:
+    """回傳局部 grid stack 樣式。"""
+    min_width_style = f"min-width:{min_width};" if min_width is not None else ""
+    return f"display:grid;gap:{SPACING[gap]};{min_width_style}"
+
+
+def zero_margin_style(extra: str = "") -> str:
+    """回傳零 margin 文字樣式。"""
+    return f"margin:0;{extra}"
+
+
+def block_nowrap_style(extra: str = "") -> str:
+    """回傳分行但不換字的文字樣式。"""
+    return f"display:block;white-space:nowrap;{extra}"
+
+
+def table_action_cell_style() -> str:
+    """回傳 watch list 操作欄的垂直置中 layout 樣式。"""
+    return "display:flex;flex-direction:column;justify-content:center;height:100%;"
 
 
 def checkbox_label(*, input_html: str, label: str) -> str:
     """渲染 checkbox 與文字同列的標準 label。"""
-    return (
-        '<label style="display:flex;gap:8px;align-items:center;">'
-        f"{input_html}{escape(label)}</label>"
-    )
+    return f'<label style="{cluster_style(gap="sm")}">{input_html}{escape(label)}</label>'
 
 
 def details_panel(*, title: str, body: str, open_by_default: bool = True) -> str:

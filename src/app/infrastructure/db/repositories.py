@@ -10,9 +10,9 @@ from app.infrastructure.db.runtime_repositories import (
     SqliteNotificationThrottleStateRepository,
     SqliteRuntimeFragmentQueryRepository,
     SqliteRuntimeHistoryQueryRepository,
-    SqliteRuntimeRepository,
     SqliteRuntimeWriteRepository,
 )
+from app.infrastructure.db.runtime_repository_compat import SqliteRuntimeRepository
 from app.infrastructure.db.watch_item_repository import SqliteWatchItemRepository
 
 __all__ = [

@@ -7,6 +7,7 @@ from html import escape
 from app.domain.entities import WatchItem
 from app.domain.enums import WatchRuntimeState
 from app.web.ui_components import action_row, submit_button
+from app.web.ui_page_sections import zero_margin_style
 from app.web.ui_presenters import (
     WatchActionPresentation,
     WatchActionSurface,
@@ -59,7 +60,7 @@ def _render_watch_action_form(
     <form
       action="/watches/{escape(watch_item_id)}/{escape(action.action)}"
       method="post"
-      style="margin:0;"
+      style="{zero_margin_style()}"
       {confirm_attr}
       {quick_action_attr}
     >

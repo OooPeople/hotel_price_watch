@@ -24,7 +24,9 @@ from app.domain.value_objects import SearchDraft, WatchTarget
 from app.infrastructure.db import (
     SqliteAppSettingsRepository,
     SqliteDatabase,
-    SqliteRuntimeRepository,
+    SqliteNotificationThrottleStateRepository,
+    SqliteRuntimeHistoryQueryRepository,
+    SqliteRuntimeWriteRepository,
     SqliteWatchItemRepository,
 )
 from app.monitor.notification_dispatch import NotificationDispatchCoordinator
@@ -52,7 +54,8 @@ def test_runtime_dispatches_notification_and_records_sent_status(tmp_path) -> No
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
-    runtime_repository = SqliteRuntimeRepository(database)
+    runtime_write_repository = SqliteRuntimeWriteRepository(database)
+    runtime_history_repository = SqliteRuntimeHistoryQueryRepository(database)
     settings_repository = SqliteAppSettingsRepository(database)
     app_settings_service = AppSettingsService(settings_repository)
 
@@ -98,7 +101,7 @@ def test_runtime_dispatches_notification_and_records_sent_status(tmp_path) -> No
             room_count=1,
         ),
     )
-    runtime_repository.save_latest_check_snapshot(
+    runtime_write_repository.save_latest_check_snapshot(
         _build_latest_snapshot(
             watch_item_id=watch_item.id,
             amount=Decimal("25000"),
@@ -110,7 +113,8 @@ def test_runtime_dispatches_notification_and_records_sent_status(tmp_path) -> No
     notifier = _RecordingNotifier()
     runtime = ChromeDrivenMonitorRuntime(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         site_registry=site_registry,
         chrome_fetcher=_FakeChromeFetcher(),
         app_settings_service=app_settings_service,
@@ -122,17 +126,20 @@ def test_runtime_dispatches_notification_and_records_sent_status(tmp_path) -> No
     asyncio.run(runtime.run_watch_check_once(watch_item.id))
 
     assert len(notifier.messages) == 1
-    check_events = runtime_repository.list_check_events(watch_item.id)
+    check_events = runtime_history_repository.list_check_events(watch_item.id)
     assert len(check_events) == 1
     assert check_events[0].notification_status.value == "sent"
     assert check_events[0].sent_channels == ("desktop",)
+
 
 def test_runtime_notification_throttle_persists_across_runtime_restart(tmp_path) -> None:
     """同一通道冷卻應跨 runtime 重啟保留，不可因 app 重啟而重置。"""
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
-    runtime_repository = SqliteRuntimeRepository(database)
+    notification_throttle_repository = SqliteNotificationThrottleStateRepository(
+        database
+    )
     settings_repository = SqliteAppSettingsRepository(database)
     app_settings_service = AppSettingsService(settings_repository)
 
@@ -171,7 +178,9 @@ def test_runtime_notification_throttle_persists_across_runtime_restart(tmp_path)
     runtime_one = NotificationDispatchCoordinator(
         app_settings_service=app_settings_service,
         notifier_factory=lambda settings: _build_notifiers_for_test(settings, notifier),
-        notification_throttle=PersistentNotificationThrottle(runtime_repository),
+        notification_throttle=PersistentNotificationThrottle(
+            notification_throttle_repository
+        ),
     )
     first_result = runtime_one.dispatch_notification(
         watch_item=watch_item,
@@ -186,7 +195,9 @@ def test_runtime_notification_throttle_persists_across_runtime_restart(tmp_path)
     runtime_two = NotificationDispatchCoordinator(
         app_settings_service=app_settings_service,
         notifier_factory=lambda settings: _build_notifiers_for_test(settings, notifier),
-        notification_throttle=PersistentNotificationThrottle(runtime_repository),
+        notification_throttle=PersistentNotificationThrottle(
+            notification_throttle_repository
+        ),
     )
     second_result = runtime_two.dispatch_notification(
         watch_item=watch_item,
@@ -205,7 +216,8 @@ def test_runtime_records_partial_notification_failure_without_aborting_check(tmp
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
-    runtime_repository = SqliteRuntimeRepository(database)
+    runtime_write_repository = SqliteRuntimeWriteRepository(database)
+    runtime_history_repository = SqliteRuntimeHistoryQueryRepository(database)
     settings_repository = SqliteAppSettingsRepository(database)
     app_settings_service = AppSettingsService(settings_repository)
 
@@ -219,7 +231,7 @@ def test_runtime_records_partial_notification_failure_without_aborting_check(tmp
     )
     watch_repository.save(watch_item)
     watch_repository.save_draft(watch_item.id, _build_runtime_draft(watch_item.canonical_url))
-    runtime_repository.save_latest_check_snapshot(
+    runtime_write_repository.save_latest_check_snapshot(
         _build_latest_snapshot(
             watch_item_id=watch_item.id,
             amount=Decimal("25000"),
@@ -232,7 +244,8 @@ def test_runtime_records_partial_notification_failure_without_aborting_check(tmp
     failing_notifier = _FailingNotifier(channel_name="discord", message="discord boom")
     runtime = ChromeDrivenMonitorRuntime(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         site_registry=site_registry,
         chrome_fetcher=_FakeChromeFetcher(),
         app_settings_service=app_settings_service,
@@ -244,11 +257,11 @@ def test_runtime_records_partial_notification_failure_without_aborting_check(tmp
     asyncio.run(runtime.run_watch_check_once(watch_item.id))
 
     assert len(successful_notifier.messages) == 1
-    latest_snapshot = runtime_repository.get_latest_check_snapshot(watch_item.id)
+    latest_snapshot = runtime_history_repository.get_latest_check_snapshot(watch_item.id)
     assert latest_snapshot is not None
     assert latest_snapshot.normalized_price_amount == Decimal("22990")
 
-    check_events = runtime_repository.list_check_events(watch_item.id)
+    check_events = runtime_history_repository.list_check_events(watch_item.id)
     assert len(check_events) == 1
     assert check_events[0].notification_status.value == "partial"
     assert check_events[0].sent_channels == ("desktop",)
@@ -259,7 +272,8 @@ def test_runtime_reuses_dispatcher_when_settings_unchanged(tmp_path) -> None:
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
     watch_repository = SqliteWatchItemRepository(database)
-    runtime_repository = SqliteRuntimeRepository(database)
+    runtime_write_repository = SqliteRuntimeWriteRepository(database)
+    runtime_history_repository = SqliteRuntimeHistoryQueryRepository(database)
     settings_repository = SqliteAppSettingsRepository(database)
     app_settings_service = AppSettingsService(settings_repository)
 
@@ -269,7 +283,7 @@ def test_runtime_reuses_dispatcher_when_settings_unchanged(tmp_path) -> None:
         watch_item.id,
         _build_runtime_draft(watch_item.canonical_url),
     )
-    runtime_repository.save_latest_check_snapshot(
+    runtime_write_repository.save_latest_check_snapshot(
         _build_latest_snapshot(
             watch_item_id=watch_item.id,
             amount=Decimal("25000"),
@@ -284,7 +298,8 @@ def test_runtime_reuses_dispatcher_when_settings_unchanged(tmp_path) -> None:
     notifier_factory = _CountingNotifierFactory()
     runtime = ChromeDrivenMonitorRuntime(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         site_registry=site_registry,
         chrome_fetcher=_FakeChromeFetcher(),
         app_settings_service=app_settings_service,
@@ -294,7 +309,7 @@ def test_runtime_reuses_dispatcher_when_settings_unchanged(tmp_path) -> None:
     import asyncio
 
     asyncio.run(runtime.run_watch_check_once(watch_item.id))
-    runtime_repository.save_latest_check_snapshot(
+    runtime_write_repository.save_latest_check_snapshot(
         _build_latest_snapshot(
             watch_item_id=watch_item.id,
             amount=Decimal("26000"),

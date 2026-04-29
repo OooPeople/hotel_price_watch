@@ -6,6 +6,7 @@ from html import escape
 
 from app.monitor.runtime import MonitorRuntimeStatus
 from app.web.ui_components import icon_svg
+from app.web.ui_page_sections import cluster_style, stack_block_style, zero_margin_style
 from app.web.ui_styles import color_token, muted_text_style, surface_card_style
 from app.web.watch_list_presenters import (
     RuntimeStatusItemPresentation,
@@ -41,6 +42,12 @@ def render_runtime_status_section_from_presentation(
     """依 runtime presentation 渲染首頁系統狀態列。"""
     if presentation is None:
         return ""
+    header_style = (
+        f"{cluster_style(justify='space-between')}"
+        f"padding:14px 18px;border-bottom:1px solid {color_token('border')};"
+    )
+    title_style = zero_margin_style("font-size:18px;")
+    action_cell_style = cluster_style(justify="flex-end")
     items_html = "".join(
         _render_runtime_status_item(item) for item in presentation.items
     )
@@ -52,12 +59,9 @@ def render_runtime_status_section_from_presentation(
     >
       <div
         class="runtime-status-header"
-        style="
-          display:flex;align-items:center;justify-content:space-between;gap:12px;
-          padding:14px 18px;border-bottom:1px solid {color_token("border")};
-        "
+        style="{header_style}"
       >
-        <h2 style="margin:0;font-size:18px;">系統狀態</h2>
+        <h2 style="{title_style}">系統狀態</h2>
         <button
           type="button"
           data-runtime-status-toggle
@@ -84,7 +88,7 @@ def render_runtime_status_section_from_presentation(
         "
       >
         {items_html}
-        <div style="display:flex;justify-content:flex-end;">
+        <div style="{action_cell_style}">
           <a
             href="{escape(presentation.action.href)}"
             title="{escape(presentation.action.title)}"
@@ -107,17 +111,19 @@ def _render_runtime_status_item(
     presentation: RuntimeStatusItemPresentation,
 ) -> str:
     """渲染系統狀態橫向列的單一狀態項目。"""
+    item_style = (
+        f"{cluster_style()}min-width:0;"
+        f"padding:4px 18px 4px 0;border-right:1px solid {color_token('border')};"
+    )
+    text_stack_style = f"{stack_block_style(gap='xs')}min-width:0;"
     return f"""
     <div
-      style="
-        display:flex;align-items:center;gap:12px;min-width:0;
-        padding:4px 18px 4px 0;border-right:1px solid {color_token("border")};
-      "
+      style="{item_style}"
     >
       <span aria-hidden="true" style="{_runtime_status_icon_style(presentation.icon_kind)}">
         {icon_svg(presentation.icon_name, size=24)}
       </span>
-      <span style="display:grid;gap:2px;min-width:0;">
+      <span style="{text_stack_style}">
         <span style="{muted_text_style(font_size="13px")}">{escape(presentation.label)}</span>
         <strong style="font-size:15px;color:{color_token("secondary")};">
           {escape(presentation.value)}

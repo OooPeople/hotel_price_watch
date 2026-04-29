@@ -19,7 +19,8 @@ from app.domain.notification_rules import RuleLeaf
 from app.domain.value_objects import WatchTarget
 from app.infrastructure.db import (
     SqliteDatabase,
-    SqliteRuntimeRepository,
+    SqliteRuntimeHistoryQueryRepository,
+    SqliteRuntimeWriteRepository,
     SqliteWatchItemRepository,
 )
 
@@ -42,11 +43,14 @@ class _RecordingRuntime:
 
 def test_lifecycle_coordinator_owns_manual_disable_transition(tmp_path) -> None:
     """disable 應由 lifecycle coordinator 更新 watch 並寫入 transition event。"""
-    watch_repository, runtime_repository = _build_repositories(tmp_path)
+    watch_repository, runtime_write_repository, runtime_history_repository = (
+        _build_repositories(tmp_path)
+    )
     watch_repository.save(_build_watch_item())
     coordinator = WatchLifecycleCoordinator(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         monitor_runtime=None,
     )
 
@@ -54,7 +58,7 @@ def test_lifecycle_coordinator_owns_manual_disable_transition(tmp_path) -> None:
 
     assert updated_watch.enabled is False
     assert updated_watch.paused_reason == "manually_disabled"
-    events = runtime_repository.list_runtime_state_events("watch-1")
+    events = runtime_history_repository.list_runtime_state_events("watch-1")
     assert len(events) == 1
     assert events[0].event_kind is RuntimeStateEventKind.MANUAL_DISABLE
     assert events[0].from_state is WatchRuntimeState.ACTIVE
@@ -63,11 +67,13 @@ def test_lifecycle_coordinator_owns_manual_disable_transition(tmp_path) -> None:
 
 def test_lifecycle_coordinator_preserves_recover_pending_on_resume(tmp_path) -> None:
     """從 blocked pause 恢復時，to_state 應保留 recover pending 語意。"""
-    watch_repository, runtime_repository = _build_repositories(tmp_path)
+    watch_repository, runtime_write_repository, runtime_history_repository = (
+        _build_repositories(tmp_path)
+    )
     watch_repository.save(
         _build_watch_item(paused_reason="http_403")
     )
-    runtime_repository.save_latest_check_snapshot(
+    runtime_write_repository.save_latest_check_snapshot(
         LatestCheckSnapshot(
             watch_item_id="watch-1",
             checked_at=datetime(2026, 4, 14, 12, 0, tzinfo=UTC),
@@ -80,7 +86,8 @@ def test_lifecycle_coordinator_preserves_recover_pending_on_resume(tmp_path) -> 
     )
     coordinator = WatchLifecycleCoordinator(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         monitor_runtime=None,
     )
 
@@ -88,7 +95,7 @@ def test_lifecycle_coordinator_preserves_recover_pending_on_resume(tmp_path) -> 
 
     assert updated_watch.enabled is True
     assert updated_watch.paused_reason is None
-    events = runtime_repository.list_runtime_state_events("watch-1")
+    events = runtime_history_repository.list_runtime_state_events("watch-1")
     assert events[0].event_kind is RuntimeStateEventKind.MANUAL_RESUME
     assert events[0].from_state is WatchRuntimeState.PAUSED_BLOCKED
     assert events[0].to_state is WatchRuntimeState.RECOVER_PENDING
@@ -96,12 +103,15 @@ def test_lifecycle_coordinator_preserves_recover_pending_on_resume(tmp_path) -> 
 
 def test_lifecycle_coordinator_gates_check_now_by_control_state(tmp_path) -> None:
     """check-now 應拒絕已暫停 watch，避免繞過 control state。"""
-    watch_repository, runtime_repository = _build_repositories(tmp_path)
+    watch_repository, runtime_write_repository, runtime_history_repository = (
+        _build_repositories(tmp_path)
+    )
     watch_repository.save(_build_watch_item(paused_reason="manually_paused"))
     runtime = _RecordingRuntime()
     coordinator = WatchLifecycleCoordinator(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         monitor_runtime=runtime,
     )
 
@@ -115,12 +125,15 @@ def test_lifecycle_coordinator_gates_check_now_by_control_state(tmp_path) -> Non
 
 def test_lifecycle_coordinator_applies_scheduler_side_effect(tmp_path) -> None:
     """pause transition 應由 coordinator 套用 state machine 的 scheduler side effect。"""
-    watch_repository, runtime_repository = _build_repositories(tmp_path)
+    watch_repository, runtime_write_repository, runtime_history_repository = (
+        _build_repositories(tmp_path)
+    )
     watch_repository.save(_build_watch_item())
     runtime = _RecordingRuntime()
     coordinator = WatchLifecycleCoordinator(
         watch_item_repository=watch_repository,
-        runtime_repository=runtime_repository,
+        runtime_write_repository=runtime_write_repository,
+        runtime_history_repository=runtime_history_repository,
         monitor_runtime=runtime,
     )
 
@@ -133,7 +146,11 @@ def _build_repositories(tmp_path):
     """建立 watch / runtime repository 測試組合。"""
     database = SqliteDatabase(tmp_path / "watcher.db")
     database.initialize()
-    return SqliteWatchItemRepository(database), SqliteRuntimeRepository(database)
+    return (
+        SqliteWatchItemRepository(database),
+        SqliteRuntimeWriteRepository(database),
+        SqliteRuntimeHistoryQueryRepository(database),
+    )
 
 
 def _build_watch_item(*, paused_reason: str | None = None) -> WatchItem:

@@ -16,45 +16,27 @@
 
 ### V1 功能
 
-- o parser / normalizer / fixture-based parser tests。
-- o `seed_url -> search_draft -> watch_target` 與精確 `room-plan` identity。
-- o scheduler、runtime、per-watch 互斥、`check-now`。
-- o SQLite schema、migration、WAL、busy timeout。
-- o latest snapshot、check event、price history、notification state、runtime state event、debug artifact persistence。
+- o `ikyu` parser / normalizer / fixture tests。
+- o 從專用 Chrome 分頁建立精確 `room-plan` watch。
+- o 背景 runtime、scheduler、per-watch 互斥、`check-now`。
+- o SQLite persistence：latest snapshot、history、notification state、runtime event、debug artifact。
 - o desktop / ntfy / Discord webhook notifier。
-- o watch 列表、新增、刪除、詳細頁、歷史、debug captures、全域設定。
-- o watch 啟用 / 停用 / 暫停 / 恢復 / 手動立即檢查。
-- o 首頁與 watch 詳細頁採 version polling；相對時間與退避倒數由前端局部更新。
+- o watch 列表、新增、刪除、詳細、歷史、debug captures、全域設定。
+- o watch 啟用 / 停用 / 暫停 / 恢復。
+- o 首頁與詳細頁採 version polling；相對時間與退避倒數由前端局部更新。
 
 ### 架構收斂
 
-- o `main.py` 已收斂為 app factory、lifespan、container 掛載、router include 與 health endpoint。
-- o web routes 已拆到 `src/app/web/routes/`。
-- o route orchestration 已抽 page service：`WatchPageService`、`WatchCreationPageService`、`SettingsPageService`。
-- o web renderer 已依頁面群組拆分，`app.web.views` 只保留相容 re-export。
-- o watch list / detail / action / creation / settings / debug 的主要 renderer 已拆到對應 partial / view module。
-- o `ui_layout.py`、`ui_primitives.py`、`ui_icons.py`、`ui_behaviors.py` 已拆出；`ui_components.py` 只作相容 re-export。
-- o watch list / detail fragment payload 與 DOM hook 已集中到 `watch_fragment_contracts.py`。
-- o settings / watch creation DOM id 與 inline behavior 已集中到 `client_contracts.py` 與 dedicated client script renderer。
-- o Dashboard、Watch Detail、Settings、Debug capture 已建立 page view model / presenter gate。
-- o Watch creation preview cache 與初始價格保存已移到 application service；初始 snapshot 以單一 transaction 寫入。
-- o `watch_client_scripts.py` 已拆成 watch list / watch detail client script renderer，原檔只保留相容 re-export。
-- o Watch Detail page shell 已拆到 `watch_detail_views.py`；detail fragment assembler 與 `WATCH_DETAIL_FRAGMENT_SECTIONS` 已集中 page shell、payload 與 client script 的 section contract。
-- o Watch list / detail fragment payload 組裝已拆到 `watch_fragment_payloads.py`；`WatchPageService` 只負責 context 與 revision token。
-- o 正式 `AppContainer` 不再持有 `SqliteRuntimeRepository` 相容 façade；正式路徑使用 write / history / fragment / throttle 專用 repository。
-- o Watch Detail / Settings 已建立 page-level script entrypoint，常用 page layout pattern 已抽到 `ui_page_sections.py`。
-- o `watch_creation_routes.py` 已抽出 `WatchCreationWorkflow`，route 不再直接協調 preview guard、cache、create watch 與初始 snapshot。
-- o `settings_partials.py` 已拆成 global / rule / test partial modules，原檔只保留相容 re-export。
-- o `watch_list_partials.py` 已拆出 runtime dock / summary card modules；`watch_creation_partials.py` 已拆出 Chrome tab / diagnostics modules。
-- o `ChromeCdpHtmlFetcher` 已拆出 profile launcher、CDP connector、page matcher、page capture helper 與 chrome models。
-- o `ChromeDrivenMonitorRuntime` 已抽出 check executor、startup restorer、assignment coordinator、notification dispatch coordinator、watch definition sync coordinator。
-- o `WatchCheckExecutor` 已加入 setup / captured / evaluated pipeline context，先收斂單次 check 的資料流但不大拆流程。
-- o `SqliteRuntimeRepository` 已降為相容 façade；runtime write / history / fragment / throttle 專用 repository 是正式 app wiring。
-- o 資料層第二輪第一刀已完成：SQLite serializer、revision token helper、watch item row mapping 已從 `repositories.py` 抽到 dedicated modules。
-- o 資料層第二輪第二刀已完成：runtime history query SQL 與 row mapping 已抽到 `runtime_history_queries.py`，history façade 不再委派相容 repository。
-- o 資料層第二輪第三刀已完成：runtime fragment revision query 與 notification throttle state SQL 已抽到 dedicated modules。
-- o 資料層第二輪第四刀已完成：watch item repository、runtime repository façade、runtime write records、app settings repository 已拆出，`repositories.py` 降為相容 re-export。
-- o 測試已依架構邊界整理到 `tests/unit/*/` 子目錄；`tests/unit/` 根目錄不再新增 top-level `test_*.py`。
+- o app entrypoint、routes、page services、presenters、renderers 已依責任拆分。
+- o Watch list / detail fragment payload、DOM contract、client script entrypoint 已集中管理。
+- o Watch creation workflow 已接管 preview、cache、create watch 與 initial snapshot orchestration。
+- o Dashboard watch row 已拆成 card / table / shared row helper components。
+- o Settings、Debug、Add Watch、Watch Detail 主要 renderer 已拆到 page-area modules。
+- o Chrome CDP、monitor runtime、check executor 與 scheduler 相關協調器已拆出 owner。
+- o Persistence 已拆為 watch item、runtime write、runtime history query、fragment query、notification throttle、app settings 等 owner。
+- o `SqliteRuntimeRepository` 已降為 compatibility adapter；正式 app wiring 與 unit tests 使用專用 repository。
+- o UI recurring layout pattern 已集中到 `ui_page_sections.py` 與既有 UI helper。
+- o 測試已依架構邊界整理；`tests/unit/` 根目錄不再新增 top-level `test_*.py`。
 
 ### UI 進度
 
@@ -76,12 +58,10 @@
 
 ## 下一步
 
-1. 做 Watch Detail 第二輪 UI 前的最後 presenter 檢查：確認 `WatchDetailPageViewModel` 是否足夠支撐 `07_watch_detail.png` 的資訊層級。
-2. 若資料層後續繼續成長，優先改直接 import dedicated repository module；目前不改 schema 與 public behavior。
-3. 對照 `docs/ui_reference/07_watch_detail.png` 重構 Watch Detail 第二輪 UI，沿用 `WatchDetailPageViewModel` 與拆分後的 detail partial。
-4. 對照 `docs/ui_reference/05_settings_notifications.png` 重構 Settings 第二輪 UI，沿用 `SettingsPageViewModel` 與 `settings_partials.py`。
-5. UI 與架構穩定後做人工 smoke test：啟動、列分頁、建立監視、手動 check、通知測試、暫停 / 恢復。
-6. Smoke test 穩定後，再決定進入 Packaging 或第二站 spike。
+1. 對照 `docs/ui_reference/07_watch_detail.png` 重構 Watch Detail 第二輪 UI。
+2. 對照 `docs/ui_reference/05_settings_notifications.png` 重構 Settings 第二輪 UI。
+3. UI 穩定後做人工 smoke test：啟動、列分頁、建立監視、手動 check、通知測試、暫停 / 恢復。
+4. Smoke test 穩定後，再決定 Packaging 或第二站 spike。
 
 ## 主要風險
 
@@ -89,6 +69,6 @@
 - 背景監看依賴專用 Chrome session，仍需長時間真機驗證。
 - Chrome 縮小、背景、discard 或站方 blocked page 的實際行為仍可能因環境不同而變動。
 - 第二站若不是 lodging-room-plan 模型，現有 target / candidate / DB contract 需要 migration。
-- `repositories.py` 已降為相容 re-export；後續新增資料層實作不可加回此檔。
+- `repositories.py` 已降為相容 re-export，`SqliteRuntimeRepository` 已降為 compatibility adapter 且只保留 integration 相容測試；後續新增資料層實作不可加回 façade 或相容層。
 - 部分 page-area presenter 仍可能變大；新增 UI 行為前應先拆分對應 component owner。
 - Watch Detail / Settings 視覺重構時，仍需避免把 domain 判斷、DOM contract、fragment payload 或 inline script 塞回大型 partial。

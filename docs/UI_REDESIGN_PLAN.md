@@ -12,6 +12,7 @@
 - Watch Detail / Settings 第二輪 UI 必須沿用已完成的 page service、presenter、partial、client contract，不把判斷塞回 route 或大型 partial。
 - Watch Detail 已先完成 section registry / fragment assembler / page shell 拆分；第二輪 UI 只調整 presentation 與 partial，不重新發明局部更新 contract。
 - 第二輪 UI 新增 layout 時優先使用 `ui_page_sections.py`、`ui_layout.py`、`ui_primitives.py`，避免新的 page-specific inline layout string 繼續擴散。
+- Watch Detail / Settings 重構時，stack、cluster、grid、nowrap、form field、details panel、table action cell 等 recurring layout 必須走 `ui_page_sections.py` 或既有 helper；page partial 只保留真正一次性的視覺樣式。
 
 ## 2. 參考圖片
 
@@ -94,37 +95,13 @@ Dashboard 已採折衷清單，不再列為下一個主要 UI phase。
 
 ## 7. Phase Plan
 
-### Phase 1：AppShell / Design Token（已完成）
+### 已完成
 
-- o theme token、surface、border、shadow、typography。
-- o AppShell、sidebar、收合、主要內容平滑位移。
-- o 專用 Chrome / runtime 狀態移到首頁系統狀態 dock。
-
-### Phase 2：Add Watch Wizard（已完成）
-
-- o 3-step top wizard：選擇來源、選擇方案、設定通知與確認。
-- o Chrome tab selection。
-- o candidate selectable option。
-- o 建立前摘要。
-- o preview 初始價格寫入 latest snapshot / check event / price history。
-
-### Phase 3：Dashboard 折衷清單（已完成）
-
-- o Dashboard summary cards。
-- o watch row / card 顯示目前價格、24 小時價格變動、通知條件、runtime 狀態、最後檢查。
-- o 卡片 / 清單切換。
-- o 系統狀態 dock。
-
-### Phase 4：Web 架構 Gate（已完成）
-
-- o watch list / detail page service 與 fragment contract。
-- o watch client scripts。
-- o Watch Detail / Settings / Dashboard / Debug capture view model。
-- o settings / watch creation client contracts。
-- o Watch Detail section registry、fragment assembler、page shell 與 client script contract。
-- o Watch fragment payload assembler、page-level script entrypoint、page layout helper。
-- o UI layout / primitives / icons / behaviors 拆分。
-- o runtime / repository 主要責任收斂。
+- o AppShell / design token / sidebar / runtime dock。
+- o Add Watch 3-step wizard、Chrome tab selection、候選方案、建立前摘要。
+- o Dashboard 折衷清單、summary cards、卡片 / 清單切換。
+- o Web 架構 gate：page service、presenter、fragment contract、page-level script entrypoint、UI helper。
+- o runtime / repository 主要責任收斂，避免 UI 重構時回頭處理資料層雙軌問題。
 
 ### Phase 5：Watch Detail 第二輪（下一步）
 
@@ -166,21 +143,13 @@ Dashboard 已採折衷清單，不再列為下一個主要 UI phase。
 
 可延後到 Watch Detail / Settings 後。
 
-- filter / tabs：全部、success、failed、blocked、parser issues。
-- 保留 debug captures、artifacts、下載 HTML。
-- 技術欄位可密集，但不混入 Dashboard 主要資訊。
+- 若需要再補 filter / tabs 與 raw diagnostics，但不混入 Dashboard 主要資訊。
 
 ### Phase 8：Smoke Test / 下一階段決策
 
 由使用者啟動安全模式 GUI / 專用 Chrome 後測：
 
-- 列分頁。
-- 建立 watch。
-- 首頁 polling。
-- detail polling。
-- 暫停 / 恢復。
-- 手動 check。
-- 通知測試。
+- 列分頁、建立 watch、首頁與 detail polling、暫停 / 恢復、手動 check、通知測試。
 
 穩定後再決定 Packaging 或第二站 spike。
 

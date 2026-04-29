@@ -12,6 +12,7 @@ from app.web.ui_components import (
     status_badge,
     submit_button,
 )
+from app.web.ui_page_sections import cluster_style, stack_block_style, zero_margin_style
 from app.web.ui_styles import (
     card_title_style,
     color_token,
@@ -65,13 +66,13 @@ def _render_chrome_tab_card(
     linked_watch_id = existing_watch_ids_by_tab_id.get(tab.tab_id)
     site_label = site_labels_by_tab_id.get(tab.tab_id)
     site_label_html = (
-        f'<p style="margin:0;">站點：{escape(site_label)}</p>'
+        f'<p style="{zero_margin_style()}">站點：{escape(site_label)}</p>'
         if site_label is not None
         else ""
     )
     action_html = (
         f"""
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <div style="{cluster_style()}">
           {status_badge(label="已建立監視", kind="warning")}
           {link_button(
               href=f"/watches/{linked_watch_id}",
@@ -82,7 +83,7 @@ def _render_chrome_tab_card(
         """
         if linked_watch_id is not None
         else (
-            '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">'
+            f'<div style="{cluster_style()}">'
             f'{submit_button(label="抓取此分頁", kind="primary", size="sm")}'
             "</div>"
         )
@@ -102,8 +103,8 @@ def _render_chrome_tab_card(
           "
         >
           <input type="hidden" name="tab_id" value="{escape(tab.tab_id)}">
-          <div style="display:grid;gap:8px;min-width:0;">
-            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <div style="{stack_block_style(gap="sm")}min-width:0;">
+            <div style="{cluster_style()}">
               <strong style="{card_title_style()}">{escape(tab.title or "untitled tab")}</strong>
               {status_badge(label=status_label, kind=status_kind)}
             </div>

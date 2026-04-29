@@ -8,7 +8,6 @@ from app.application.watch_editor import WatchCreationPreview
 from app.domain.entities import CheckEvent, LatestCheckSnapshot, PriceHistoryEntry
 from app.domain.enums import Availability, SourceKind
 from app.infrastructure.db.repositories import (
-    SqliteRuntimeRepository,
     SqliteRuntimeWriteRepository,
 )
 from app.sites.base import OfferCandidate
@@ -19,14 +18,10 @@ class WatchCreationSnapshotService:
 
     def __init__(
         self,
-        runtime_write_repository: SqliteRuntimeWriteRepository | None = None,
-        runtime_repository: SqliteRuntimeRepository | None = None,
+        runtime_write_repository: SqliteRuntimeWriteRepository,
     ) -> None:
-        """建立初始價格保存服務；舊 runtime_repository 參數僅作相容。"""
-        repository = runtime_write_repository or runtime_repository
-        if repository is None:
-            raise ValueError("runtime write repository is required")
-        self._runtime_write_repository = repository
+        """建立初始價格保存服務，明確依賴 runtime write repository。"""
+        self._runtime_write_repository = runtime_write_repository
 
     def persist_initial_snapshot_from_preview(
         self,

@@ -6,7 +6,11 @@ from datetime import datetime
 from html import escape
 
 from app.web.ui_components import card, key_value_grid, status_badge, summary_card
-from app.web.ui_page_sections import responsive_section_grid
+from app.web.ui_page_sections import (
+    block_nowrap_style,
+    responsive_section_grid,
+    stack_block_style,
+)
 from app.web.ui_styles import hero_title_style, meta_paragraph_style
 from app.web.view_formatters import format_datetime_lines_for_display
 from app.web.watch_detail_presenters import WatchDetailPresentation
@@ -29,8 +33,8 @@ def render_watch_detail_hero_section(
     )
     return card(
         body=f"""
-        <div class="watch-detail-hero" style="display:grid;gap:10px;">
-          <div style="display:grid;gap:8px;min-width:260px;">
+        <div class="watch-detail-hero" style="{stack_block_style(gap="sm")}">
+          <div style="{stack_block_style(gap="sm", min_width="260px")}">
             <div>{runtime_badge_html}</div>
             <h2 style="{hero_title_style()}">{escape(presentation.hotel_name)}</h2>
             <p style="{meta_paragraph_style()}">{escape(presentation.room_name)}</p>
@@ -99,7 +103,7 @@ def _format_datetime_summary_value(
         use_24_hour_time=use_24_hour_time,
     )
     html = (
-        f'<span style="display:block;white-space:nowrap;">{escape(date_text)}</span>'
-        f'<span style="display:block;white-space:nowrap;">{escape(time_text)}</span>'
+        f'<span style="{block_nowrap_style()}">{escape(date_text)}</span>'
+        f'<span style="{block_nowrap_style()}">{escape(time_text)}</span>'
     )
     return f"{date_text} {time_text}", html

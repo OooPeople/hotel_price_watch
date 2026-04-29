@@ -151,23 +151,20 @@ Web 層切分方向：
 
 - route：request parsing、origin guard、redirect / response type、HTTP status。
 - page service：組頁面 context、revision token；不得直接組 HTML fragment payload。
-- fragment payload assembler：把 page context 與 revision 組成 JSON payload。
+- fragment payload assembler：把 page context 與 revision 組成 JSON payload；route 不直接組 fragment HTML。
 - presenter / page view model：集中 UI 文案、狀態、排序與顯示判斷。
 - partial renderer：只負責 HTML 組裝。
 - client script renderer：集中 inline behavior。
 - contract module：集中 DOM id、payload key、fragment endpoint contract。
 
-目前 guardrails：
+守則：
 
-- 新 renderer 不應把實作加回 `watch_view_partials.py`、`view_helpers.py` 或 `ui_components.py` 這類相容 re-export 檔。
-- Watch list / detail fragment payload 與 DOM hook 由 `watch_fragment_contracts.py` 管理。
-- Watch Detail fragment section 由 `WATCH_DETAIL_FRAGMENT_SECTIONS` 管理；page shell、fragment assembler 與 client script 必須吃同一份 section registry，不可各自手寫 DOM id / payload key 對應。
-- Watch list / detail fragment payload HTML 組裝由 `watch_fragment_payloads.py` 管理；`WatchPageService` 只提供 read context 與 revision token。
-- Settings / watch creation DOM id 由 `client_contracts.py` 管理。
-- page-level client behavior 需從 page script entrypoint 匯出，例如 `watch_detail_page_scripts.py`、`settings_page_scripts.py`；partial 不直接拼多段 script。
-- 重複 layout pattern 放入 `ui_page_sections.py` 或既有 UI helper；第二輪 UI 不新增大量 ad-hoc inline layout string。
+- 新 renderer 不把實作加回相容 re-export，例如 `watch_view_partials.py`、`view_helpers.py`、`ui_components.py`。
+- Watch list / detail 的 DOM hook、payload key 與 fragment section 必須由 contract module 管理。
+- Settings / watch creation 的 DOM id 必須由 `client_contracts.py` 管理。
+- page-level client behavior 由 page script entrypoint 匯出；partial 不直接拼多段 script。
+- 重複 layout pattern 放入 `ui_page_sections.py` 或既有 UI helper；page partial 只保留真正一次性的視覺樣式。
 - Watch Detail / Settings 第二輪 UI 必須沿用既有 page view model，不把 domain 判斷塞回 partial。
-- 新共用 UI 放到 `ui_layout.py`、`ui_primitives.py`、`ui_icons.py` 或 `ui_behaviors.py`。
 
 ## 8. Persistence 邊界
 
@@ -178,14 +175,17 @@ SQLite table 不急著拆，但 Python adapter 責任需分離：
 - fragment query：watch list / detail revision token 與 fragment 輕量查詢。
 - notification throttle state：通道級節流狀態。
 
-目前 `repositories.py` 只保留相容 re-export；SQLite serializer、revision token helper、watch item row mapping、watch item repository、runtime repository façade、runtime write records、runtime history query SQL、runtime fragment revision query、notification throttle state SQL 與 app settings repository 都已拆到 dedicated modules。正式 `AppContainer` 不再持有 `SqliteRuntimeRepository`；該 façade 只保留給相容測試與舊呼叫端過渡，新增正式路徑必須使用 write / history / fragment / throttle 專用 repository。
+目前 owner map：
 
-下一輪資料層收斂方向：
+- `SqliteRuntimeWriteRepository`：runtime 寫入與 transaction owner。
+- `SqliteRuntimeHistoryQueryRepository`：history / latest snapshot / notification state / debug artifact 查詢 owner。
+- `SqliteRuntimeFragmentQueryRepository`：watch list / detail fragment revision token owner。
+- `SqliteNotificationThrottleStateRepository`：通知通道節流狀態 owner。
+- `SqliteRuntimeRepository`：只存在於 `runtime_repository_compat.py` 的舊介面相容 adapter，不是正式依賴入口。
 
-- 每個 façade 應逐步對應到自己的 SQL owner，不只拆 public API。
-- watch item persistence、runtime write records、runtime history query、fragment revision query、notification throttle state 與 app settings persistence 已有 dedicated module。
-- row mapping、datetime / decimal / JSON serialization、revision token hashing 已離開主 repository module。
-- 後續資料層若要再收斂，優先檢查 façade 是否能從相容入口改成直接 import；每一刀都不改 schema 與 public behavior。
+`repositories.py` 只保留相容 re-export。正式 `AppContainer`、application service、monitor runtime 與 unit tests 不再接受或持有 `SqliteRuntimeRepository`；新增正式路徑必須使用 write / history / fragment / throttle 專用 repository。`SqliteRuntimeRepository` 只留在 SQLite integration 內測相容 adapter 行為。
+
+資料層若要再收斂，優先移除 compatibility adapter 的剩餘相容需求；每一刀都不改 schema 與 public behavior。
 
 ## 9. Runtime 邊界
 
@@ -216,18 +216,12 @@ SQLite table 不急著拆，但 Python adapter 責任需分離：
 
 ## 10. Web 第二輪責任收斂
 
-`web/` 已完成第一輪拆分，但 page-area 模組仍可能成為新的壓力中心。後續 UI 功能增加前，優先守住：
+`web/` 已完成第一輪拆分。後續 UI 功能增加時，優先守住：
 
-- `watch_creation_routes.py` 已把 preview、cache、create 與 initial snapshot orchestration 交給 `WatchCreationWorkflow`；route 只保留 request / response mapping。新增建立流程時仍應放進 workflow/helper，不塞回 route。
-- `watch_client_scripts.py` 已降為相容 re-export；watch list / watch detail script renderer 已拆到 page-specific module。後續若 script 再成長，優先拆 polling、view mode、runtime dock、relative time、action submit 等小 owner。
-- Watch Detail page shell 已移到 `watch_detail_views.py`，fragment HTML 組裝集中在 `watch_detail_fragment_assembler.py`；新增 detail 區塊時先改 section registry 與 assembler，不直接散改 route、page service 或 client script。
-- `watch_fragment_payloads.py` 是 watch list / detail fragment payload 的 HTML 組裝入口；route 先向 page service 取 context / revision，再交給 payload assembler。
-- `ui_page_sections.py` 提供 page stack、responsive section grid、details panel、inline cluster 與欄位群組 helper，避免 Watch Detail / Settings 第二輪繼續累積 page-specific layout string。
-- `watch_detail_page_scripts.py` 與 `settings_page_scripts.py` 是頁面級 client behavior entrypoint；新增行為時先掛到 entrypoint，不從 partial 任意串接 script。
-- `settings_partials.py` 已降為相容 re-export；全域設定、單一 watch 通知規則、測試通知 partial 已拆到 page-area modules。
-- Dashboard list partial 已拆出 runtime dock 與 summary card modules；watch creation partial 已拆出 Chrome tab selection 與 diagnostics modules。
-- 大型 partial / presenter 模組若繼續成長，應拆成 page-area component，而不是把 HTML / JS / state 判斷重新堆在同一檔。
-- `watch_fragment_contracts.py` 與 `client_contracts.py` 繼續作為 DOM / payload contract owner。
+- route 只做 request / response mapping；流程 orchestration 放 application service、workflow 或 page service。
+- Watch Detail 新增區塊時先改 section registry、fragment assembler 與 client script contract，不散改 route / page service。
+- Dashboard / Watch Detail / Settings / Add Watch 若某個 partial 繼續變大，先拆 page-area component，再改視覺。
+- script、DOM contract、layout helper、presenter 判斷各有 owner；不要在 partial 內混合。
 
 ## 11. 測試策略
 

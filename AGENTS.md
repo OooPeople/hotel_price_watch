@@ -6,8 +6,8 @@
 
 - 做出可在背景穩定運作的價格監看工具
 - 第一版以附著專用 Chrome profile 為主，讓監看與預覽共用穩定 session
-- 先把監看、比價、通知與設定模型做穩
-- GUI、打包與背景輪詢分階段補上
+- 維持監看、比價、通知、設定與控制狀態模型的穩定性
+- GUI 已可使用；後續優先完成 Watch Detail / Settings 第二輪 UI，再評估打包
 
 ## 開發原則
 
@@ -29,6 +29,7 @@
 - `docs/V1_SPEC.md`
 - `docs/ARCHITECTURE_PLAN.md`
 - `docs/TASK_BREAKDOWN.md`
+- `docs/UI_REDESIGN_PLAN.md`
 - `docs/HANDOFF_PLAN.md`
 
 ## 實作規則
@@ -36,6 +37,11 @@
 - 設定與 runtime state 要分離
 - 監看結果要有歷史紀錄與最近一次解析摘要
 - 如果 `ikyu` HTML 結構變動，先更新 fixture 與 parser 測試，再改正式解析器
+- 新增正式 persistence 路徑時，使用 runtime write / history / fragment / throttle 等專用 repository；不要把新能力加回 `SqliteRuntimeRepository` compatibility adapter 或 `repositories.py` re-export
+- 新增 web renderer 時，不要把實作加回 `watch_view_partials.py`、`view_helpers.py`、`ui_components.py` 等相容 re-export 檔
+- Web route 只做 request / response mapping；流程 orchestration 放 application service、workflow 或 page service
+- UI 重複 layout pattern 要放到 `ui_page_sections.py` 或既有 UI helper；page partial 只保留真正一次性的視覺樣式
+- Watch Detail / Settings 第二輪 UI 必須沿用既有 page view model、fragment contract 與 page-level script entrypoint，不把 domain 判斷、DOM contract 或 inline script 塞回大型 partial
 - 之後新增或修改程式碼時，函式需補上繁體中文註解或 docstring，簡要說明該函式的用途
   - 以讓人快速理解職責為主，不需要寫成冗長逐行解說
   - 函式、類別、模組的用途說明優先使用 `"""..."""` docstring
@@ -57,7 +63,7 @@
   - `$env:HOTEL_PRICE_WATCH_RUNTIME_ENABLED="0"`
   - `.\scripts\uv.ps1 run python -m app.tools.dev_start`
 - 只有使用者明確回覆「已啟動」或明確要求 Codex 接手檢查後，Codex 才可使用 Chrome MCP / browser 工具檢查本機 GUI
-- 使用者已啟動專用 Chrome 後，Codex 檢查本機 GUI 時必須優先附著並沿用該既有 Chrome 視窗 / 分頁
+- 使用者已啟動專用 Chrome 後，Codex 檢查本機 GUI 時必須優先使用 `chrome-devtools-dedicated` 附著並沿用該既有 Chrome 視窗 / 分頁
   - 可在既有專用 Chrome 內開啟或導向 `http://127.0.0.1:8000`
   - 不可另外開新 Chrome 視窗來開 GUI，除非使用者明確要求
   - 若工具無法選取或導向既有專用 Chrome，需先告知限制並詢問使用者，不可自行改用新視窗
@@ -89,9 +95,6 @@
 
 ## Chrome MCP 操作規則
 
-- 操作 Chrome 前需先用 `tool_search` 載入完整 Chrome DevTools MCP 工具
-  - 不可只依初始工具列表判斷功能是否缺失
-  - 至少確認 `click`、`fill`、`evaluate_script`、`navigate_page`、`select_page`、`wait_for` 是否可用
 - 測試一般 Chrome MCP 互動能力時，優先使用 `chrome-devtools`
   - 可用無害的 `data:` 測試頁驗證 click、fill、evaluate 是否正常
   - 不需要連到專用 Chrome profile 或 `127.0.0.1:8000`
@@ -99,12 +102,6 @@
   - 使用前先檢查 `http://127.0.0.1:9222/json/version` 是否可連線
   - 若 `9222` 不通，表示目前沒有可附著的專用 Chrome，需請使用者用一般 PowerShell 啟動
   - 若 `9222` 可連線，需在該既有專用 Chrome 內選取或導向本機 GUI 分頁，不可另開一般 Chrome 視窗
-- 目前 Codex shell 不得自行啟動本專案 GUI 或專用 Chrome
-  - 即使只是 UI 視覺檢查，也不可自行啟動 `uvicorn`、`dev_start`、Chrome profile 或背景 server
-  - 從 Codex shell 啟動 `app.tools.chrome_profile` 或直接呼叫 `chrome.exe` 可能因 Windows IPC / sandbox 權限失敗
-  - 需要專用 Chrome 時，請使用者先執行安全模式：
-    - `$env:HOTEL_PRICE_WATCH_RUNTIME_ENABLED="0"`
-    - `.\scripts\uv.ps1 run python -m app.tools.dev_start`
 - 安全測試本機 GUI 時，不可主動操作 ikyu 分頁
   - 不重新整理 ikyu
   - 不執行 preview

@@ -20,6 +20,7 @@ from app.web.ui_components import (
 from app.web.ui_components import (
     flash_message as render_flash_message,
 )
+from app.web.ui_page_sections import cluster_style
 from app.web.ui_styles import stack_style
 from app.web.watch_client_scripts import (
     render_watch_list_polling_script,
@@ -72,10 +73,12 @@ def render_watch_list_page(
     watch_cards_html = render_watch_list_rows_from_presentation(
         dashboard_view_model,
     )
-    watch_list_header_style = (
-        "display:flex;justify-content:space-between;gap:16px;"
-        "align-items:end;flex-wrap:wrap;"
+    watch_list_header_style = cluster_style(
+        gap="lg",
+        justify="space-between",
+        align="end",
     )
+    watch_view_toggle_style = cluster_style(gap="sm")
     return page_layout(
         title="我的價格監視",
         body=f"""
@@ -100,7 +103,7 @@ def render_watch_list_page(
                   title="監視項目",
                   subtitle="需要注意的項目會優先顯示；技術細節保留在進階診斷中。",
               )}
-              <div class="watch-list-view-toggle" style="display:flex;gap:8px;flex-wrap:wrap;">
+              <div class="watch-list-view-toggle" style="{watch_view_toggle_style}">
                 <button type="button" data-watch-view-mode-button="cards">卡片</button>
                 <button type="button" data-watch-view-mode-button="list">清單</button>
               </div>

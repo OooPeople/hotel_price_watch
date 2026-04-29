@@ -14,6 +14,15 @@ from app.web.ui_components import (
     page_header,
     page_layout,
 )
+from app.web.ui_page_sections import (
+    block_nowrap_style,
+    cluster_style,
+    equal_columns_grid_style,
+    page_stack,
+    stack_block_style,
+    two_column_grid_style,
+    zero_margin_style,
+)
 from app.web.ui_styles import (
     SUCCESS_STYLE,
     color_token,
@@ -80,8 +89,8 @@ def render_new_watch_page_from_view_model(view_model: NewWatchPageViewModel) -> 
 
     return page_layout(
         title="新增監視",
-        body=f"""
-        <section style="{stack_style(gap="xl")}">
+        body=page_stack(
+            f"""
           {page_header(
               title="新增監視",
               subtitle=view_model.page_subtitle,
@@ -93,8 +102,8 @@ def render_new_watch_page_from_view_model(view_model: NewWatchPageViewModel) -> 
           {preview_html}
           {source_selection_html}
           {diagnostics_html}
-        </section>
         """,
+        ),
     )
 
 
@@ -129,7 +138,7 @@ def render_chrome_tab_selection_page_from_view_model(
     diagnostics_html = render_diagnostics_section(view_model.diagnostics)
     throttling_hint_html = (
         f"""
-        <p style="{SUCCESS_STYLE};margin:0;">
+        <p style="{SUCCESS_STYLE}{zero_margin_style()}">
           若某個分頁顯示「可能節流」，建議先把該分頁切回前景後再抓取。
         </p>
         """
@@ -147,8 +156,8 @@ def render_chrome_tab_selection_page_from_view_model(
 
     return page_layout(
         title="選擇 Chrome 分頁",
-        body=f"""
-        <section style="{stack_style(gap="xl")}">
+        body=page_stack(
+            f"""
           {page_header(
               title="選擇 Chrome 分頁",
               subtitle=f"選擇要建立監視的 {view_model.site_label_list} 分頁。",
@@ -173,8 +182,8 @@ def render_chrome_tab_selection_page_from_view_model(
             </section>
             {_render_chrome_tab_help_panel()}
           </div>
-        </section>
         """,
+        ),
     )
 
 
@@ -223,8 +232,10 @@ def _render_stepper_item(
     circle_color = "#fff" if is_done or is_active else color_token("muted")
     circle_border = color_token("primary") if is_done or is_active else color_token("muted_border")
     title_color = color_token("secondary") if is_done or is_active else color_token("muted")
+    step_text_style = f"{stack_block_style(gap='xs')}min-width:0;"
+    step_title_style = block_nowrap_style(f"color:{title_color};")
     return f"""
-    <div style="display:flex;gap:10px;align-items:center;min-width:0;">
+    <div style="{cluster_style()}min-width:0;">
       <span
         aria-hidden="true"
         style="
@@ -233,8 +244,8 @@ def _render_stepper_item(
           color:{circle_color};font-weight:800;flex:0 0 auto;
         "
       >{"✓" if is_done else number}</span>
-      <span style="display:grid;gap:2px;min-width:0;">
-        <strong style="color:{title_color};white-space:nowrap;">{escape(title)}</strong>
+      <span style="{step_text_style}">
+        <strong style="{step_title_style}">{escape(title)}</strong>
         <span style="{muted_text_style(font_size="12px")}">{escape(subtitle)}</span>
       </span>
     </div>
@@ -243,10 +254,18 @@ def _render_stepper_item(
 
 def _render_source_selection_panel(*, site_label_list: str) -> str:
     """渲染新增監視入口的來源選擇區塊。"""
+    source_label_style = zero_margin_style(
+        f"color:{color_token('primary')};font-weight:800;"
+    )
+    panel_grid_style = two_column_grid_style(
+        left="minmax(260px,420px)",
+        right="minmax(0,1fr)",
+        gap="xl",
+        align="center",
+    )
     return f"""
     <section style="
-      display:grid;grid-template-columns:minmax(260px,420px) minmax(0,1fr);
-      gap:32px;align-items:center;padding:28px;
+      {panel_grid_style}padding:28px;
       border:1px solid {color_token("border")};border-radius:16px;
       background:{color_token("surface")};
       box-shadow:0 10px 28px {color_token("shadow_soft")};
@@ -254,7 +273,7 @@ def _render_source_selection_panel(*, site_label_list: str) -> str:
       {_render_source_browser_mock()}
       <div style="{stack_style(gap="lg")}">
         <div>
-          <p style="margin:0 0 6px;color:{color_token("primary")};font-weight:800;">
+          <p style="{source_label_style}">
             Step 1｜選擇來源
           </p>
           <h2 style="margin:0 0 12px;font-size:24px;">
@@ -286,6 +305,12 @@ def _render_source_browser_mock() -> str:
     pill_style = (
         f"height:28px;width:88px;border-radius:8px;background:{color_token('primary_soft')};"
     )
+    mock_content_grid_style = two_column_grid_style(
+        left="84px",
+        right="1fr",
+        gap="lg",
+        align="center",
+    )
     return f"""
     <div
       aria-hidden="true"
@@ -299,13 +324,13 @@ def _render_source_browser_mock() -> str:
         border:1px solid {color_token("border")};border-radius:12px;background:#fff;
         box-shadow:0 16px 32px rgba(15,23,42,0.08);
       ">
-        <div style="display:flex;gap:8px;">
+        <div style="{cluster_style(gap="sm")}">
           <span style="{dot_style}background:#94a3b8;"></span>
           <span style="{dot_style}background:{color_token("primary")};"></span>
         </div>
-        <div style="display:grid;grid-template-columns:84px 1fr;gap:16px;align-items:center;">
+        <div style="{mock_content_grid_style}">
           <div style="height:84px;border-radius:8px;background:{color_token("muted_bg")};"></div>
-          <div style="display:grid;gap:10px;">
+          <div style="{stack_block_style(gap="sm")}">
             <span style="{line_style}"></span>
             <span style="{line_style}"></span>
             <span style="{pill_style}"></span>
@@ -338,7 +363,7 @@ def _render_start_tips_panel() -> str:
     return card(
         title="開始前的小提醒",
         body=f"""
-        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;">
+        <div style="{equal_columns_grid_style(columns=3, gap="lg")}">
           {tips_html}
         </div>
         """,
@@ -348,7 +373,7 @@ def _render_start_tips_panel() -> str:
 def _tip_item(*, title: str, text: str) -> str:
     """渲染新增監視入口的小提醒項目。"""
     return f"""
-    <div style="display:grid;gap:6px;">
+    <div style="{stack_block_style(gap="xs")}">
       <strong>{escape(title)}</strong>
       <p style="{meta_paragraph_style(font_size="13px")}">{escape(text)}</p>
     </div>

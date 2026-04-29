@@ -14,7 +14,6 @@ from app.domain.watch_lifecycle_state_machine import (
 )
 from app.infrastructure.db.repositories import (
     SqliteRuntimeHistoryQueryRepository,
-    SqliteRuntimeRepository,
     SqliteRuntimeWriteRepository,
     SqliteWatchItemRepository,
 )
@@ -33,14 +32,10 @@ class WatchLifecycleCoordinator:
         *,
         watch_item_repository: SqliteWatchItemRepository,
         monitor_runtime: ChromeDrivenMonitorRuntime | None,
-        runtime_repository: SqliteRuntimeRepository | None = None,
         runtime_write_repository: SqliteRuntimeWriteRepository | None = None,
         runtime_history_repository: SqliteRuntimeHistoryQueryRepository | None = None,
     ) -> None:
         self._watch_item_repository = watch_item_repository
-        if runtime_repository is not None:
-            runtime_write_repository = runtime_repository
-            runtime_history_repository = runtime_repository
         if runtime_write_repository is None or runtime_history_repository is None:
             raise ValueError("runtime write/history repositories are required")
         self._runtime_write_repository = runtime_write_repository
